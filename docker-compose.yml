@@ -1,0 +1,21 @@
+services:
+  hummingbot:
+    image: hummingbot/hummingbot:latest
+    container_name: hummingbot_learning
+    volumes:
+      - ./conf:/home/hummingbot/conf
+      - ./conf/connectors:/home/hummingbot/conf/connectors
+      - ./conf/controllers:/home/hummingbot/conf/controllers
+      - ./conf/scripts:/home/hummingbot/conf/scripts
+      - ./scripts:/home/hummingbot/scripts
+      - ./controllers:/home/hummingbot/controllers
+      - ./logs:/home/hummingbot/logs
+      - ./logs/logs_conf:/home/hummingbot/logs/logs_conf
+      - ./logs/logs_conf/scripts:/home/hummingbot/logs/logs_conf/scripts
+      - ./logs/logs_conf/controllers:/home/hummingbot/logs/logs_conf/controllers
+      - ./data:/home/hummingbot/data
+    stdin_open: true
+    tty: true
+    restart: unless-stopped
+    environment:
+      - TZ=Asia/Shanghai

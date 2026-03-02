@@ -1,0 +1,7 @@
+script_file_name: v2_with_controllers
+candles_config: []
+markets: {}
+controllers_config:
+  - autofish_v1_config.yml
+max_global_drawdown_quote: null
+max_controller_drawdown_quote: null
