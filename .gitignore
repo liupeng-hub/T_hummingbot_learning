@@ -35,6 +35,7 @@ ENV/
 
 # Logs
 *.log
+logs/
 
 # Database
 *.sqlite
@@ -46,3 +47,8 @@ Thumbs.db
 # Hummingbot sensitive files
 conf/connectors/*_api_key*.yml
 conf/.password_verification
+
+# Autofish simulator
+tests/autofish_state.json
+tests/realtime_simulator_api.log
+webhook_forwarder.py
