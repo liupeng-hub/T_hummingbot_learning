@@ -2,10 +2,17 @@
 Autofish V1 振幅分析模块
 
 分析历史K线数据，计算各振幅区间的概率分布和权重
+支持 Binance（加密货币）和 LongPort（港股/美股/A股）数据源
 
 运行方式：
     cd hummingbot_learning
-    python3 -m autofish_bot.amplitude_analyzer
+    
+    # Binance 加密货币
+    python3 -m autofish_bot.amplitude_analyzer --symbol BTCUSDT
+    
+    # LongPort 港股/美股/A股（需要先激活 venv）
+    source autofish_bot/venv/bin/activate
+    python3 -m autofish_bot.amplitude_analyzer --symbol 700.HK --source longport
 """
 
 import asyncio
@@ -23,10 +30,9 @@ from .autofish_core import WeightCalculator
 
 
 PROJECT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-ENV_FILE = os.path.join(PROJECT_DIR, ".env")
-load_dotenv(ENV_FILE)
-
 LOG_DIR = os.path.dirname(os.path.abspath(__file__))
+ENV_FILE = os.path.join(LOG_DIR, ".env")
+load_dotenv(ENV_FILE)
 LOG_FILE = os.path.join(LOG_DIR, "amplitude_analyzer.log")
 
 def get_config_filepath(symbol: str) -> str:
@@ -49,11 +55,33 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+def is_longport_symbol(symbol: str) -> bool:
+    """判断是否为 LongPort 交易对"""
+    symbol_upper = symbol.upper()
+    return any(suffix in symbol_upper for suffix in [".HK", ".US", ".SH", ".SZ"])
+
+
+def get_currency_from_symbol(symbol: str) -> str:
+    """根据交易对获取货币类型"""
+    symbol_upper = symbol.upper()
+    if ".HK" in symbol_upper:
+        return "HKD"
+    elif ".US" in symbol_upper:
+        return "USD"
+    elif ".SH" in symbol_upper or ".SZ" in symbol_upper:
+        return "CNY"
+    return "USDT"
+
+
 class AmplitudeAnalyzer:
     """振幅分析器
     
     分析历史K线数据，计算各振幅区间的概率分布，
     根据预期收益计算权重，输出配置文件供回测和实盘使用。
+    
+    支持数据源：
+    - binance: Binance 加密货币（默认）
+    - longport: LongPort 港股/美股/A股
     """
     
     AMPLITUDE_RANGES = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
@@ -61,11 +89,12 @@ class AmplitudeAnalyzer:
     LIQUIDATION_AMPLITUDE = 10
     VALID_AMPLITUDE_MIN = 1
     
-    def __init__(self, symbol: str = "BTCUSDT", interval: str = "1d", limit: int = 1000, leverage: int = 10):
+    def __init__(self, symbol: str = "BTCUSDT", interval: str = "1d", limit: int = 1000, leverage: int = 10, source: str = "binance"):
         self.symbol = symbol
         self.interval = interval
         self.limit = limit
         self.leverage = Decimal(str(leverage))
+        self.source = source
         self.klines: List[dict] = []
         self.amplitudes: List[Decimal] = []
         self.amplitude_counts: Dict[int, int] = {amp: 0 for amp in self.AMPLITUDE_RANGES}
@@ -73,10 +102,17 @@ class AmplitudeAnalyzer:
         self.expected_returns: Dict[int, Decimal] = {}
         self.weights: Dict[str, Dict[int, Decimal]] = {}
         
-        logger.info(f"初始化振幅分析器: symbol={symbol}, interval={interval}, limit={limit}, leverage={leverage}")
+        logger.info(f"初始化振幅分析器: symbol={symbol}, interval={interval}, limit={limit}, leverage={leverage}, source={source}")
     
     async def fetch_klines(self) -> List[dict]:
         """获取历史K线数据"""
+        if self.source == "longport" or is_longport_symbol(self.symbol):
+            return await self._fetch_klines_longport()
+        else:
+            return await self._fetch_klines_binance()
+    
+    async def _fetch_klines_binance(self) -> List[dict]:
+        """从 Binance 获取历史K线数据"""
         url = "https://fapi.binance.com/fapi/v1/klines"
         params = {
             "symbol": self.symbol,
@@ -86,7 +122,7 @@ class AmplitudeAnalyzer:
         
         proxy = HTTPS_PROXY or HTTP_PROXY or None
         
-        logger.info(f"[获取K线] symbol={self.symbol}, interval={self.interval}, limit={self.limit}, proxy={proxy}")
+        logger.info(f"[获取K线-Binance] symbol={self.symbol}, interval={self.interval}, limit={self.limit}, proxy={proxy}")
         
         connector = aiohttp.TCPConnector(ssl=False)
         async with aiohttp.ClientSession(connector=connector) as session:
@@ -107,12 +143,78 @@ class AmplitudeAnalyzer:
                             "close": Decimal(item[4]),
                             "volume": Decimal(item[5]),
                         })
-                    logger.info(f"[获取K线] 成功获取 {len(klines)} 条数据")
+                    logger.info(f"[获取K线-Binance] 成功获取 {len(klines)} 条数据")
                     return klines
                 else:
                     text = await response.text()
-                    logger.error(f"[获取K线] 失败: {response.status} - {text}")
+                    logger.error(f"[获取K线-Binance] 失败: {response.status} - {text}")
                     return []
+    
+    async def _fetch_klines_longport(self) -> List[dict]:
+        """从 LongPort 获取历史K线数据"""
+        try:
+            from longport.openapi import Config, QuoteContext, Period, AdjustType
+        except ImportError:
+            logger.error("[获取K线-LongPort] 未安装 longport 包，请先激活 venv 并安装: pip install longport")
+            return []
+        
+        logger.info(f"[获取K线-LongPort] symbol={self.symbol}, interval={self.interval}, count={self.limit}")
+        
+        period_map = {
+            "1m": Period.Min_1,
+            "2m": Period.Min_2,
+            "3m": Period.Min_3,
+            "5m": Period.Min_5,
+            "10m": Period.Min_10,
+            "15m": Period.Min_15,
+            "20m": Period.Min_20,
+            "30m": Period.Min_30,
+            "45m": Period.Min_45,
+            "60m": Period.Min_60,
+            "1h": Period.Min_60,
+            "2h": Period.Min_120,
+            "3h": Period.Min_180,
+            "4h": Period.Min_240,
+            "1d": Period.Day,
+            "1D": Period.Day,
+            "1w": Period.Week,
+            "1W": Period.Week,
+            "1M": Period.Month,
+        }
+        
+        period = period_map.get(self.interval, Period.Day)
+        
+        try:
+            config = Config.from_env()
+            ctx = QuoteContext(config)
+            
+            candlesticks = ctx.history_candlesticks_by_offset(
+                symbol=self.symbol,
+                period=period,
+                adjust_type=AdjustType.NoAdjust,
+                forward=False,
+                time=datetime.now(),
+                count=self.limit
+            )
+            
+            klines = []
+            for candle in candlesticks:
+                klines.append({
+                    "timestamp": int(candle.timestamp.timestamp() * 1000),
+                    "open": Decimal(str(candle.open)),
+                    "high": Decimal(str(candle.high)),
+                    "low": Decimal(str(candle.low)),
+                    "close": Decimal(str(candle.close)),
+                    "volume": Decimal(str(candle.volume)),
+                })
+            
+            logger.info(f"[获取K线-LongPort] 成功获取 {len(klines)} 条数据")
+            return klines
+            
+        except Exception as e:
+            logger.error(f"[获取K线-LongPort] 失败: {e}")
+            logger.error(f"[提示] 请检查网络连接，或配置 LONGPORT_HTTP_PROXY 环境变量")
+            return []
     
     def calculate_amplitude(self, kline: dict) -> Decimal:
         """计算单根K线的振幅
@@ -705,15 +807,22 @@ async def main():
     parser.add_argument("--interval", type=str, default="1d", help="K线周期 (默认: 1d)")
     parser.add_argument("--limit", type=int, default=1000, help="K线数量 (默认: 1000)")
     parser.add_argument("--leverage", type=int, default=10, help="杠杆倍数 (默认: 10)")
+    parser.add_argument("--source", type=str, default="binance", choices=["binance", "longport"], 
+                        help="数据源: binance(加密货币) 或 longport(港股/美股/A股)")
     parser.add_argument("--output", type=str, default=None, help="输出文件路径 (默认: amplitude_config.json)")
     
     args = parser.parse_args()
+    
+    if args.source == "longport" or is_longport_symbol(args.symbol):
+        args.source = "longport"
+        args.leverage = 1
     
     analyzer = AmplitudeAnalyzer(
         symbol=args.symbol,
         interval=args.interval,
         limit=args.limit,
-        leverage=args.leverage
+        leverage=args.leverage,
+        source=args.source
     )
     
     await analyzer.analyze()

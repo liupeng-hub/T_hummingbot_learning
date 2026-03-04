@@ -37,6 +37,8 @@ class Order:
     created_at: Optional[str] = None
     filled_at: Optional[str] = None
     closed_at: Optional[str] = None
+    tp_supplemented: bool = False
+    sl_supplemented: bool = False
     
     def set_state(self, new_state: str, reason: str = ""):
         """设置订单状态"""
@@ -71,6 +73,8 @@ class Order:
             "created_at": self.created_at,
             "filled_at": self.filled_at,
             "closed_at": self.closed_at,
+            "tp_supplemented": self.tp_supplemented,
+            "sl_supplemented": self.sl_supplemented,
         }
     
     @classmethod
@@ -93,6 +97,8 @@ class Order:
             created_at=data.get("created_at"),
             filled_at=data.get("filled_at"),
             closed_at=data.get("closed_at"),
+            tp_supplemented=data.get("tp_supplemented", False),
+            sl_supplemented=data.get("sl_supplemented", False),
         )
 
 

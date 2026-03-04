@@ -1,11 +1,18 @@
 """
-Autofish V1 实盘交易模块
+Autofish V1 Binance 实盘交易模块
 
 使用 Binance API 进行实盘交易
 
 运行方式：
+    cd hummingbot_learning
+    source autofish_bot/venv/bin/activate
+    python3 -m autofish_bot.binance_live --symbol BTCUSDT
 
-    python3 -m autofish_bot.live --symbol BTCUSDT
+环境变量配置 (.env):
+    BINANCE_TESTNET_API_KEY=your_testnet_api_key
+    BINANCE_TESTNET_SECRET_KEY=your_testnet_secret_key
+    BINANCE_API_KEY=your_mainnet_api_key
+    BINANCE_SECRET_KEY=your_mainnet_secret_key
 """
 
 import argparse
@@ -36,10 +43,9 @@ from .amplitude_analyzer import AmplitudeConfig
 
 
 PROJECT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-ENV_FILE = os.path.join(PROJECT_DIR, ".env")
-load_dotenv(ENV_FILE)
-
 LOG_DIR = os.path.dirname(os.path.abspath(__file__))
+ENV_FILE = os.path.join(LOG_DIR, ".env")
+load_dotenv(ENV_FILE)
 LOG_FILE = os.path.join(LOG_DIR, "binance_live.log")
 STATE_FILE = os.path.join(LOG_DIR, "binance_live_state.json")
 
@@ -57,20 +63,42 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+MESSAGE_COUNTER_FILE = os.path.join(LOG_DIR, "message_counter.txt")
+
+
+def get_next_message_number() -> int:
+    """获取下一个消息号"""
+    try:
+        if os.path.exists(MESSAGE_COUNTER_FILE):
+            with open(MESSAGE_COUNTER_FILE, 'r') as f:
+                counter = int(f.read().strip() or '0')
+        else:
+            counter = 0
+        counter += 1
+        with open(MESSAGE_COUNTER_FILE, 'w') as f:
+            f.write(str(counter))
+        return counter
+    except Exception as e:
+        logger.error(f"[消息号] 获取失败: {e}")
+        return 1
+
 
 def send_wechat_notification(title: str, content: str) -> bool:
     """发送微信通知"""
+    msg_num = get_next_message_number()
+    content_with_num = f"> **消息号**: {msg_num}\n\n{content}"
+    
     message = {
         "msgtype": "markdown",
         "markdown": {
-            "content": f"## {title}\n\n{content}"
+            "content": f"## {title}\n\n{content_with_num}"
         }
     }
     try:
         response = requests.post(WECHAT_WEBHOOK, json=message, timeout=10)
         result = response.json()
         if result.get("errcode") == 0:
-            logger.debug(f"[微信通知] 发送成功: {title}")
+            logger.debug(f"[微信通知] 发送成功: {title}, 消息号={msg_num}")
             return True
         else:
             logger.warning(f"[微信通知] 发送失败: {result}")
@@ -153,8 +181,10 @@ def notify_orders_recovered(orders: list, config: dict, current_price: Decimal):
 > 止损价: {order.stop_loss_price:.2f} USDT (-{stop_loss_pct:.1f}%)
 > 订单ID: {order.order_id}""")
         elif order.state == 'filled':
-            tp_info = f"止盈ID: {order.tp_order_id}" if order.tp_order_id else "止盈ID: 无"
-            sl_info = f"止损ID: {order.sl_order_id}" if order.sl_order_id else "止损ID: 无"
+            tp_suffix = "（补）" if order.tp_supplemented else ""
+            sl_suffix = "（补）" if order.sl_supplemented else ""
+            tp_info = f"止盈ID: {order.tp_order_id}{tp_suffix}" if order.tp_order_id else "止盈ID: 无"
+            sl_info = f"止损ID: {order.sl_order_id}{sl_suffix}" if order.sl_order_id else "止损ID: 无"
             order_lines.append(f"""**A{order.level}** `{state_text}` `{level_text}`
 > 入场价: {order.entry_price:.2f} USDT
 > 止盈价: {order.take_profit_price:.2f} USDT (+{exit_profit_pct:.1f}%)
@@ -367,6 +397,13 @@ class BinanceLiveTrader:
         """获取挂单"""
         return await self._request("GET", "/fapi/v1/openOrders", {"symbol": symbol}, signed=True)
     
+    async def get_order_status(self, symbol: str, order_id: int) -> dict:
+        """查询订单状态"""
+        return await self._request("GET", "/fapi/v1/order", {
+            "symbol": symbol,
+            "orderId": order_id,
+        }, signed=True)
+    
     async def get_open_algo_orders(self, symbol: str) -> list:
         """获取 Algo 条件单"""
         data = await self._request("GET", "/fapi/v1/openAlgoOrders", {"symbol": symbol}, signed=True)
@@ -519,7 +556,8 @@ class BinanceLiveTrader:
                     pass
     
     async def _restore_orders(self, current_price: Decimal) -> bool:
-        """恢复订单状态"""
+        """恢复订单状态，同步 Binance 实际状态"""
+        symbol = self.config.get("symbol", "BTCUSDT")
         saved_state = self._load_state()
         need_new_order = True
         
@@ -529,21 +567,65 @@ class BinanceLiveTrader:
             self.chain_state = saved_state
             self.chain_state.base_price = current_price
             
+            algo_orders = await self.get_open_algo_orders(symbol)
+            algo_ids = {o.get("algoId") for o in algo_orders if o.get("algoId")}
+            logger.info(f"[状态恢复] Binance 上有 {len(algo_ids)} 个 Algo 条件单")
+            
             for order in self.chain_state.orders:
                 logger.info(f"[订单恢复] A{order.level}: state={order.state}")
                 logger.info(f"  主订单: order_id={order.order_id}, entry_price={order.entry_price}")
+                
+                if order.state == "pending" and order.order_id:
+                    try:
+                        binance_order = await self.get_order_status(symbol, order.order_id)
+                        binance_status = binance_order.get("status")
+                        logger.info(f"  Binance 状态: {binance_status}")
+                        
+                        if binance_status == "FILLED":
+                            filled_price = Decimal(str(binance_order.get("avgPrice", order.entry_price)))
+                            order.set_state("filled", "程序重启同步-已成交")
+                            order.entry_price = filled_price
+                            logger.info(f"[状态同步] A{order.level} 已在 Binance 成交，更新本地状态")
+                            print(f"   ⚡ A{order.level} 已在 Binance 成交，同步状态")
+                        elif binance_status == "CANCELED" or binance_status == "EXPIRED":
+                            order.set_state("cancelled", f"程序重启同步-{binance_status}")
+                            logger.info(f"[状态同步] A{order.level} 在 Binance 已取消")
+                            print(f"   🗑️ A{order.level} 在 Binance 已取消")
+                        elif binance_status == "NEW" or binance_status == "PARTIALLY_FILLED":
+                            logger.info(f"[状态同步] A{order.level} 在 Binance 仍挂单中")
+                        else:
+                            logger.info(f"[状态同步] A{order.level} Binance 状态: {binance_status}")
+                    except Exception as e:
+                        logger.error(f"[状态同步] 查询 Binance 订单状态失败: {e}")
+                
                 if order.state == "filled":
+                    if order.tp_order_id:
+                        if order.tp_order_id in algo_ids:
+                            logger.info(f"  止盈单存在: tp_order_id={order.tp_order_id}")
+                        else:
+                            logger.warning(f"  止盈单不存在: tp_order_id={order.tp_order_id}，需要补单")
+                            print(f"   ⚠️ A{order.level} 止盈单在 Binance 不存在，需要补单")
+                            order.tp_order_id = None
+                    
+                    if order.sl_order_id:
+                        if order.sl_order_id in algo_ids:
+                            logger.info(f"  止损单存在: sl_order_id={order.sl_order_id}")
+                        else:
+                            logger.warning(f"  止损单不存在: sl_order_id={order.sl_order_id}，需要补单")
+                            print(f"   ⚠️ A{order.level} 止损单在 Binance 不存在，需要补单")
+                            order.sl_order_id = None
+                    
                     logger.info(f"  止盈单: tp_order_id={order.tp_order_id}")
                     logger.info(f"  止损单: sl_order_id={order.sl_order_id}")
                 
                 print(f"   A{order.level}: state={order.state}, order_id={order.order_id}, "
                       f"tp_id={order.tp_order_id}, sl_id={order.sl_order_id}")
             
+            self._save_state()
+            
             has_active_order = any(o.state in ["pending", "filled"] for o in self.chain_state.orders)
             if has_active_order:
                 need_new_order = False
-            
-            notify_orders_recovered(self.chain_state.orders, self.config, current_price)
         else:
             self.chain_state = ChainState(base_price=current_price)
             notify_startup(self.config, current_price)
@@ -556,13 +638,101 @@ class BinanceLiveTrader:
         algo_orders = await self.get_open_algo_orders(symbol)
         logger.info(f"[补单检查] 获取到 {len(algo_orders)} 个 Algo 条件单")
         
+        current_price = await self._get_current_price(symbol)
+        
         for order in self.chain_state.orders:
             if order.state == "filled":
-                if not order.tp_order_id and not order.sl_order_id:
-                    logger.info(f"[补单] A{order.level} 已成交但无止盈止损单，补下...")
-                    await self._place_exit_orders(order)
-                else:
+                need_tp = not order.tp_order_id
+                need_sl = not order.sl_order_id
+                
+                if need_sl:
+                    sl_exceeded = current_price <= order.stop_loss_price
+                    if sl_exceeded:
+                        logger.warning(f"[补止损] A{order.level} 当前价 {current_price} 已跌破止损价 {order.stop_loss_price}，市价止损")
+                        print(f"[{datetime.now().strftime('%H:%M:%S')}] ⚠️ A{order.level} 当前价已跌破止损价，市价止损")
+                        await self._market_close_order(order, "stop_loss")
+                        continue
+                    else:
+                        logger.info(f"[补止损] A{order.level} 下止损单: 触发价={order.stop_loss_price}")
+                        await self._place_sl_order(order)
+                
+                if need_tp:
+                    tp_exceeded = current_price >= order.take_profit_price
+                    if tp_exceeded:
+                        grid_spacing = self.config.get("grid_spacing", Decimal("0.01"))
+                        new_tp_price = current_price * (Decimal("0.5") * grid_spacing + Decimal("1"))
+                        logger.warning(f"[补止盈] A{order.level} 当前价 {current_price} 已超过止盈价 {order.take_profit_price}，调整止盈价为 {new_tp_price}")
+                        print(f"[{datetime.now().strftime('%H:%M:%S')}] ⚠️ A{order.level} 当前价已超过止盈价，调整止盈价为 {new_tp_price:.2f}")
+                        order.take_profit_price = new_tp_price
+                    
+                    logger.info(f"[补止盈] A{order.level} 下止盈单: 触发价={order.take_profit_price}")
+                    await self._place_tp_order(order)
+                
+                if not need_tp and not need_sl:
                     logger.info(f"[补单检查] A{order.level} 已有止盈止损单，无需补单")
+    
+    async def _place_tp_order(self, order: Order):
+        """单独下止盈单"""
+        symbol = self.config.get("symbol", "BTCUSDT")
+        
+        tp_result = await self.place_algo_order(
+            symbol=symbol,
+            side="SELL",
+            order_type="TAKE_PROFIT_MARKET",
+            quantity=order.quantity,
+            trigger_price=order.take_profit_price
+        )
+        if "algoId" in tp_result:
+            order.tp_order_id = tp_result["algoId"]
+            order.tp_supplemented = True
+            logger.info(f"[止盈下单] 成功: algoId={order.tp_order_id}")
+            print(f"[{datetime.now().strftime('%H:%M:%S')}] 🎯 止盈条件单已下（补）: 触发价={order.take_profit_price:.2f}, ID={order.tp_order_id}")
+            self._save_state()
+    
+    async def _place_sl_order(self, order: Order):
+        """单独下止损单"""
+        symbol = self.config.get("symbol", "BTCUSDT")
+        
+        sl_result = await self.place_algo_order(
+            symbol=symbol,
+            side="SELL",
+            order_type="STOP_MARKET",
+            quantity=order.quantity,
+            trigger_price=order.stop_loss_price
+        )
+        if "algoId" in sl_result:
+            order.sl_order_id = sl_result["algoId"]
+            order.sl_supplemented = True
+            logger.info(f"[止损下单] 成功: algoId={order.sl_order_id}")
+            print(f"[{datetime.now().strftime('%H:%M:%S')}] 🛑 止损条件单已下（补）: 触发价={order.stop_loss_price:.2f}, ID={order.sl_order_id}")
+            self._save_state()
+    
+    async def _get_current_price(self, symbol: str) -> Decimal:
+        """获取当前价格"""
+        ticker = await self._request("GET", "/fapi/v1/ticker/price", {"symbol": symbol})
+        return Decimal(str(ticker.get("price", "0")))
+    
+    async def _market_close_order(self, order: Order, reason: str):
+        """市价平仓"""
+        symbol = self.config.get("symbol", "BTCUSDT")
+        
+        try:
+            result = await self._request("POST", "/fapi/v1/order", {
+                "symbol": symbol,
+                "side": "SELL",
+                "type": "MARKET",
+                "quantity": str(order.quantity),
+            }, signed=True)
+            
+            order.set_state("closed", reason)
+            logger.info(f"[市价平仓] A{order.level} 成功: orderId={result.get('orderId')}")
+            print(f"[{datetime.now().strftime('%H:%M:%S')}] 📤 A{order.level} 市价平仓成功")
+            
+            self._save_state()
+            
+        except Exception as e:
+            logger.error(f"[市价平仓] A{order.level} 失败: {e}")
+            print(f"[{datetime.now().strftime('%H:%M:%S')}] ❌ A{order.level} 市价平仓失败: {e}")
     
     async def _handle_order_update(self, data: dict):
         """处理订单更新"""
@@ -605,16 +775,26 @@ class BinanceLiveTrader:
     
     async def _handle_algo_update(self, data: dict):
         """处理 Algo 条件单更新"""
-        algo_id = data.get("algoId")
-        algo_status = data.get("algoStatus")
-        order_type = data.get("orderType")
+        outer_algo_id = data.get("g") or data.get("algoId")
+        outer_status = data.get("X") or data.get("algoStatus")
+        
+        inner_data = data.get("o", {})
+        algo_id = inner_data.get("aid") or outer_algo_id
+        algo_status = inner_data.get("X") or outer_status
+        order_type = inner_data.get("o") or data.get("orderType")
+        
+        if not algo_id:
+            logger.warning(f"[Algo事件] 数据格式异常: {data}")
+            return
         
         order = self.chain_state.get_order_by_algo_id(algo_id)
         if not order:
             logger.warning(f"[Algo匹配] 未找到订单: algoId={algo_id}")
             return
         
-        if algo_status == "FILLED":
+        logger.info(f"[Algo事件] algoId={algo_id}, status={algo_status}, orderType={order_type}")
+        
+        if algo_status in ["FILLED", "filled"]:
             is_tp = (order.tp_order_id == algo_id)
             close_price = order.take_profit_price if is_tp else order.stop_loss_price
             
@@ -651,6 +831,58 @@ class BinanceLiveTrader:
             new_order = self._create_order(order.level, current_price)
             self.chain_state.orders.append(new_order)
             await self._place_entry_order(new_order)
+        
+        elif algo_status in ["CANCELED", "canceled"]:
+            is_tp = (order.tp_order_id == algo_id)
+            if is_tp:
+                order.tp_order_id = None
+                order.tp_supplemented = False
+                logger.info(f"[手动取消] A{order.level} 止盈单已取消")
+                print(f"[{datetime.now().strftime('%H:%M:%S')}] 🗑️ A{order.level} 止盈单已手动取消")
+            else:
+                order.sl_order_id = None
+                order.sl_supplemented = False
+                logger.info(f"[手动取消] A{order.level} 止损单已取消")
+                print(f"[{datetime.now().strftime('%H:%M:%S')}] 🗑️ A{order.level} 止损单已手动取消")
+            
+            self._save_state()
+        
+        elif algo_status in ["NEW", "new"]:
+            symbol = inner_data.get("s") or data.get("symbol")
+            trigger_price = Decimal(str(inner_data.get("tp") or inner_data.get("sp") or 0))
+            order_type_str = inner_data.get("o") or order_type
+            
+            if symbol != self.config.get("symbol", "BTCUSDT"):
+                return
+            
+            for o in self.chain_state.orders:
+                if o.state != "filled":
+                    continue
+                
+                is_tp_order = order_type_str in ["TAKE_PROFIT_MARKET", "TAKE_PROFIT"]
+                is_sl_order = order_type_str in ["STOP_MARKET", "STOP_LOSS"]
+                
+                if is_tp_order and not o.tp_order_id:
+                    expected_tp_price = o.take_profit_price
+                    price_diff = abs(trigger_price - expected_tp_price)
+                    if price_diff < expected_tp_price * Decimal("0.001"):
+                        o.tp_order_id = algo_id
+                        o.take_profit_price = trigger_price
+                        logger.info(f"[手动修改] A{o.level} 止盈单已更新: algoId={algo_id}, 价格={trigger_price}")
+                        print(f"[{datetime.now().strftime('%H:%M:%S')}] ✏️ A{o.level} 止盈单已手动修改: 价格={trigger_price:.2f}")
+                        self._save_state()
+                        break
+                
+                if is_sl_order and not o.sl_order_id:
+                    expected_sl_price = o.stop_loss_price
+                    price_diff = abs(trigger_price - expected_sl_price)
+                    if price_diff < expected_sl_price * Decimal("0.001"):
+                        o.sl_order_id = algo_id
+                        o.stop_loss_price = trigger_price
+                        logger.info(f"[手动修改] A{o.level} 止损单已更新: algoId={algo_id}, 价格={trigger_price}")
+                        print(f"[{datetime.now().strftime('%H:%M:%S')}] ✏️ A{o.level} 止损单已手动修改: 价格={trigger_price:.2f}")
+                        self._save_state()
+                        break
     
     async def run(self):
         """运行实盘交易"""
@@ -685,6 +917,10 @@ class BinanceLiveTrader:
             
             need_new_order = await self._restore_orders(current_price)
             
+            if not need_new_order:
+                await self._check_and_supplement_orders()
+                notify_orders_recovered(self.chain_state.orders, self.config, current_price)
+            
             print(f"\n🔗 连接用户数据流...")
             self.listen_key = await self.get_listen_key()
             print(f"   listenKey: {self.listen_key[:20]}...")
@@ -695,7 +931,6 @@ class BinanceLiveTrader:
                 await self._place_entry_order(first_order)
             else:
                 print(f"\n📋 已有订单，等待WebSocket事件...")
-                await self._check_and_supplement_orders()
             
             ws_uri = f"{self.ws_url}/{self.listen_key}"
             print(f"\n📡 连接 WebSocket...")
