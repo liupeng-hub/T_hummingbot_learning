@@ -19,7 +19,7 @@ from datetime import datetime
 import aiohttp
 from dotenv import load_dotenv
 
-from .core import WeightCalculator
+from .autofish_core import WeightCalculator
 
 
 PROJECT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -56,9 +56,10 @@ class AmplitudeAnalyzer:
     根据预期收益计算权重，输出配置文件供回测和实盘使用。
     """
     
-    AMPLITUDE_RANGES = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+    AMPLITUDE_RANGES = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
     DEFAULT_LEVERAGE = Decimal("10")
     LIQUIDATION_AMPLITUDE = 10
+    VALID_AMPLITUDE_MIN = 1
     
     def __init__(self, symbol: str = "BTCUSDT", interval: str = "1d", limit: int = 1000, leverage: int = 10):
         self.symbol = symbol
@@ -162,8 +163,6 @@ class AmplitudeAnalyzer:
                 self.amplitude_counts[amp_class] += 1
         
         for amp_class, count in self.amplitude_counts.items():
-            if amp_class == 0:
-                continue
             self.probabilities[amp_class] = Decimal(count) / Decimal(total)
         
         logger.info(f"[概率计算] 完成")
@@ -180,7 +179,9 @@ class AmplitudeAnalyzer:
         for amp in self.AMPLITUDE_RANGES:
             prob = self.probabilities.get(amp, Decimal("0"))
             
-            if amp >= self.LIQUIDATION_AMPLITUDE:
+            if amp == 0:
+                self.expected_returns[amp] = Decimal("0")
+            elif amp >= self.LIQUIDATION_AMPLITUDE:
                 self.expected_returns[amp] = -prob * self.leverage
             else:
                 self.expected_returns[amp] = Decimal(amp) / 100 * self.leverage * prob
@@ -408,32 +409,38 @@ class AmplitudeAnalyzer:
         
         lines.append(f"## 振幅统计")
         lines.append(f"")
-        lines.append(f"| 振幅 | 出现次数 | 概率 | 预期收益 | 说明 |")
-        lines.append(f"|------|----------|------|----------|------|")
+        lines.append(f"| 振幅 | 出现次数 | 概率 | 累计概率 | 预期收益 | 说明 |")
+        lines.append(f"|------|----------|------|----------|----------|------|")
+        cumulative_prob = Decimal("0")
         for amp in self.AMPLITUDE_RANGES:
             count = self.amplitude_counts.get(amp, 0)
             prob = self.probabilities.get(amp, Decimal("0"))
+            cumulative_prob += prob
             ret = self.expected_returns.get(amp, Decimal("0"))
-            note = "爆仓风险" if amp >= 10 else "正收益区间" if ret > 0 else "负收益"
-            lines.append(f"| {amp}% | {count} | {float(prob)*100:.2f}% | {float(ret)*100:.4f}% | {note} |")
+            note = "爆仓风险" if amp >= 10 else "正收益区间" if ret > 0 else "不参与交易" if amp == 0 else "负收益"
+            lines.append(f"| {amp}% | {count} | {float(prob)*100:.2f}% | {float(cumulative_prob)*100:.2f}% | {float(ret)*100:.2f}% | {note} |")
         lines.append(f"")
         
         lines.append(f"## 权重分配")
         lines.append(f"")
         lines.append(f"### 衰减因子 d=0.5（激进策略）")
         lines.append(f"")
-        lines.append(f"| 振幅 | 权重 | 说明 |")
-        lines.append(f"|------|------|------|")
+        lines.append(f"| 振幅 | 权重 | 累计权重 | 说明 |")
+        lines.append(f"|------|------|----------|------|")
+        cumulative_weight = Decimal("0")
         for amp, w in sorted(self.weights.get("d_0.5", {}).items()):
-            lines.append(f"| {amp}% | {float(w)*100:.2f}% | 第{amp}层资金分配比例 |")
+            cumulative_weight += w
+            lines.append(f"| {amp}% | {float(w)*100:.2f}% | {float(cumulative_weight)*100:.2f}% | 第{amp}层资金分配比例 |")
         lines.append(f"")
         
         lines.append(f"### 衰减因子 d=1.0（保守策略）")
         lines.append(f"")
-        lines.append(f"| 振幅 | 权重 | 说明 |")
-        lines.append(f"|------|------|------|")
+        lines.append(f"| 振幅 | 权重 | 累计权重 | 说明 |")
+        lines.append(f"|------|------|----------|------|")
+        cumulative_weight = Decimal("0")
         for amp, w in sorted(self.weights.get("d_1.0", {}).items()):
-            lines.append(f"| {amp}% | {float(w)*100:.2f}% | 第{amp}层资金分配比例 |")
+            cumulative_weight += w
+            lines.append(f"| {amp}% | {float(w)*100:.2f}% | {float(cumulative_weight)*100:.2f}% | 第{amp}层资金分配比例 |")
         lines.append(f"")
         
         lines.append(f"## 推荐配置说明")

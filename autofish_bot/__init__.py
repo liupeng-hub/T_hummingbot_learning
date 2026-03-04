@@ -2,13 +2,13 @@
 Autofish V1 - 链式挂单策略
 
 包含：
-- core: 核心算法模块
-- backtest: 回测模块
-- live: 实盘交易模块
+- autofish_core: 核心算法模块
+- binance_backtest: Binance 回测模块
+- binance_live: Binance 实盘交易模块
 - amplitude_analyzer: 振幅分析模块
 """
 
-from .core import (
+from .autofish_core import (
     Order,
     ChainState,
     WeightCalculator,

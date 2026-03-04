@@ -7,12 +7,12 @@
 ```
 autofish_bot/
 ├── __init__.py                     # 模块入口
-├── core.py                         # 核心算法（订单、权重计算、价格计算）
+├── autofish_core.py                # 核心算法（订单、权重计算、价格计算）
 ├── amplitude_analyzer.py           # 振幅分析模块
 ├── amplitude_config_{symbol}.json  # 振幅分析配置（按交易对生成）
 ├── amplitude_report_{symbol}.md    # 振幅分析报告（按交易对生成）
-├── backtest.py                     # 回测模块（使用历史 K 线数据）
-├── live.py                         # 实盘模块（使用 Binance API）
+├── binance_backtest.py             # Binance 回测模块（使用历史 K 线数据）
+├── binance_live.py                 # Binance 实盘模块（使用 Binance API）
 └── README.md                       # 说明文档
 ```
 
@@ -53,24 +53,35 @@ python3 -m autofish_bot.amplitude_analyzer --symbol ETHUSDT --interval 1d --limi
 
 ```bash
 # 回测 BTCUSDT（自动加载 amplitude_config_BTCUSDT.json）
-python3 -m autofish_bot.backtest --symbol BTCUSDT --limit 500
+python3 -m autofish_bot.binance_backtest --symbol BTCUSDT --limit 500
 
 # 回测 ETHUSDT（自动加载 amplitude_config_ETHUSDT.json）
-python3 -m autofish_bot.backtest --symbol ETHUSDT --limit 500
+python3 -m autofish_bot.binance_backtest --symbol ETHUSDT --limit 500
 
 # 查看帮助
-python3 -m autofish_bot.backtest --help
+python3 -m autofish_bot.binance_backtest --help
 ```
 
 ### 3. 实盘交易
 
 ```bash
-# 实盘 BTCUSDT
-python3 -m autofish_bot.live --symbol BTCUSDT
+# 实盘 BTCUSDT（测试网）
+python3 -m autofish_bot.binance_live --symbol BTCUSDT
 
-# 实盘 ETHUSDT
-python3 -m autofish_bot.live --symbol ETHUSDT
+# 实盘 ETHUSDT（测试网）
+python3 -m autofish_bot.binance_live --symbol ETHUSDT
+
+# 实盘 BTCUSDT（主网）
+python3 -m autofish_bot.binance_live --symbol BTCUSDT --no-testnet
 ```
+
+**参数说明**：
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| --symbol | BTCUSDT | 交易对 |
+| --testnet | True | 使用测试网 |
+| --no-testnet | - | 使用主网（真实交易） |
 
 ## 核心算法
 

@@ -19,7 +19,7 @@ from datetime import datetime
 import aiohttp
 from dotenv import load_dotenv
 
-from .core import (
+from .autofish_core import (
     Order,
     ChainState,
     WeightCalculator,
@@ -39,7 +39,7 @@ ENV_FILE = os.path.join(PROJECT_DIR, ".env")
 load_dotenv(ENV_FILE)
 
 LOG_DIR = os.path.dirname(os.path.abspath(__file__))
-LOG_FILE = os.path.join(LOG_DIR, "backtest.log")
+LOG_FILE = os.path.join(LOG_DIR, "binance_backtest.log")
 
 HTTP_PROXY = os.getenv("HTTP_PROXY", "")
 HTTPS_PROXY = os.getenv("HTTPS_PROXY", "")
@@ -79,7 +79,15 @@ class BacktestEngine:
                 self.config["max_entries"] = self.amplitude_config.get_max_entries()
                 
                 logger.info(f"[配置加载] 使用振幅分析配置: {symbol}")
+                logger.info(f"  配置文件: {self.amplitude_config.config_path}")
+                logger.info(f"  交易对: {self.config.get('symbol')}")
                 logger.info(f"  杠杆: {self.config['leverage']}x")
+                logger.info(f"  总投入: {self.config['total_amount_quote']} USDT")
+                logger.info(f"  网格间距: {float(self.config['grid_spacing'])*100:.1f}%")
+                logger.info(f"  止盈比例: {float(self.config['exit_profit'])*100:.1f}%")
+                logger.info(f"  止损比例: {float(self.config['stop_loss'])*100:.1f}%")
+                logger.info(f"  衰减因子: {self.config.get('decay_factor', 0.5)}")
+                logger.info(f"  最大层级: {self.config['max_entries']}")
                 logger.info(f"  权重: {self.custom_weights}")
             else:
                 logger.warning("[配置加载] 未找到振幅分析配置，使用默认权重")
@@ -371,6 +379,7 @@ async def main():
     args = parser.parse_args()
     
     config = get_default_config()
+    config["symbol"] = args.symbol
     config.update({
         "stop_loss": Decimal(str(args.stop_loss)),
         "total_amount_quote": Decimal(str(args.total_amount)),

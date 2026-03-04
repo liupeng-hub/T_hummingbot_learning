@@ -5,9 +5,10 @@ Autofish V1 实盘交易模块
 
 运行方式：
 
-    python3 -m autofish_bot.live
+    python3 -m autofish_bot.live --symbol BTCUSDT
 """
 
+import argparse
 import asyncio
 import json
 import hmac
@@ -22,7 +23,7 @@ from datetime import datetime
 import aiohttp
 from dotenv import load_dotenv
 
-from .core import (
+from .autofish_core import (
     Order,
     ChainState,
     WeightCalculator,
@@ -39,8 +40,8 @@ ENV_FILE = os.path.join(PROJECT_DIR, ".env")
 load_dotenv(ENV_FILE)
 
 LOG_DIR = os.path.dirname(os.path.abspath(__file__))
-LOG_FILE = os.path.join(LOG_DIR, "live.log")
-STATE_FILE = os.path.join(LOG_DIR, "live_state.json")
+LOG_FILE = os.path.join(LOG_DIR, "binance_live.log")
+STATE_FILE = os.path.join(LOG_DIR, "binance_live_state.json")
 
 WECHAT_WEBHOOK = os.getenv("WECHAT_WEBHOOK", "")
 HTTP_PROXY = os.getenv("HTTP_PROXY", "")
@@ -222,7 +223,15 @@ class BinanceLiveTrader:
                 self.config["max_entries"] = self.amplitude_config.get_max_entries()
                 
                 logger.info(f"[配置加载] 使用振幅分析配置: {symbol}")
+                logger.info(f"  配置文件: {self.amplitude_config.config_path}")
+                logger.info(f"  交易对: {self.config.get('symbol')}")
                 logger.info(f"  杠杆: {self.config['leverage']}x")
+                logger.info(f"  总投入: {self.config['total_amount_quote']} USDT")
+                logger.info(f"  网格间距: {float(self.config['grid_spacing'])*100:.1f}%")
+                logger.info(f"  止盈比例: {float(self.config['exit_profit'])*100:.1f}%")
+                logger.info(f"  止损比例: {float(self.config['stop_loss'])*100:.1f}%")
+                logger.info(f"  衰减因子: {self.config.get('decay_factor', 0.5)}")
+                logger.info(f"  最大层级: {self.config['max_entries']}")
                 logger.info(f"  权重: {self.custom_weights}")
             else:
                 logger.warning("[配置加载] 未找到振幅分析配置，使用默认权重")
@@ -262,7 +271,7 @@ class BinanceLiveTrader:
     
     def _sign(self, params: dict) -> str:
         """签名"""
-        query_string = "&".join(f"{k}={v}" for k, v in sorted(params.items()))
+        query_string = "&".join(f"{k}={v}" for k, v in params.items())
         signature = hmac.new(
             self.api_secret.encode(),
             query_string.encode(),
@@ -341,7 +350,8 @@ class BinanceLiveTrader:
             "quantity": f"{quantity:.3f}",
         }
         if price:
-            params["price"] = f"{price:.2f}"
+            price = (price / Decimal("0.1")).quantize(Decimal("1")) * Decimal("0.1")
+            params["price"] = f"{price:.1f}"
             params["timeInForce"] = "GTC"
         
         return await self._request("POST", "/fapi/v1/order", params, signed=True)
@@ -360,6 +370,8 @@ class BinanceLiveTrader:
     async def get_open_algo_orders(self, symbol: str) -> list:
         """获取 Algo 条件单"""
         data = await self._request("GET", "/fapi/v1/openAlgoOrders", {"symbol": symbol}, signed=True)
+        if isinstance(data, list):
+            return data
         return data.get("orders", [])
     
     async def place_algo_order(self, symbol: str, side: str, order_type: str, quantity: Decimal, trigger_price: Decimal) -> dict:
@@ -657,7 +669,11 @@ class BinanceLiveTrader:
         print(f"  日志文件: {LOG_FILE}")
         print(f"  状态文件: {STATE_FILE}")
         
-        async with aiohttp.ClientSession() as session:
+        connector = None
+        if self.proxy:
+            connector = aiohttp.TCPConnector(ssl=False)
+        
+        async with aiohttp.ClientSession(connector=connector) as session:
             self.session = session
             
             print(f"\n📊 获取账户信息...")
@@ -688,8 +704,6 @@ class BinanceLiveTrader:
             try:
                 ws_kwargs = {}
                 if self.proxy:
-                    connector = aiohttp.TCPConnector(ssl=False)
-                    ws_kwargs["connector"] = connector
                     ws_kwargs["proxy"] = self.proxy
                 
                 async with session.ws_connect(ws_uri, **ws_kwargs) as websocket:
@@ -728,13 +742,20 @@ class BinanceLiveTrader:
 
 async def main():
     """主函数"""
+    parser = argparse.ArgumentParser(description="Autofish V1 实盘交易")
+    parser.add_argument("--symbol", type=str, default="BTCUSDT", help="交易对 (默认: BTCUSDT)")
+    parser.add_argument("--testnet", action="store_true", default=True, help="使用测试网 (默认: True)")
+    parser.add_argument("--no-testnet", dest="testnet", action="store_false", help="使用主网")
+    args = parser.parse_args()
+    
     config = get_default_config()
+    config["symbol"] = args.symbol
     config.update({
         "stop_loss": Decimal("0.08"),
         "total_amount_quote": Decimal("1200"),
     })
     
-    trader = BinanceLiveTrader(config, testnet=True)
+    trader = BinanceLiveTrader(config, testnet=args.testnet)
     await trader.run()
 
 
