@@ -52,3 +52,8 @@ conf/.password_verification
 tests/autofish_state.json
 tests/realtime_simulator_api.log
 webhook_forwarder.py
+
+# Autofish bot
+autofish_bot/*.log
+autofish_bot/*.json
+autofish_bot/__pycache__/
