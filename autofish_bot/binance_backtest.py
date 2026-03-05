@@ -44,13 +44,23 @@ LOG_FILE = os.path.join(LOG_DIR, "binance_backtest.log")
 HTTP_PROXY = os.getenv("HTTP_PROXY", "")
 HTTPS_PROXY = os.getenv("HTTPS_PROXY", "")
 
+class FlushFileHandler(logging.FileHandler):
+    """每次写入后自动刷新的 FileHandler"""
+    def emit(self, record):
+        super().emit(record)
+        self.flush()
+
+file_handler = FlushFileHandler(LOG_FILE, mode='a', encoding='utf-8')
+file_handler.setLevel(logging.INFO)
+file_handler.setFormatter(logging.Formatter('%(asctime)s [%(levelname)s] %(message)s'))
+
+console_handler = logging.StreamHandler()
+console_handler.setLevel(logging.INFO)
+console_handler.setFormatter(logging.Formatter('%(asctime)s [%(levelname)s] %(message)s'))
+
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s [%(levelname)s] %(message)s',
-    handlers=[
-        logging.FileHandler(LOG_FILE, encoding='utf-8'),
-        logging.StreamHandler()
-    ]
+    handlers=[file_handler, console_handler]
 )
 logger = logging.getLogger(__name__)
 

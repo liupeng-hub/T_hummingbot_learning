@@ -22,6 +22,7 @@ import logging
 import os
 import requests
 from decimal import Decimal
+from textwrap import dedent
 from typing import List, Optional, Dict, Any
 from datetime import datetime
 from dotenv import load_dotenv
@@ -60,13 +61,23 @@ STATE_FILE = os.path.join(LOG_DIR, "longport_live_state.json")
 
 WECHAT_WEBHOOK = os.getenv("WECHAT_WEBHOOK", "")
 
+class FlushFileHandler(logging.FileHandler):
+    """每次写入后自动刷新的 FileHandler"""
+    def emit(self, record):
+        super().emit(record)
+        self.flush()
+
+file_handler = FlushFileHandler(LOG_FILE, mode='a', encoding='utf-8')
+file_handler.setLevel(logging.INFO)
+file_handler.setFormatter(logging.Formatter('%(asctime)s [%(levelname)s] %(message)s'))
+
+console_handler = logging.StreamHandler()
+console_handler.setLevel(logging.INFO)
+console_handler.setFormatter(logging.Formatter('%(asctime)s [%(levelname)s] %(message)s'))
+
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s [%(levelname)s] %(message)s',
-    handlers=[
-        logging.FileHandler(LOG_FILE, encoding='utf-8'),
-        logging.StreamHandler()
-    ]
+    handlers=[file_handler, console_handler]
 )
 logger = logging.getLogger(__name__)
 
@@ -100,14 +111,16 @@ def notify_entry_order(order: Order, config: dict):
     """通知入场单下单"""
     max_entries = config.get('max_entries', 4)
     currency = _get_currency_from_symbol(config.get('symbol', '700.HK'))
-    content = f"""> **层级**: A{order.level} (第{order.level}层/共{max_entries}层)
-> **入场价**: {order.entry_price:.2f} {currency}
-> **数量**: {order.quantity:.4f} 股
-> **金额**: {order.stake_amount:.2f} {currency}
-> **止盈价**: {order.take_profit_price:.2f} {currency} (+{float(config.get('exit_profit', Decimal('0.01')))*100:.1f}%)
-> **止损价**: {order.stop_loss_price:.2f} {currency} (-{float(config.get('stop_loss', Decimal('0.08')))*100:.1f}%)
-> **订单ID**: {order.order_id}
-> **时间**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"""
+    content = dedent(f"""
+            > **层级**: A{order.level} (第{order.level}层/共{max_entries}层)
+            > **入场价**: {order.entry_price:.2f} {currency}
+            > **数量**: {order.quantity:.4f} 股
+            > **金额**: {order.stake_amount:.2f} {currency}
+            > **止盈价**: {order.take_profit_price:.2f} {currency} (+{float(config.get('exit_profit', Decimal('0.01')))*100:.1f}%)
+            > **止损价**: {order.stop_loss_price:.2f} {currency} (-{float(config.get('stop_loss', Decimal('0.08')))*100:.1f}%)
+            > **订单ID**: {order.order_id}
+            > **时间**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+        """).strip()
     send_wechat_notification(f"🟢 入场单下单 A{order.level}", content)
 
 
@@ -115,13 +128,15 @@ def notify_entry_filled(order: Order, filled_price: Decimal, config: dict):
     """通知入场成交"""
     max_entries = config.get('max_entries', 4)
     currency = _get_currency_from_symbol(config.get('symbol', '700.HK'))
-    content = f"""> **层级**: A{order.level} (第{order.level}层/共{max_entries}层)
-> **成交价**: {filled_price:.2f} {currency}
-> **数量**: {order.quantity:.4f} 股
-> **金额**: {order.stake_amount:.2f} {currency}
-> **止盈价**: {order.take_profit_price:.2f} {currency}
-> **止损价**: {order.stop_loss_price:.2f} {currency}
-> **时间**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"""
+    content = dedent(f"""
+            > **层级**: A{order.level} (第{order.level}层/共{max_entries}层)
+            > **成交价**: {filled_price:.2f} {currency}
+            > **数量**: {order.quantity:.4f} 股
+            > **金额**: {order.stake_amount:.2f} {currency}
+            > **止盈价**: {order.take_profit_price:.2f} {currency}
+            > **止损价**: {order.stop_loss_price:.2f} {currency}
+            > **时间**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+        """).strip()
     send_wechat_notification(f"✅ 入场成交 A{order.level}", content)
 
 
@@ -129,10 +144,12 @@ def notify_take_profit(order: Order, profit: Decimal, config: dict):
     """通知止盈触发"""
     max_entries = config.get('max_entries', 4)
     currency = _get_currency_from_symbol(config.get('symbol', '700.HK'))
-    content = f"""> **层级**: A{order.level} (第{order.level}层/共{max_entries}层)
-> **止盈价**: {order.take_profit_price:.2f} {currency}
-> **盈亏**: +{profit:.2f} {currency}
-> **时间**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"""
+    content = dedent(f"""
+            > **层级**: A{order.level} (第{order.level}层/共{max_entries}层)
+            > **止盈价**: {order.take_profit_price:.2f} {currency}
+            > **盈亏**: +{profit:.2f} {currency}
+            > **时间**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+        """).strip()
     send_wechat_notification(f"🎯 止盈触发 A{order.level}", content)
 
 
@@ -140,10 +157,12 @@ def notify_stop_loss(order: Order, profit: Decimal, config: dict):
     """通知止损触发"""
     max_entries = config.get('max_entries', 4)
     currency = _get_currency_from_symbol(config.get('symbol', '700.HK'))
-    content = f"""> **层级**: A{order.level} (第{order.level}层/共{max_entries}层)
-> **止损价**: {order.stop_loss_price:.2f} {currency}
-> **盈亏**: {profit:.2f} {currency}
-> **时间**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"""
+    content = dedent(f"""
+            > **层级**: A{order.level} (第{order.level}层/共{max_entries}层)
+            > **止损价**: {order.stop_loss_price:.2f} {currency}
+            > **盈亏**: {profit:.2f} {currency}
+            > **时间**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+        """).strip()
     send_wechat_notification(f"🛑 止损触发 A{order.level}", content)
 
 
@@ -151,12 +170,14 @@ def notify_startup(config: dict, current_price: Decimal):
     """通知程序启动"""
     symbol = config.get('symbol', '700.HK')
     currency = _get_currency_from_symbol(symbol)
-    content = f"""> **交易对**: {symbol}
-> **当前价格**: {current_price:.2f} {currency}
-> **网格间距**: {float(config.get('grid_spacing', Decimal('0.01')))*100}%
-> **止盈**: {float(config.get('exit_profit', Decimal('0.01')))*100}%
-> **止损**: {float(config.get('stop_loss', Decimal('0.08')))*100}%
-> **启动时间**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"""
+    content = dedent(f"""
+            > **交易对**: {symbol}
+            > **当前价格**: {current_price:.2f} {currency}
+            > **网格间距**: {float(config.get('grid_spacing', Decimal('0.01')))*100}%
+            > **止盈**: {float(config.get('exit_profit', Decimal('0.01')))*100}%
+            > **止损**: {float(config.get('stop_loss', Decimal('0.08')))*100}%
+            > **启动时间**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+        """).strip()
     send_wechat_notification("🚀 Autofish V1 LongPort 启动", content)
 
 

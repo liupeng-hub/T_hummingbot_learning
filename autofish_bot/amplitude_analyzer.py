@@ -34,23 +34,34 @@ LOG_DIR = os.path.dirname(os.path.abspath(__file__))
 ENV_FILE = os.path.join(LOG_DIR, ".env")
 load_dotenv(ENV_FILE)
 LOG_FILE = os.path.join(LOG_DIR, "amplitude_analyzer.log")
+OUTPUT_DIR = os.path.join(LOG_DIR, "amplitude_analyzer_output")
 
 def get_config_filepath(symbol: str) -> str:
-    return os.path.join(LOG_DIR, f"amplitude_config_{symbol}.json")
+    return os.path.join(OUTPUT_DIR, f"amplitude_config_{symbol}.json")
 
 def get_report_filepath(symbol: str) -> str:
-    return os.path.join(LOG_DIR, f"amplitude_report_{symbol}.md")
+    return os.path.join(OUTPUT_DIR, f"amplitude_report_{symbol}.md")
 
 HTTP_PROXY = os.getenv("HTTP_PROXY", "")
 HTTPS_PROXY = os.getenv("HTTPS_PROXY", "")
 
+class FlushFileHandler(logging.FileHandler):
+    """每次写入后自动刷新的 FileHandler"""
+    def emit(self, record):
+        super().emit(record)
+        self.flush()
+
+file_handler = FlushFileHandler(LOG_FILE, mode='a', encoding='utf-8')
+file_handler.setLevel(logging.INFO)
+file_handler.setFormatter(logging.Formatter('%(asctime)s [%(levelname)s] %(message)s'))
+
+console_handler = logging.StreamHandler()
+console_handler.setLevel(logging.INFO)
+console_handler.setFormatter(logging.Formatter('%(asctime)s [%(levelname)s] %(message)s'))
+
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s [%(levelname)s] %(message)s',
-    handlers=[
-        logging.FileHandler(LOG_FILE, encoding='utf-8'),
-        logging.StreamHandler()
-    ]
+    handlers=[file_handler, console_handler]
 )
 logger = logging.getLogger(__name__)
 
@@ -403,6 +414,8 @@ class AmplitudeAnalyzer:
         if filepath is None:
             filepath = get_config_filepath(self.symbol)
         
+        os.makedirs(os.path.dirname(filepath), exist_ok=True)
+        
         weights_d05 = self.weights.get("d_0.5", {})
         max_entries = min(4, len(weights_d05))
         
@@ -438,6 +451,8 @@ class AmplitudeAnalyzer:
         """保存分析报告到Markdown文件"""
         if filepath is None:
             filepath = get_report_filepath(self.symbol)
+        
+        os.makedirs(os.path.dirname(filepath), exist_ok=True)
         
         lines = []
         lines.append(f"# Autofish V1 振幅分析报告")

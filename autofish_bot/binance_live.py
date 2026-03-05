@@ -27,6 +27,7 @@ import requests
 from decimal import Decimal
 from typing import List, Optional, Dict, Any
 from datetime import datetime
+from textwrap import dedent
 import aiohttp
 from dotenv import load_dotenv
 
@@ -53,15 +54,32 @@ WECHAT_WEBHOOK = os.getenv("WECHAT_WEBHOOK", "")
 HTTP_PROXY = os.getenv("HTTP_PROXY", "")
 HTTPS_PROXY = os.getenv("HTTPS_PROXY", "")
 
+file_handler = logging.FileHandler(LOG_FILE, mode='a', encoding='utf-8')
+file_handler.setLevel(logging.INFO)
+file_handler.setFormatter(logging.Formatter('%(asctime)s [%(levelname)s] %(message)s'))
+
+console_handler = logging.StreamHandler()
+console_handler.setLevel(logging.INFO)
+console_handler.setFormatter(logging.Formatter('%(asctime)s [%(levelname)s] %(message)s'))
+
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s [%(levelname)s] %(message)s',
-    handlers=[
-        logging.FileHandler(LOG_FILE, encoding='utf-8'),
-        logging.StreamHandler()
-    ]
+    handlers=[file_handler, console_handler]
 )
 logger = logging.getLogger(__name__)
+
+class FlushFileHandler(logging.FileHandler):
+    """每次写入后自动刷新的 FileHandler"""
+    def emit(self, record):
+        super().emit(record)
+        self.flush()
+
+for i, handler in enumerate(logging.getLogger().handlers):
+    if isinstance(handler, logging.FileHandler) and not isinstance(handler, FlushFileHandler):
+        flush_handler = FlushFileHandler(LOG_FILE, mode='a', encoding='utf-8')
+        flush_handler.setLevel(handler.level)
+        flush_handler.setFormatter(handler.formatter)
+        logging.getLogger().handlers[i] = flush_handler
 
 MESSAGE_COUNTER_FILE = os.path.join(LOG_DIR, "message_counter.txt")
 
@@ -111,47 +129,55 @@ def send_wechat_notification(title: str, content: str) -> bool:
 def notify_entry_order(order: Order, config: dict):
     """通知入场单下单"""
     max_entries = config.get('max_entries', 4)
-    content = f"""> **层级**: A{order.level} (第{order.level}层/共{max_entries}层)
-> **入场价**: {order.entry_price:.2f} USDT
-> **数量**: {order.quantity:.6f} BTC
-> **金额**: {order.stake_amount:.2f} USDT
-> **止盈价**: {order.take_profit_price:.2f} USDT (+{float(config.get('exit_profit', Decimal('0.01')))*100:.1f}%)
-> **止损价**: {order.stop_loss_price:.2f} USDT (-{float(config.get('stop_loss', Decimal('0.08')))*100:.1f}%)
-> **订单ID**: {order.order_id}
-> **时间**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"""
+    content = dedent(f"""
+            > **层级**: A{order.level} (第{order.level}层/共{max_entries}层)
+            > **入场价**: {order.entry_price:.2f} USDT
+            > **数量**: {order.quantity:.6f} BTC
+            > **金额**: {order.stake_amount:.2f} USDT
+            > **止盈价**: {order.take_profit_price:.2f} USDT (+{float(config.get('exit_profit', Decimal('0.01')))*100:.1f}%)
+            > **止损价**: {order.stop_loss_price:.2f} USDT (-{float(config.get('stop_loss', Decimal('0.08')))*100:.1f}%)
+            > **订单ID**: {order.order_id}
+            > **时间**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+        """).strip()
     send_wechat_notification(f"🟢 入场单下单 A{order.level}", content)
 
 
 def notify_entry_filled(order: Order, filled_price: Decimal, commission: Decimal, config: dict):
     """通知入场成交"""
     max_entries = config.get('max_entries', 4)
-    content = f"""> **层级**: A{order.level} (第{order.level}层/共{max_entries}层)
-> **成交价**: {filled_price:.2f} USDT
-> **数量**: {order.quantity:.6f} BTC
-> **金额**: {order.stake_amount:.2f} USDT
-> **止盈价**: {order.take_profit_price:.2f} USDT (+{float(config.get('exit_profit', Decimal('0.01')))*100:.1f}%)
-> **止损价**: {order.stop_loss_price:.2f} USDT (-{float(config.get('stop_loss', Decimal('0.08')))*100:.1f}%)
-> **时间**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"""
+    content = dedent(f"""
+            > **层级**: A{order.level} (第{order.level}层/共{max_entries}层)
+            > **成交价**: {filled_price:.2f} USDT
+            > **数量**: {order.quantity:.6f} BTC
+            > **金额**: {order.stake_amount:.2f} USDT
+            > **止盈价**: {order.take_profit_price:.2f} USDT (+{float(config.get('exit_profit', Decimal('0.01')))*100:.1f}%)
+            > **止损价**: {order.stop_loss_price:.2f} USDT (-{float(config.get('stop_loss', Decimal('0.08')))*100:.1f}%)
+            > **时间**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+        """).strip()
     send_wechat_notification(f"✅ 入场成交 A{order.level}", content)
 
 
 def notify_take_profit(order: Order, profit: Decimal, config: dict):
     """通知止盈触发"""
     max_entries = config.get('max_entries', 4)
-    content = f"""> **层级**: A{order.level} (第{order.level}层/共{max_entries}层)
-> **止盈价**: {order.take_profit_price:.2f} USDT
-> **盈亏**: +{profit:.2f} USDT
-> **时间**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"""
+    content = dedent(f"""
+            > **层级**: A{order.level} (第{order.level}层/共{max_entries}层)
+            > **止盈价**: {order.take_profit_price:.2f} USDT
+            > **盈亏**: +{profit:.2f} USDT
+            > **时间**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+        """).strip()
     send_wechat_notification(f"🎯 止盈触发 A{order.level}", content)
 
 
 def notify_stop_loss(order: Order, profit: Decimal, config: dict):
     """通知止损触发"""
     max_entries = config.get('max_entries', 4)
-    content = f"""> **层级**: A{order.level} (第{order.level}层/共{max_entries}层)
-> **止损价**: {order.stop_loss_price:.2f} USDT
-> **盈亏**: {profit:.2f} USDT
-> **时间**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"""
+    content = dedent(f"""
+            > **层级**: A{order.level} (第{order.level}层/共{max_entries}层)
+            > **止损价**: {order.stop_loss_price:.2f} USDT
+            > **盈亏**: {profit:.2f} USDT
+            > **时间**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+        """).strip()
     send_wechat_notification(f"🛑 止损触发 A{order.level}", content)
 
 
@@ -175,42 +201,50 @@ def notify_orders_recovered(orders: list, config: dict, current_price: Decimal):
         level_text = f"第{order.level}层/共{max_entries}层"
         
         if order.state == 'pending':
-            order_lines.append(f"""**A{order.level}** `{state_text}` `{level_text}`
-> 入场价: {order.entry_price:.2f} USDT
-> 止盈价: {order.take_profit_price:.2f} USDT (+{exit_profit_pct:.1f}%)
-> 止损价: {order.stop_loss_price:.2f} USDT (-{stop_loss_pct:.1f}%)
-> 订单ID: {order.order_id}""")
+            order_lines.append(dedent(f"""
+                **A{order.level}** `{state_text}` `{level_text}`
+                > 入场价: {order.entry_price:.2f} USDT
+                > 止盈价: {order.take_profit_price:.2f} USDT (+{exit_profit_pct:.1f}%)
+                > 止损价: {order.stop_loss_price:.2f} USDT (-{stop_loss_pct:.1f}%)
+                > 订单ID: {order.order_id}
+            """).strip())
         elif order.state == 'filled':
             tp_suffix = "（补）" if order.tp_supplemented else ""
             sl_suffix = "（补）" if order.sl_supplemented else ""
             tp_info = f"止盈ID: {order.tp_order_id}{tp_suffix}" if order.tp_order_id else "止盈ID: 无"
             sl_info = f"止损ID: {order.sl_order_id}{sl_suffix}" if order.sl_order_id else "止损ID: 无"
-            order_lines.append(f"""**A{order.level}** `{state_text}` `{level_text}`
-> 入场价: {order.entry_price:.2f} USDT
-> 止盈价: {order.take_profit_price:.2f} USDT (+{exit_profit_pct:.1f}%)
-> 止损价: {order.stop_loss_price:.2f} USDT (-{stop_loss_pct:.1f}%)
-> {tp_info}
-> {sl_info}""")
+            order_lines.append(dedent(f"""
+                **A{order.level}** `{state_text}` `{level_text}`
+                > 入场价: {order.entry_price:.2f} USDT
+                > 止盈价: {order.take_profit_price:.2f} USDT (+{exit_profit_pct:.1f}%)
+                > 止损价: {order.stop_loss_price:.2f} USDT (-{stop_loss_pct:.1f}%)
+                > {tp_info}
+                > {sl_info}
+            """).strip())
         elif order.state == 'closed':
             close_reason = "止盈" if order.close_reason == "take_profit" else "止损"
             profit_text = f"+{order.profit:.2f}" if order.profit and order.profit > 0 else f"{order.profit:.2f}" if order.profit else "0.00"
-            order_lines.append(f"""**A{order.level}** `{state_text}` `{level_text}` ({close_reason})
-> 入场价: {order.entry_price:.2f} USDT
-> 盈亏: {profit_text} USDT""")
+            order_lines.append(dedent(f"""
+                **A{order.level}** `{state_text}` `{level_text}` ({close_reason})
+                > 入场价: {order.entry_price:.2f} USDT
+                > 盈亏: {profit_text} USDT
+            """).strip())
         else:
-            order_lines.append(f"""**A{order.level}** `{state_text}` `{level_text}`""")
+            order_lines.append(f"**A{order.level}** `{state_text}` `{level_text}`")
     
     orders_content = "\n\n".join(order_lines)
     
-    content = f"""> **交易对**: {symbol}
-> **当前价格**: {current_price:.2f} USDT
-> **恢复时间**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-
----
-
-### 📋 订单列表 (共{len(orders)}个)
-
-{orders_content}"""
+    content = dedent(f"""
+            > **交易对**: {symbol}
+            > **当前价格**: {current_price:.2f} USDT
+            > **恢复时间**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+            
+            ---
+            
+            ### 📋 订单列表 (共{len(orders)}个)
+            
+            {orders_content}
+        """).strip()
     
     send_wechat_notification("🔄 订单恢复", content)
 
@@ -218,13 +252,15 @@ def notify_orders_recovered(orders: list, config: dict, current_price: Decimal):
 def notify_startup(config: dict, current_price: Decimal):
     """通知程序启动"""
     symbol = config.get('symbol', 'BTCUSDT')
-    content = f"""> **交易对**: {symbol}
-> **当前价格**: {current_price:.2f} USDT
-> **网格间距**: {float(config.get('grid_spacing', Decimal('0.01')))*100}%
-> **止盈**: {float(config.get('exit_profit', Decimal('0.01')))*100}%
-> **止损**: {float(config.get('stop_loss', Decimal('0.08')))*100}%
-> **杠杆**: {config.get('leverage', 10)}x
-> **启动时间**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"""
+    content = dedent(f"""
+            > **交易对**: {symbol}
+            > **当前价格**: {current_price:.2f} USDT
+            > **网格间距**: {float(config.get('grid_spacing', Decimal('0.01')))*100}%
+            > **止盈**: {float(config.get('exit_profit', Decimal('0.01')))*100}%
+            > **止损**: {float(config.get('stop_loss', Decimal('0.08')))*100}%
+            > **杠杆**: {config.get('leverage', 10)}x
+            > **启动时间**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+        """).strip()
     send_wechat_notification("🚀 Autofish V1 启动", content)
 
 
@@ -571,6 +607,8 @@ class BinanceLiveTrader:
             algo_ids = {o.get("algoId") for o in algo_orders if o.get("algoId")}
             logger.info(f"[状态恢复] Binance 上有 {len(algo_ids)} 个 Algo 条件单")
             
+            orders_to_remove = []
+            
             for order in self.chain_state.orders:
                 logger.info(f"[订单恢复] A{order.level}: state={order.state}")
                 logger.info(f"  主订单: order_id={order.order_id}, entry_price={order.entry_price}")
@@ -588,15 +626,21 @@ class BinanceLiveTrader:
                             logger.info(f"[状态同步] A{order.level} 已在 Binance 成交，更新本地状态")
                             print(f"   ⚡ A{order.level} 已在 Binance 成交，同步状态")
                         elif binance_status == "CANCELED" or binance_status == "EXPIRED":
-                            order.set_state("cancelled", f"程序重启同步-{binance_status}")
-                            logger.info(f"[状态同步] A{order.level} 在 Binance 已取消")
-                            print(f"   🗑️ A{order.level} 在 Binance 已取消")
+                            orders_to_remove.append(order)
+                            logger.info(f"[状态同步] A{order.level} 在 Binance 已取消，将删除本地订单")
+                            print(f"   🗑️ A{order.level} 在 Binance 已取消，将删除")
                         elif binance_status == "NEW" or binance_status == "PARTIALLY_FILLED":
                             logger.info(f"[状态同步] A{order.level} 在 Binance 仍挂单中")
                         else:
                             logger.info(f"[状态同步] A{order.level} Binance 状态: {binance_status}")
                     except Exception as e:
-                        logger.error(f"[状态同步] 查询 Binance 订单状态失败: {e}")
+                        error_msg = str(e)
+                        if "Order does not exist" in error_msg or "-2013" in error_msg:
+                            orders_to_remove.append(order)
+                            logger.warning(f"[状态同步] A{order.level} 在 Binance 不存在，将删除本地订单")
+                            print(f"   ❌ A{order.level} 在 Binance 不存在，将删除")
+                        else:
+                            logger.error(f"[状态同步] 查询 Binance 订单状态失败: {e}")
                 
                 if order.state == "filled":
                     if order.tp_order_id:
@@ -618,8 +662,13 @@ class BinanceLiveTrader:
                     logger.info(f"  止盈单: tp_order_id={order.tp_order_id}")
                     logger.info(f"  止损单: sl_order_id={order.sl_order_id}")
                 
-                print(f"   A{order.level}: state={order.state}, order_id={order.order_id}, "
-                      f"tp_id={order.tp_order_id}, sl_id={order.sl_order_id}")
+                if order not in orders_to_remove:
+                    print(f"   A{order.level}: state={order.state}, order_id={order.order_id}, "
+                          f"tp_id={order.tp_order_id}, sl_id={order.sl_order_id}")
+            
+            for order in orders_to_remove:
+                self.chain_state.orders.remove(order)
+                logger.info(f"[删除订单] A{order.level} 已从本地删除")
             
             self._save_state()
             
