@@ -142,17 +142,33 @@ def send_wechat_notification(title: str, content: str) -> bool:
 def notify_entry_order(order: Order, config: dict):
     """通知入场单下单"""
     max_entries = config.get('max_entries', 4)
-    content = dedent(f"""
-            > **层级**: A{order.level} (第{order.level}层/共{max_entries}层)
-            > **入场价**: {order.entry_price:.2f} USDT
-            > **数量**: {order.quantity:.6f} BTC
-            > **金额**: {order.stake_amount:.2f} USDT
-            > **止盈价**: {order.take_profit_price:.2f} USDT (+{float(config.get('exit_profit', Decimal('0.01')))*100:.1f}%)
-            > **止损价**: {order.stop_loss_price:.2f} USDT (-{float(config.get('stop_loss', Decimal('0.08')))*100:.1f}%)
-            > **订单ID**: {order.order_id}
-            > **时间**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-        """).strip()
+    content = dedent(f"""\
+        > **层级**: A{order.level} (第{order.level}层/共{max_entries}层)
+        > **入场价**: {order.entry_price:.2f} USDT
+        > **数量**: {order.quantity:.6f} BTC
+        > **金额**: {order.stake_amount:.2f} USDT
+        > **止盈价**: {order.take_profit_price:.2f} USDT (+{float(config.get('exit_profit', Decimal('0.01')))*100:.1f}%)
+        > **止损价**: {order.stop_loss_price:.2f} USDT (-{float(config.get('stop_loss', Decimal('0.08')))*100:.1f}%)
+        > **订单ID**: {order.order_id}
+        > **时间**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}""").strip()
+    
     send_wechat_notification(f"🟢 入场单下单 A{order.level}", content)
+
+
+def notify_entry_order_supplement(order: Order, config: dict):
+    """通知入场单补下（恢复过程中）"""
+    max_entries = config.get('max_entries', 4)
+    content = dedent(f"""\
+        > **层级**: A{order.level} (第{order.level}层/共{max_entries}层)
+        > **入场价**: {order.entry_price:.2f} USDT
+        > **数量**: {order.quantity:.6f} BTC
+        > **金额**: {order.stake_amount:.2f} USDT
+        > **止盈价**: {order.take_profit_price:.2f} USDT (+{float(config.get('exit_profit', Decimal('0.01')))*100:.1f}%)
+        > **止损价**: {order.stop_loss_price:.2f} USDT (-{float(config.get('stop_loss', Decimal('0.08')))*100:.1f}%)
+        > **订单ID**: {order.order_id}
+        > **时间**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}""").strip()
+    
+    send_wechat_notification(f"📥 入场单补下 A{order.level}", content)
 
 
 def notify_entry_filled(order: Order, filled_price: Decimal, commission: Decimal, config: dict):
@@ -195,7 +211,7 @@ def notify_stop_loss(order: Order, profit: Decimal, config: dict):
 
 
 def notify_orders_recovered(orders: list, config: dict, current_price: Decimal, pnl_info: dict = None):
-    """通知订单恢复"""
+    """通知订单同步"""
     max_entries = config.get('max_entries', 4)
     symbol = config.get('symbol', 'BTCUSDT')
     exit_profit_pct = float(config.get('exit_profit', Decimal('0.01'))) * 100
@@ -221,17 +237,20 @@ def notify_orders_recovered(orders: list, config: dict, current_price: Decimal, 
                 > 止损价: {order.stop_loss_price:.2f} USDT (-{stop_loss_pct:.1f}%)
                 > 订单ID: {order.order_id}"""))
         elif order.state == 'filled':
-            tp_suffix = "（补）" if order.tp_supplemented else ""
-            sl_suffix = "（补）" if order.sl_supplemented else ""
-            tp_info = f"止盈ID: {order.tp_order_id}{tp_suffix}" if order.tp_order_id else "止盈ID: 无"
-            sl_info = f"止损ID: {order.sl_order_id}{sl_suffix}" if order.sl_order_id else "止损ID: 无"
+            extra_lines = []
+            if order.tp_supplemented and order.tp_order_id:
+                extra_lines.append(f"> 止盈ID: {order.tp_order_id}（补）")
+            if order.sl_supplemented and order.sl_order_id:
+                extra_lines.append(f"> 止损ID: {order.sl_order_id}（补）")
+            
             order_lines.append(dedent(f"""\
                 **A{order.level}** `{state_text}` `{level_text}`
                 > 入场价: {order.entry_price:.2f} USDT
                 > 止盈价: {order.take_profit_price:.2f} USDT (+{exit_profit_pct:.1f}%)
-                > 止损价: {order.stop_loss_price:.2f} USDT (-{stop_loss_pct:.1f}%)
-                > {tp_info}
-                > {sl_info}"""))
+                > 止损价: {order.stop_loss_price:.2f} USDT (-{stop_loss_pct:.1f}%)"""))
+            
+            if extra_lines:
+                order_lines[-1] += "\n" + "\n".join(extra_lines)
         elif order.state == 'closed':
             close_reason = "止盈" if order.close_reason == "take_profit" else "止损"
             profit_text = f"+{order.profit:.2f}" if order.profit and order.profit > 0 else f"{order.profit:.2f}" if order.profit else "0.00"
@@ -243,10 +262,10 @@ def notify_orders_recovered(orders: list, config: dict, current_price: Decimal, 
             order_lines.append(dedent(f"""\
                 **A{order.level}** `{state_text}` `{level_text}`"""))
     
-    orders_content = "".join(order_lines)
+    orders_content = "\n\n".join(order_lines)
     
     content_lines = [
-        f"> **交易对**: {symbol}",
+        f"> **交易标的**: {symbol}",
         f"> **当前价格**: {current_price:.2f} USDT",
         f"> **恢复时间**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
         "",
@@ -256,27 +275,29 @@ def notify_orders_recovered(orders: list, config: dict, current_price: Decimal, 
     ]
     
     if pnl_info:
-        content_lines.append("")
-        content_lines.append("### 💰 盈亏信息")
-        content_lines.append(f"> **持仓数量**: {pnl_info.get('position_qty', 'N/A')}")
-        content_lines.append(f"> **持仓均价**: {pnl_info.get('entry_price', 'N/A')}")
-        
-        unrealized_pnl = pnl_info.get('unrealized_pnl')
-        roi = pnl_info.get('roi')
-        if unrealized_pnl and roi:
-            pnl_prefix = "+" if float(unrealized_pnl) > 0 else ""
-            roi_prefix = "+" if float(roi) > 0 else ""
-            content_lines.append(f"> **未实现盈亏**: {pnl_prefix}{unrealized_pnl} USDT ({roi_prefix}{roi}%)")
-        elif unrealized_pnl:
-            pnl_prefix = "+" if float(unrealized_pnl) > 0 else ""
-            content_lines.append(f"> **未实现盈亏**: {pnl_prefix}{unrealized_pnl} USDT")
-        else:
-            content_lines.append(f"> **未实现盈亏**: N/A")
-        
-        content_lines.append(f"> **已实现盈亏**: {pnl_info.get('realized_pnl', 'N/A')} USDT")
+        position_qty = pnl_info.get('position_qty', '0')
+        if position_qty and position_qty != '0':
+            content_lines.append("")
+            content_lines.append("### 💰 盈亏信息")
+            content_lines.append(f"> **持仓数量**: {position_qty}")
+            content_lines.append(f"> **持仓均价**: {pnl_info.get('entry_price', 'N/A')}")
+            
+            unrealized_pnl = pnl_info.get('unrealized_pnl')
+            roi = pnl_info.get('roi')
+            if unrealized_pnl and roi:
+                pnl_prefix = "+" if float(unrealized_pnl) > 0 else ""
+                roi_prefix = "+" if float(roi) > 0 else ""
+                content_lines.append(f"> **未实现盈亏**: {pnl_prefix}{unrealized_pnl} USDT ({roi_prefix}{roi}%)")
+            elif unrealized_pnl:
+                pnl_prefix = "+" if float(unrealized_pnl) > 0 else ""
+                content_lines.append(f"> **未实现盈亏**: {pnl_prefix}{unrealized_pnl} USDT")
+            else:
+                content_lines.append(f"> **未实现盈亏**: N/A")
+            
+            content_lines.append(f"> **已实现盈亏**: {pnl_info.get('realized_pnl', 'N/A')} USDT")
     
     content = "\n".join(content_lines)
-    send_wechat_notification("🔄 订单恢复", content)
+    send_wechat_notification("🔄 订单同步", content)
 
 
 def notify_exit(reason: str, config: dict, cancelled_orders: list = None, remaining_orders: list = None, pnl_info: dict = None, current_price: Decimal = None):
@@ -293,7 +314,7 @@ def notify_exit(reason: str, config: dict, cancelled_orders: list = None, remain
     display_reason = reason_details.get(reason, reason)
     
     content_lines = [
-        f"> **交易对**: {symbol}",
+        f"> **交易标的**: {symbol}",
         f"> **退出时间**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
         f"> **退出原因**: {display_reason}",
     ]
@@ -309,6 +330,8 @@ def notify_exit(reason: str, config: dict, cancelled_orders: list = None, remain
             content_lines.append(dedent(f"""\
                 **A{order.level}** `已取消` `{level_text}`
                 > 入场价: {order.entry_price:.2f} USDT
+                > 金额: {order.stake_amount:.2f} USDT
+                > 数量: {order.quantity:.6f} BTC
                 > 订单ID: {order.order_id}"""))
     
     filled_orders = [o for o in (remaining_orders or []) if o.state == "filled"]
@@ -329,24 +352,26 @@ def notify_exit(reason: str, config: dict, cancelled_orders: list = None, remain
                 > 止损价: {order.stop_loss_price:.2f} USDT (-{stop_loss_pct:.1f}%)"""))
     
     if pnl_info:
-        content_lines.append("")
-        content_lines.append("### 💰 盈亏信息")
-        content_lines.append(f"> **持仓数量**: {pnl_info.get('position_qty', 'N/A')}")
-        content_lines.append(f"> **持仓均价**: {pnl_info.get('entry_price', 'N/A')}")
-        
-        unrealized_pnl = pnl_info.get('unrealized_pnl')
-        roi = pnl_info.get('roi')
-        if unrealized_pnl and roi:
-            pnl_prefix = "+" if float(unrealized_pnl) > 0 else ""
-            roi_prefix = "+" if float(roi) > 0 else ""
-            content_lines.append(f"> **未实现盈亏**: {pnl_prefix}{unrealized_pnl} USDT ({roi_prefix}{roi}%)")
-        elif unrealized_pnl:
-            pnl_prefix = "+" if float(unrealized_pnl) > 0 else ""
-            content_lines.append(f"> **未实现盈亏**: {pnl_prefix}{unrealized_pnl} USDT")
-        else:
-            content_lines.append(f"> **未实现盈亏**: N/A")
-        
-        content_lines.append(f"> **已实现盈亏**: {pnl_info.get('realized_pnl', 'N/A')} USDT")
+        position_qty = pnl_info.get('position_qty', '0')
+        if position_qty and position_qty != '0':
+            content_lines.append("")
+            content_lines.append("### 💰 盈亏信息")
+            content_lines.append(f"> **持仓数量**: {position_qty}")
+            content_lines.append(f"> **持仓均价**: {pnl_info.get('entry_price', 'N/A')}")
+            
+            unrealized_pnl = pnl_info.get('unrealized_pnl')
+            roi = pnl_info.get('roi')
+            if unrealized_pnl and roi:
+                pnl_prefix = "+" if float(unrealized_pnl) > 0 else ""
+                roi_prefix = "+" if float(roi) > 0 else ""
+                content_lines.append(f"> **未实现盈亏**: {pnl_prefix}{unrealized_pnl} USDT ({roi_prefix}{roi}%)")
+            elif unrealized_pnl:
+                pnl_prefix = "+" if float(unrealized_pnl) > 0 else ""
+                content_lines.append(f"> **未实现盈亏**: {pnl_prefix}{unrealized_pnl} USDT")
+            else:
+                content_lines.append(f"> **未实现盈亏**: N/A")
+            
+            content_lines.append(f"> **已实现盈亏**: {pnl_info.get('realized_pnl', 'N/A')} USDT")
     
     content_lines.append("")
     content_lines.append("请检查程序状态并手动重启。")
@@ -361,16 +386,16 @@ def notify_startup(config: dict, current_price: Decimal, amplitude_config: Optio
     
     weights_str = ""
     if weights:
-        weights_str = "> **权重**: " + ", ".join([f"A{k}: {float(v)*100:.1f}%" for k, v in sorted(weights.items())])
+        weights_str = "> **振幅权重**: " + ", ".join([f"A{k}: {float(v)*100:.1f}%" for k, v in sorted(weights.items())])
     
     content = dedent(f"""
-            > **交易对**: {symbol}
+            > **交易标的**: {symbol}
             > **当前价格**: {current_price:.2f} USDT
-            > **杠杆**: {config.get('leverage', 10)}x
-            > **总投入**: {config.get('total_amount_quote', 1200)} USDT
+            > **杠杆倍数**: {config.get('leverage', 10)}x
+            > **资金投入**: {config.get('total_amount_quote', 1200)} USDT
             > **网格间距**: {float(config.get('grid_spacing', Decimal('0.01')))*100:.1f}%
-            > **止盈**: {float(config.get('exit_profit', Decimal('0.01')))*100:.1f}%
-            > **止损**: {float(config.get('stop_loss', Decimal('0.08')))*100:.1f}%
+            > **止盈比例**: {float(config.get('exit_profit', Decimal('0.01')))*100:.1f}%
+            > **止损比例**: {float(config.get('stop_loss', Decimal('0.08')))*100:.1f}%
             > **衰减因子**: {config.get('decay_factor', 0.5)}
             > **最大层级**: {config.get('max_entries', 4)}
             {weights_str}
@@ -439,6 +464,7 @@ class BinanceLiveTrader:
         self.ws_message_count = 0
         self.ws_error_count = 0
         self.ws_last_message_time: Optional[datetime] = None
+        self.exit_notified = False
         
         self.results = {
             "total_trades": 0,
@@ -459,6 +485,39 @@ class BinanceLiveTrader:
             hashlib.sha256
         ).hexdigest()
         return signature
+    
+    def _sync_request(self, method: str, endpoint: str, params: dict = None, signed: bool = False) -> dict:
+        """同步发送请求（用于信号处理器）"""
+        url = f"{self.base_url}{endpoint}"
+        headers = {"X-MBX-APIKEY": self.api_key}
+        
+        if params is None:
+            params = {}
+        
+        if signed:
+            params["timestamp"] = str(int(time.time() * 1000))
+            params["signature"] = self._sign(params)
+        
+        proxies = None
+        if self.proxy:
+            proxies = {"http": self.proxy, "https": self.proxy}
+        
+        try:
+            if method == "GET":
+                response = requests.get(url, params=params, headers=headers, proxies=proxies, timeout=10)
+            elif method == "POST":
+                response = requests.post(url, params=params, headers=headers, proxies=proxies, timeout=10)
+            elif method == "DELETE":
+                response = requests.delete(url, params=params, headers=headers, proxies=proxies, timeout=10)
+            else:
+                return {}
+            return response.json()
+        except Exception as e:
+            return {"error": str(e)}
+    
+    def sync_get_positions(self, symbol: str) -> list:
+        """同步获取持仓（用于信号处理器）"""
+        return self._sync_request("GET", "/fapi/v2/positionRisk", {"symbol": symbol}, signed=True)
     
     async def _request(self, method: str, endpoint: str, params: dict = None, signed: bool = False) -> dict:
         """发送请求"""
@@ -673,6 +732,41 @@ class BinanceLiveTrader:
             logger.error(f"入场单下单失败: {result}")
             print(f"[{datetime.now().strftime('%H:%M:%S')}] ❌ 下单失败: {result}")
     
+    async def _place_entry_order_supplement(self, order: Order):
+        """下入场单（恢复过程中补下）"""
+        symbol = self.config.get("symbol", "BTCUSDT")
+        
+        result = await self.place_order(
+            symbol=symbol,
+            side="BUY",
+            order_type="LIMIT",
+            quantity=order.quantity,
+            price=order.entry_price
+        )
+        
+        if "orderId" in result:
+            order.order_id = result["orderId"]
+            
+            weight_pct = self.calculator.get_weight_percentage(order.level)
+            
+            print(f"  层级: A{order.level} / {self.config.get('max_entries', 4)}")
+            print(f"  权重: {weight_pct:.2f}%")
+            print(f"  入场价: {order.entry_price:.2f}")
+            print(f"  数量: {order.quantity:.6f} BTC")
+            print(f"  金额: {order.stake_amount:.2f} USDT")
+            print(f"  止盈价: {order.take_profit_price:.2f}")
+            print(f"  止损价: {order.stop_loss_price:.2f}")
+            print(f"  订单ID: {order.order_id}")
+            print(f"{'='*60}\n")
+            
+            logger.info(f"入场单补下成功: A{order.level}, orderId={order.order_id}")
+            
+            notify_entry_order_supplement(order, self.config)
+            self._save_state()
+        else:
+            logger.error(f"入场单补下失败: {result}")
+            print(f"[{datetime.now().strftime('%H:%M:%S')}] ❌ 补下失败: {result}")
+    
     async def _place_exit_orders(self, order: Order, place_tp: bool = True, place_sl: bool = True):
         """下止盈止损条件单"""
         symbol = self.config.get("symbol", "BTCUSDT")
@@ -734,7 +828,7 @@ class BinanceLiveTrader:
         if cancel_failed:
             failed_list = "\n".join([f"- {item}" for item in cancel_failed])
             content = dedent(f"""\
-                > **交易对**: {symbol}
+                > **交易标的**: {symbol}
                 > **时间**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
                 
                 以下订单取消失败，请人工取消：
@@ -836,6 +930,11 @@ class BinanceLiveTrader:
                     
                     logger.info(f"  止盈单: tp_order_id={order.tp_order_id}, 存在={tp_exists}")
                     logger.info(f"  止损单: sl_order_id={order.sl_order_id}, 存在={sl_exists}")
+                    
+                    if tp_exists:
+                        order.tp_supplemented = False
+                    if sl_exists:
+                        order.sl_supplemented = False
                     
                     if has_position:
                         if not tp_exists:
@@ -1362,7 +1461,10 @@ class BinanceLiveTrader:
                     if next_level <= max_level and not has_next_pending:
                         new_order = self._create_order(next_level, current_price)
                         self.chain_state.orders.append(new_order)
-                        await self._place_entry_order(new_order)
+                        print(f"\n{'='*60}")
+                        print(f"[{datetime.now().strftime('%H:%M:%S')}] 📥 入场单补下: A{next_level}")
+                        print(f"{'='*60}")
+                        await self._place_entry_order_supplement(new_order)
             
             print(f"\n🔗 连接用户数据流...")
             self.listen_key = await self.get_listen_key()
@@ -1427,6 +1529,10 @@ class BinanceLiveTrader:
                             self.ws_connected = False
                 
                 except KeyboardInterrupt:
+                    if self.exit_notified:
+                        break
+                    self.exit_notified = True
+                    
                     print("\n\n⏹️ 停止交易")
                     cancelled_orders = await self._cancel_all_orders()
                     self._save_state()
@@ -1462,6 +1568,10 @@ class BinanceLiveTrader:
                     notify_exit("用户手动停止", self.config, cancelled_orders, remaining_orders, pnl_info, current_price)
                     break
                 except asyncio.CancelledError:
+                    if self.exit_notified:
+                        raise
+                    self.exit_notified = True
+                    
                     print("\n\n⏹️ 程序被取消")
                     try:
                         cancelled_orders = await self._cancel_all_orders()
@@ -1571,35 +1681,43 @@ async def main():
         print(f"\n\n⏹️ 收到信号 {signal_name}，程序即将退出")
         logger.info(f"[信号处理] 收到信号 {signal_name}")
         
+        if trader.exit_notified:
+            raise KeyboardInterrupt(f"收到信号 {signal_name}")
+        
+        trader.exit_notified = True
+        
+        remaining_orders = [o for o in trader.chain_state.orders if o.state in ["filled", "pending"]]
+        
+        pnl_info = None
         try:
-            remaining_orders = [o for o in trader.chain_state.orders if o.state in ["filled", "pending"]]
-            
-            pnl_info = {}
-            try:
-                symbol = config.get("symbol", "BTCUSDT")
-                loop = asyncio.get_event_loop()
-                if loop.is_running():
-                    positions = asyncio.run_coroutine_threadsafe(trader.get_positions(symbol), loop).result(timeout=10)
-                    if positions:
-                        pos = positions[0]
-                        position_qty = Decimal(pos.get("positionAmt", "0"))
-                        entry_price = Decimal(pos.get("entryPrice", "0"))
-                        unrealized_pnl = Decimal(pos.get("unRealizedProfit", "0"))
-                        
-                        roi = None
-                        if entry_price > 0 and position_qty != 0:
-                            roi = float(unrealized_pnl / (entry_price * abs(position_qty)) * 100)
-                        
-                        pnl_info = {
-                            "position_qty": str(position_qty),
-                            "entry_price": f"{entry_price:.2f}",
-                            "unrealized_pnl": f"{unrealized_pnl:.2f}",
-                            "roi": f"{roi:.2f}" if roi is not None else None,
-                            "realized_pnl": "N/A"
-                        }
-            except Exception as e:
-                logger.warning(f"[信号处理] 获取盈亏信息失败: {e}")
-            
+            symbol = config.get("symbol", "BTCUSDT")
+            logger.info(f"[信号处理] 开始同步获取持仓信息...")
+            positions = trader.sync_get_positions(symbol)
+            logger.info(f"[信号处理] 获取到 {len(positions) if positions else 0} 个持仓")
+            if positions and isinstance(positions, list):
+                pos = positions[0]
+                position_qty = Decimal(pos.get("positionAmt", "0"))
+                entry_price = Decimal(pos.get("entryPrice", "0"))
+                unrealized_pnl = Decimal(pos.get("unRealizedProfit", "0"))
+                
+                roi = None
+                if entry_price > 0 and position_qty != 0:
+                    roi = float(unrealized_pnl / (entry_price * abs(position_qty)) * 100)
+                
+                pnl_info = {
+                    "position_qty": str(position_qty),
+                    "entry_price": f"{entry_price:.2f}",
+                    "unrealized_pnl": f"{unrealized_pnl:.2f}",
+                    "roi": f"{roi:.2f}" if roi is not None else None,
+                    "realized_pnl": "N/A"
+                }
+                logger.info(f"[信号处理] 盈亏信息: {pnl_info}")
+        except Exception as e:
+            import traceback
+            logger.warning(f"[信号处理] 获取盈亏信息失败: {e}\n{traceback.format_exc()}")
+            pnl_info = None
+        
+        try:
             if signum == signal.SIGINT:
                 exit_reason = "用户手动停止"
             else:
