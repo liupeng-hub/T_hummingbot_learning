@@ -23,6 +23,7 @@ import hashlib
 import time
 import logging
 import os
+import signal
 import requests
 from decimal import Decimal
 from typing import List, Optional, Dict, Any
@@ -112,18 +113,30 @@ def send_wechat_notification(title: str, content: str) -> bool:
             "content": f"## {title}\n\n{content_with_num}"
         }
     }
-    try:
-        response = requests.post(WECHAT_WEBHOOK, json=message, timeout=10)
-        result = response.json()
-        if result.get("errcode") == 0:
-            logger.debug(f"[微信通知] 发送成功: {title}, 消息号={msg_num}")
-            return True
-        else:
-            logger.warning(f"[微信通知] 发送失败: {result}")
+    
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            timeout = 30 if attempt == 0 else 60
+            response = requests.post(WECHAT_WEBHOOK, json=message, timeout=timeout)
+            result = response.json()
+            if result.get("errcode") == 0:
+                logger.info(f"[微信通知] 发送成功: {title}, 消息号={msg_num}")
+                return True
+            else:
+                logger.warning(f"[微信通知] 发送失败: {result}")
+                if attempt < max_retries - 1:
+                    time.sleep(2)
+                    continue
+                return False
+        except Exception as e:
+            logger.error(f"[微信通知] 发送异常 (尝试 {attempt + 1}/{max_retries}): {e}")
+            if attempt < max_retries - 1:
+                time.sleep(2)
+                continue
             return False
-    except Exception as e:
-        logger.error(f"[微信通知] 发送异常: {e}")
-        return False
+    
+    return False
 
 
 def notify_entry_order(order: Order, config: dict):
@@ -181,7 +194,7 @@ def notify_stop_loss(order: Order, profit: Decimal, config: dict):
     send_wechat_notification(f"🛑 止损触发 A{order.level}", content)
 
 
-def notify_orders_recovered(orders: list, config: dict, current_price: Decimal):
+def notify_orders_recovered(orders: list, config: dict, current_price: Decimal, pnl_info: dict = None):
     """通知订单恢复"""
     max_entries = config.get('max_entries', 4)
     symbol = config.get('symbol', 'BTCUSDT')
@@ -201,64 +214,166 @@ def notify_orders_recovered(orders: list, config: dict, current_price: Decimal):
         level_text = f"第{order.level}层/共{max_entries}层"
         
         if order.state == 'pending':
-            order_lines.append(dedent(f"""
+            order_lines.append(dedent(f"""\
                 **A{order.level}** `{state_text}` `{level_text}`
                 > 入场价: {order.entry_price:.2f} USDT
                 > 止盈价: {order.take_profit_price:.2f} USDT (+{exit_profit_pct:.1f}%)
                 > 止损价: {order.stop_loss_price:.2f} USDT (-{stop_loss_pct:.1f}%)
-                > 订单ID: {order.order_id}
-            """).strip())
+                > 订单ID: {order.order_id}"""))
         elif order.state == 'filled':
             tp_suffix = "（补）" if order.tp_supplemented else ""
             sl_suffix = "（补）" if order.sl_supplemented else ""
             tp_info = f"止盈ID: {order.tp_order_id}{tp_suffix}" if order.tp_order_id else "止盈ID: 无"
             sl_info = f"止损ID: {order.sl_order_id}{sl_suffix}" if order.sl_order_id else "止损ID: 无"
-            order_lines.append(dedent(f"""
+            order_lines.append(dedent(f"""\
                 **A{order.level}** `{state_text}` `{level_text}`
                 > 入场价: {order.entry_price:.2f} USDT
                 > 止盈价: {order.take_profit_price:.2f} USDT (+{exit_profit_pct:.1f}%)
                 > 止损价: {order.stop_loss_price:.2f} USDT (-{stop_loss_pct:.1f}%)
                 > {tp_info}
-                > {sl_info}
-            """).strip())
+                > {sl_info}"""))
         elif order.state == 'closed':
             close_reason = "止盈" if order.close_reason == "take_profit" else "止损"
             profit_text = f"+{order.profit:.2f}" if order.profit and order.profit > 0 else f"{order.profit:.2f}" if order.profit else "0.00"
-            order_lines.append(dedent(f"""
+            order_lines.append(dedent(f"""\
                 **A{order.level}** `{state_text}` `{level_text}` ({close_reason})
                 > 入场价: {order.entry_price:.2f} USDT
-                > 盈亏: {profit_text} USDT
-            """).strip())
+                > 盈亏: {profit_text} USDT"""))
         else:
-            order_lines.append(f"**A{order.level}** `{state_text}` `{level_text}`")
+            order_lines.append(dedent(f"""\
+                **A{order.level}** `{state_text}` `{level_text}`"""))
     
-    orders_content = "\n\n".join(order_lines)
+    orders_content = "".join(order_lines)
     
-    content = dedent(f"""
-            > **交易对**: {symbol}
-            > **当前价格**: {current_price:.2f} USDT
-            > **恢复时间**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-            
-            ---
-            
-            ### 📋 订单列表 (共{len(orders)}个)
-            
-            {orders_content}
-        """).strip()
+    content_lines = [
+        f"> **交易对**: {symbol}",
+        f"> **当前价格**: {current_price:.2f} USDT",
+        f"> **恢复时间**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+        "",
+        f"### 📋 订单列表 (共{len(orders)}个)",
+        "",
+        orders_content
+    ]
     
+    if pnl_info:
+        content_lines.append("")
+        content_lines.append("### 💰 盈亏信息")
+        content_lines.append(f"> **持仓数量**: {pnl_info.get('position_qty', 'N/A')}")
+        content_lines.append(f"> **持仓均价**: {pnl_info.get('entry_price', 'N/A')}")
+        
+        unrealized_pnl = pnl_info.get('unrealized_pnl')
+        roi = pnl_info.get('roi')
+        if unrealized_pnl and roi:
+            pnl_prefix = "+" if float(unrealized_pnl) > 0 else ""
+            roi_prefix = "+" if float(roi) > 0 else ""
+            content_lines.append(f"> **未实现盈亏**: {pnl_prefix}{unrealized_pnl} USDT ({roi_prefix}{roi}%)")
+        elif unrealized_pnl:
+            pnl_prefix = "+" if float(unrealized_pnl) > 0 else ""
+            content_lines.append(f"> **未实现盈亏**: {pnl_prefix}{unrealized_pnl} USDT")
+        else:
+            content_lines.append(f"> **未实现盈亏**: N/A")
+        
+        content_lines.append(f"> **已实现盈亏**: {pnl_info.get('realized_pnl', 'N/A')} USDT")
+    
+    content = "\n".join(content_lines)
     send_wechat_notification("🔄 订单恢复", content)
 
 
-def notify_startup(config: dict, current_price: Decimal):
+def notify_exit(reason: str, config: dict, cancelled_orders: list = None, remaining_orders: list = None, pnl_info: dict = None, current_price: Decimal = None):
+    """通知程序退出"""
+    symbol = config.get('symbol', 'BTCUSDT')
+    max_level = config.get('max_entries', 4)
+    
+    reason_details = {
+        "用户手动停止": "用户按下 Ctrl+C",
+        "WebSocket 重连失败 (10 次)": "网络重连失败",
+        "收到信号 SIGTERM": "系统进程 killed",
+    }
+    
+    display_reason = reason_details.get(reason, reason)
+    
+    content_lines = [
+        f"> **交易对**: {symbol}",
+        f"> **退出时间**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+        f"> **退出原因**: {display_reason}",
+    ]
+    
+    if current_price:
+        content_lines.append(f"> **当前价格**: {current_price:.2f} USDT")
+    
+    if cancelled_orders:
+        content_lines.append("")
+        content_lines.append("### 📋 已取消的挂单")
+        for order in cancelled_orders:
+            level_text = f"第{order.level}层/共{max_level}层"
+            content_lines.append(dedent(f"""\
+                **A{order.level}** `已取消` `{level_text}`
+                > 入场价: {order.entry_price:.2f} USDT
+                > 订单ID: {order.order_id}"""))
+    
+    filled_orders = [o for o in (remaining_orders or []) if o.state == "filled"]
+    if filled_orders:
+        content_lines.append("")
+        content_lines.append("### 📊 剩余订单列表")
+        for order in filled_orders:
+            state_text = {"filled": "已成交"}.get(order.state, order.state)
+            level_text = f"第{order.level}层/共{max_level}层"
+            exit_profit = config.get('exit_profit', Decimal('0.01'))
+            stop_loss = config.get('stop_loss', Decimal('0.08'))
+            exit_profit_pct = float(exit_profit) * 100
+            stop_loss_pct = float(stop_loss) * 100
+            content_lines.append(dedent(f"""\
+                **A{order.level}** `{state_text}` `{level_text}`
+                > 入场价: {order.entry_price:.2f} USDT
+                > 止盈价: {order.take_profit_price:.2f} USDT (+{exit_profit_pct:.1f}%)
+                > 止损价: {order.stop_loss_price:.2f} USDT (-{stop_loss_pct:.1f}%)"""))
+    
+    if pnl_info:
+        content_lines.append("")
+        content_lines.append("### 💰 盈亏信息")
+        content_lines.append(f"> **持仓数量**: {pnl_info.get('position_qty', 'N/A')}")
+        content_lines.append(f"> **持仓均价**: {pnl_info.get('entry_price', 'N/A')}")
+        
+        unrealized_pnl = pnl_info.get('unrealized_pnl')
+        roi = pnl_info.get('roi')
+        if unrealized_pnl and roi:
+            pnl_prefix = "+" if float(unrealized_pnl) > 0 else ""
+            roi_prefix = "+" if float(roi) > 0 else ""
+            content_lines.append(f"> **未实现盈亏**: {pnl_prefix}{unrealized_pnl} USDT ({roi_prefix}{roi}%)")
+        elif unrealized_pnl:
+            pnl_prefix = "+" if float(unrealized_pnl) > 0 else ""
+            content_lines.append(f"> **未实现盈亏**: {pnl_prefix}{unrealized_pnl} USDT")
+        else:
+            content_lines.append(f"> **未实现盈亏**: N/A")
+        
+        content_lines.append(f"> **已实现盈亏**: {pnl_info.get('realized_pnl', 'N/A')} USDT")
+    
+    content_lines.append("")
+    content_lines.append("请检查程序状态并手动重启。")
+    
+    content = "\n".join(content_lines)
+    send_wechat_notification("⏹️ Autofish V1 退出", content)
+
+
+def notify_startup(config: dict, current_price: Decimal, amplitude_config: Optional['AmplitudeConfig'] = None, weights: Optional[Dict[int, Decimal]] = None):
     """通知程序启动"""
     symbol = config.get('symbol', 'BTCUSDT')
+    
+    weights_str = ""
+    if weights:
+        weights_str = "> **权重**: " + ", ".join([f"A{k}: {float(v)*100:.1f}%" for k, v in sorted(weights.items())])
+    
     content = dedent(f"""
             > **交易对**: {symbol}
             > **当前价格**: {current_price:.2f} USDT
-            > **网格间距**: {float(config.get('grid_spacing', Decimal('0.01')))*100}%
-            > **止盈**: {float(config.get('exit_profit', Decimal('0.01')))*100}%
-            > **止损**: {float(config.get('stop_loss', Decimal('0.08')))*100}%
             > **杠杆**: {config.get('leverage', 10)}x
+            > **总投入**: {config.get('total_amount_quote', 1200)} USDT
+            > **网格间距**: {float(config.get('grid_spacing', Decimal('0.01')))*100:.1f}%
+            > **止盈**: {float(config.get('exit_profit', Decimal('0.01')))*100:.1f}%
+            > **止损**: {float(config.get('stop_loss', Decimal('0.08')))*100:.1f}%
+            > **衰减因子**: {config.get('decay_factor', 0.5)}
+            > **最大层级**: {config.get('max_entries', 4)}
+            {weights_str}
             > **启动时间**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
         """).strip()
     send_wechat_notification("🚀 Autofish V1 启动", content)
@@ -470,6 +585,30 @@ class BinanceLiveTrader:
         """获取持仓"""
         return await self._request("GET", "/fapi/v2/positionRisk", {"symbol": symbol}, signed=True)
     
+    async def get_all_orders(self, symbol: str, limit: int = 100) -> list:
+        """查询历史普通订单"""
+        return await self._request("GET", "/fapi/v1/allOrders", {
+            "symbol": symbol,
+            "limit": limit,
+        }, signed=True)
+    
+    async def get_all_algo_orders(self, symbol: str, limit: int = 100) -> list:
+        """查询历史 Algo 条件单"""
+        data = await self._request("GET", "/fapi/v1/allAlgoOrders", {
+            "symbol": symbol,
+            "limit": limit,
+        }, signed=True)
+        if isinstance(data, list):
+            return data
+        return data.get("orders", [])
+    
+    async def get_my_trades(self, symbol: str, limit: int = 100) -> list:
+        """查询历史成交记录"""
+        return await self._request("GET", "/fapi/v1/userTrades", {
+            "symbol": symbol,
+            "limit": limit,
+        }, signed=True)
+    
     def _save_state(self):
         """保存状态"""
         if self.chain_state:
@@ -568,28 +707,42 @@ class BinanceLiveTrader:
         
         self._save_state()
     
-    async def _cancel_all_orders(self):
-        """取消所有订单"""
+    async def _cancel_all_orders(self) -> list:
+        """取消所有挂单（只取消 pending 入场单，保留止盈止损单）
+        
+        Returns:
+            list: 已取消的订单列表
+        """
         symbol = self.config.get("symbol", "BTCUSDT")
+        print(f"\n📋 取消所有挂单...")
+        
+        cancelled_orders = []
+        cancel_failed = []
         
         for order in self.chain_state.orders:
             if order.state == "pending" and order.order_id:
                 try:
                     await self.cancel_order(symbol, order.order_id)
-                    logger.info(f"[取消订单] A{order.level} orderId={order.order_id}")
+                    logger.info(f"[取消订单] A{order.level} 入场单 orderId={order.order_id}")
+                    print(f"   ✅ A{order.level} 入场单已取消")
+                    cancelled_orders.append(order)
                 except Exception as e:
                     logger.error(f"[取消订单] 失败: {e}")
-            
-            if order.tp_order_id:
-                try:
-                    await self.cancel_algo_order(symbol, order.tp_order_id)
-                except:
-                    pass
-            if order.sl_order_id:
-                try:
-                    await self.cancel_algo_order(symbol, order.sl_order_id)
-                except:
-                    pass
+                    print(f"   ❌ A{order.level} 入场单取消失败: {e}")
+                    cancel_failed.append(f"A{order.level} 入场单 (orderId={order.order_id})")
+        
+        if cancel_failed:
+            failed_list = "\n".join([f"- {item}" for item in cancel_failed])
+            content = dedent(f"""\
+                > **交易对**: {symbol}
+                > **时间**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+                
+                以下订单取消失败，请人工取消：
+                
+                {failed_list}""").strip()
+            send_wechat_notification("⚠️ 订单取消失败告警", content)
+        
+        return cancelled_orders
     
     async def _restore_orders(self, current_price: Decimal) -> bool:
         """恢复订单状态，同步 Binance 实际状态"""
@@ -600,6 +753,9 @@ class BinanceLiveTrader:
         if saved_state and saved_state.orders:
             logger.info(f"[状态恢复] 发现本地保存的状态: {len(saved_state.orders)} 个订单")
             print(f"\n🔄 发现本地保存的状态: {len(saved_state.orders)} 个订单")
+            
+            notify_startup(self.config, current_price, self.amplitude_config, self.custom_weights)
+            
             self.chain_state = saved_state
             self.chain_state.base_price = current_price
             
@@ -607,11 +763,35 @@ class BinanceLiveTrader:
             algo_ids = {o.get("algoId") for o in algo_orders if o.get("algoId")}
             logger.info(f"[状态恢复] Binance 上有 {len(algo_ids)} 个 Algo 条件单")
             
+            positions = await self.get_positions(symbol)
+            has_position = any(
+                Decimal(p.get('positionAmt', '0')) != Decimal('0')
+                for p in positions
+            )
+            logger.info(f"[状态恢复] 当前仓位状态: {'有仓位' if has_position else '无仓位'}")
+            
+            algo_history = await self.get_all_algo_orders(symbol, limit=100)
+            algo_status_map = {algo.get('algoId'): algo for algo in algo_history if algo.get('algoId')}
+            logger.info(f"[状态恢复] 获取到 {len(algo_status_map)} 个历史 Algo 条件单")
+            
             orders_to_remove = []
+            algo_ids_to_cancel = []
             
             for order in self.chain_state.orders:
                 logger.info(f"[订单恢复] A{order.level}: state={order.state}")
                 logger.info(f"  主订单: order_id={order.order_id}, entry_price={order.entry_price}")
+                
+                if order.state == "closed":
+                    orders_to_remove.append(order)
+                    logger.info(f"[订单清理] A{order.level} 已平仓，删除本地记录")
+                    print(f"   🗑️ A{order.level} 已平仓，删除本地记录")
+                    continue
+                
+                if order.state == "cancelled":
+                    orders_to_remove.append(order)
+                    logger.info(f"[订单清理] A{order.level} 已取消，删除本地记录")
+                    print(f"   🗑️ A{order.level} 已取消，删除本地记录")
+                    continue
                 
                 if order.state == "pending" and order.order_id:
                     try:
@@ -626,6 +806,10 @@ class BinanceLiveTrader:
                             logger.info(f"[状态同步] A{order.level} 已在 Binance 成交，更新本地状态")
                             print(f"   ⚡ A{order.level} 已在 Binance 成交，同步状态")
                         elif binance_status == "CANCELED" or binance_status == "EXPIRED":
+                            if order.tp_order_id:
+                                algo_ids_to_cancel.append(order.tp_order_id)
+                            if order.sl_order_id:
+                                algo_ids_to_cancel.append(order.sl_order_id)
                             orders_to_remove.append(order)
                             logger.info(f"[状态同步] A{order.level} 在 Binance 已取消，将删除本地订单")
                             print(f"   🗑️ A{order.level} 在 Binance 已取消，将删除")
@@ -636,6 +820,10 @@ class BinanceLiveTrader:
                     except Exception as e:
                         error_msg = str(e)
                         if "Order does not exist" in error_msg or "-2013" in error_msg:
+                            if order.tp_order_id:
+                                algo_ids_to_cancel.append(order.tp_order_id)
+                            if order.sl_order_id:
+                                algo_ids_to_cancel.append(order.sl_order_id)
                             orders_to_remove.append(order)
                             logger.warning(f"[状态同步] A{order.level} 在 Binance 不存在，将删除本地订单")
                             print(f"   ❌ A{order.level} 在 Binance 不存在，将删除")
@@ -643,41 +831,110 @@ class BinanceLiveTrader:
                             logger.error(f"[状态同步] 查询 Binance 订单状态失败: {e}")
                 
                 if order.state == "filled":
-                    if order.tp_order_id:
-                        if order.tp_order_id in algo_ids:
-                            logger.info(f"  止盈单存在: tp_order_id={order.tp_order_id}")
-                        else:
-                            logger.warning(f"  止盈单不存在: tp_order_id={order.tp_order_id}，需要补单")
+                    tp_exists = order.tp_order_id in algo_ids if order.tp_order_id else False
+                    sl_exists = order.sl_order_id in algo_ids if order.sl_order_id else False
+                    
+                    logger.info(f"  止盈单: tp_order_id={order.tp_order_id}, 存在={tp_exists}")
+                    logger.info(f"  止损单: sl_order_id={order.sl_order_id}, 存在={sl_exists}")
+                    
+                    if has_position:
+                        if not tp_exists:
+                            logger.warning(f"  止盈单不存在，需要补单")
                             print(f"   ⚠️ A{order.level} 止盈单在 Binance 不存在，需要补单")
                             order.tp_order_id = None
-                    
-                    if order.sl_order_id:
-                        if order.sl_order_id in algo_ids:
-                            logger.info(f"  止损单存在: sl_order_id={order.sl_order_id}")
-                        else:
-                            logger.warning(f"  止损单不存在: sl_order_id={order.sl_order_id}，需要补单")
+                        
+                        if not sl_exists:
+                            logger.warning(f"  止损单不存在，需要补单")
                             print(f"   ⚠️ A{order.level} 止损单在 Binance 不存在，需要补单")
                             order.sl_order_id = None
-                    
-                    logger.info(f"  止盈单: tp_order_id={order.tp_order_id}")
-                    logger.info(f"  止损单: sl_order_id={order.sl_order_id}")
+                    else:
+                        close_reason = None
+                        
+                        if order.tp_order_id and not tp_exists:
+                            if order.sl_order_id and sl_exists:
+                                algo_ids_to_cancel.append(order.sl_order_id)
+                            close_reason = "take_profit"
+                            logger.info(f"[平仓检测] A{order.level} 止盈已成交，取消残留止损单")
+                        elif order.sl_order_id and not sl_exists:
+                            if order.tp_order_id and tp_exists:
+                                algo_ids_to_cancel.append(order.tp_order_id)
+                            close_reason = "stop_loss"
+                            logger.info(f"[平仓检测] A{order.level} 止损已成交，取消残留止盈单")
+                        elif not order.tp_order_id and not order.sl_order_id:
+                            close_reason = "unknown"
+                            logger.info(f"[平仓检测] A{order.level} 无止盈止损单记录，标记为已平仓")
+                        else:
+                            if order.tp_order_id and order.tp_order_id in algo_status_map:
+                                algo_info = algo_status_map[order.tp_order_id]
+                                if algo_info.get('status') == 'FILLED':
+                                    if order.sl_order_id and sl_exists:
+                                        algo_ids_to_cancel.append(order.sl_order_id)
+                                    close_reason = "take_profit"
+                            if not close_reason and order.sl_order_id and order.sl_order_id in algo_status_map:
+                                algo_info = algo_status_map[order.sl_order_id]
+                                if algo_info.get('status') == 'FILLED':
+                                    if order.tp_order_id and tp_exists:
+                                        algo_ids_to_cancel.append(order.tp_order_id)
+                                    close_reason = "stop_loss"
+                        
+                        if close_reason:
+                            orders_to_remove.append(order)
+                            print(f"   ✅ A{order.level} 已平仓，原因: {close_reason}，删除本地订单")
                 
                 if order not in orders_to_remove:
                     print(f"   A{order.level}: state={order.state}, order_id={order.order_id}, "
                           f"tp_id={order.tp_order_id}, sl_id={order.sl_order_id}")
             
+            for algo_id in algo_ids_to_cancel:
+                if algo_id in algo_ids:
+                    try:
+                        await self.cancel_algo_order(symbol, algo_id)
+                        logger.info(f"[取消残留条件单] algoId={algo_id}")
+                    except Exception as e:
+                        logger.warning(f"[取消残留条件单] 失败 algoId={algo_id}: {e}")
+            
             for order in orders_to_remove:
-                self.chain_state.orders.remove(order)
-                logger.info(f"[删除订单] A{order.level} 已从本地删除")
+                for i, o in enumerate(self.chain_state.orders):
+                    if o.order_id == order.order_id and o.level == order.level and o.state == order.state:
+                        self.chain_state.orders.pop(i)
+                        logger.info(f"[删除订单] A{order.level} (order_id={order.order_id}, state={order.state}) 已从本地删除")
+                        break
             
             self._save_state()
+            
+            if self.chain_state.orders:
+                pnl_info = {}
+                try:
+                    symbol = self.config.get("symbol", "BTCUSDT")
+                    positions = await self.get_positions(symbol)
+                    if positions:
+                        pos = positions[0]
+                        position_qty = Decimal(pos.get("positionAmt", "0"))
+                        entry_price = Decimal(pos.get("entryPrice", "0"))
+                        unrealized_pnl = Decimal(pos.get("unRealizedProfit", "0"))
+                        
+                        roi = None
+                        if entry_price > 0 and position_qty != 0:
+                            roi = float(unrealized_pnl / (entry_price * abs(position_qty)) * 100)
+                        
+                        pnl_info = {
+                            "position_qty": str(position_qty),
+                            "entry_price": f"{entry_price:.2f}",
+                            "unrealized_pnl": f"{unrealized_pnl:.2f}",
+                            "roi": f"{roi:.2f}" if roi is not None else None,
+                            "realized_pnl": "N/A"
+                        }
+                except Exception as e:
+                    logger.warning(f"[获取盈亏信息] 失败: {e}")
+                
+                notify_orders_recovered(self.chain_state.orders, self.config, current_price, pnl_info)
             
             has_active_order = any(o.state in ["pending", "filled"] for o in self.chain_state.orders)
             if has_active_order:
                 need_new_order = False
         else:
             self.chain_state = ChainState(base_price=current_price)
-            notify_startup(self.config, current_price)
+            notify_startup(self.config, current_price, self.amplitude_config, self.custom_weights)
         
         return need_new_order
     
@@ -818,6 +1075,82 @@ class BinanceLiveTrader:
             elif order_status == "CANCELED":
                 order.set_state("cancelled", "订单取消")
                 print(f"[{datetime.now().strftime('%H:%M:%S')}] 🗑️ A{order.level} 已取消")
+            
+            elif order_status == "EXPIRED":
+                logger.info(f"[订单过期] A{order.level} 入场单已过期")
+                print(f"[{datetime.now().strftime('%H:%M:%S')}] ⏰ A{order.level} 入场单已过期")
+                
+                if order.tp_order_id or order.sl_order_id:
+                    algo_ids_to_cancel = []
+                    if order.tp_order_id:
+                        algo_ids_to_cancel.append(order.tp_order_id)
+                    if order.sl_order_id:
+                        algo_ids_to_cancel.append(order.sl_order_id)
+                    
+                    for algo_id in algo_ids_to_cancel:
+                        try:
+                            await self.cancel_algo_order(self.config.get("symbol", "BTCUSDT"), algo_id)
+                            logger.info(f"[取消关联条件单] algoId={algo_id}")
+                        except Exception as e:
+                            logger.warning(f"[取消关联条件单] 失败 algoId={algo_id}: {e}")
+                
+                self.chain_state.orders.remove(order)
+                logger.info(f"[删除订单] A{order.level} 已从本地删除")
+                self._save_state()
+            
+            elif order_status == "TRADE_PREVENT":
+                prevent_reason = order_data.get("V", "STP触发")
+                logger.info(f"[STP触发] A{order.level} 订单因自成交保护被取消: {prevent_reason}")
+                print(f"[{datetime.now().strftime('%H:%M:%S')}] ⚠️ A{order.level} 订单因STP被取消: {prevent_reason}")
+                
+                if order.tp_order_id or order.sl_order_id:
+                    algo_ids_to_cancel = []
+                    if order.tp_order_id:
+                        algo_ids_to_cancel.append(order.tp_order_id)
+                    if order.sl_order_id:
+                        algo_ids_to_cancel.append(order.sl_order_id)
+                    
+                    for algo_id in algo_ids_to_cancel:
+                        try:
+                            await self.cancel_algo_order(self.config.get("symbol", "BTCUSDT"), algo_id)
+                            logger.info(f"[取消关联条件单] algoId={algo_id}")
+                        except Exception as e:
+                            logger.warning(f"[取消关联条件单] 失败 algoId={algo_id}: {e}")
+                
+                self.chain_state.orders.remove(order)
+                logger.info(f"[删除订单] A{order.level} 已从本地删除")
+                self._save_state()
+            
+            elif order_status == "AMENDMENT":
+                new_price = Decimal(str(order_data.get("p", order.entry_price)))
+                new_qty = Decimal(str(order_data.get("q", order.quantity)))
+                price_changed = new_price != order.entry_price
+                qty_changed = new_qty != order.quantity
+                
+                if price_changed or qty_changed:
+                    old_price = order.entry_price
+                    old_qty = order.quantity
+                    
+                    if price_changed:
+                        order.entry_price = new_price
+                        
+                        exit_profit = self.config.get("exit_profit", Decimal("0.01"))
+                        stop_loss = self.config.get("stop_loss", Decimal("0.08"))
+                        
+                        order.take_profit_price = new_price * (Decimal("1") + exit_profit)
+                        order.stop_loss_price = new_price * (Decimal("1") - stop_loss)
+                    
+                    if qty_changed:
+                        order.quantity = new_qty
+                    
+                    logger.info(f"[手动修改] A{order.level} 入场单已更新: 价格 {old_price:.2f} -> {new_price:.2f}, 数量 {old_qty:.6f} -> {new_qty:.6f}")
+                    print(f"[{datetime.now().strftime('%H:%M:%S')}] ✏️ A{order.level} 入场单已手动修改:")
+                    if price_changed:
+                        print(f"   价格: {old_price:.2f} -> {new_price:.2f}")
+                        print(f"   止盈价: {order.take_profit_price:.2f}, 止损价: {order.stop_loss_price:.2f}")
+                    if qty_changed:
+                        print(f"   数量: {old_qty:.6f} -> {new_qty:.6f}")
+                    self._save_state()
         
         elif event_type == "ALGO_UPDATE":
             await self._handle_algo_update(data)
@@ -896,6 +1229,37 @@ class BinanceLiveTrader:
             
             self._save_state()
         
+        elif algo_status in ["EXPIRED", "expired"]:
+            is_tp = (order.tp_order_id == algo_id)
+            if is_tp:
+                order.tp_order_id = None
+                order.tp_supplemented = False
+                logger.info(f"[条件单过期] A{order.level} 止盈单已过期，需要补单")
+                print(f"[{datetime.now().strftime('%H:%M:%S')}] ⏰ A{order.level} 止盈单已过期，需要补单")
+            else:
+                order.sl_order_id = None
+                order.sl_supplemented = False
+                logger.info(f"[条件单过期] A{order.level} 止损单已过期，需要补单")
+                print(f"[{datetime.now().strftime('%H:%M:%S')}] ⏰ A{order.level} 止损单已过期，需要补单")
+            
+            self._save_state()
+        
+        elif algo_status in ["REJECTED", "rejected"]:
+            is_tp = (order.tp_order_id == algo_id)
+            reject_reason = inner_data.get("r", "未知原因")
+            if is_tp:
+                order.tp_order_id = None
+                order.tp_supplemented = False
+                logger.info(f"[条件单拒绝] A{order.level} 止盈单被拒绝: {reject_reason}，需要补单")
+                print(f"[{datetime.now().strftime('%H:%M:%S')}] ❌ A{order.level} 止盈单被拒绝: {reject_reason}，需要补单")
+            else:
+                order.sl_order_id = None
+                order.sl_supplemented = False
+                logger.info(f"[条件单拒绝] A{order.level} 止损单被拒绝: {reject_reason}，需要补单")
+                print(f"[{datetime.now().strftime('%H:%M:%S')}] ❌ A{order.level} 止损单被拒绝: {reject_reason}，需要补单")
+            
+            self._save_state()
+        
         elif algo_status in ["NEW", "new"]:
             symbol = inner_data.get("s") or data.get("symbol")
             trigger_price = Decimal(str(inner_data.get("tp") or inner_data.get("sp") or 0))
@@ -904,12 +1268,28 @@ class BinanceLiveTrader:
             if symbol != self.config.get("symbol", "BTCUSDT"):
                 return
             
+            is_tp_order = order_type_str in ["TAKE_PROFIT_MARKET", "TAKE_PROFIT"]
+            is_sl_order = order_type_str in ["STOP_MARKET", "STOP_LOSS"]
+            
+            if is_tp_order and order.tp_order_id == algo_id:
+                if trigger_price != order.take_profit_price:
+                    old_price = order.take_profit_price
+                    order.take_profit_price = trigger_price
+                    logger.info(f"[手动修改] A{order.level} 止盈单价格已更新: {old_price:.2f} -> {trigger_price:.2f}")
+                    print(f"[{datetime.now().strftime('%H:%M:%S')}] ✏️ A{order.level} 止盈单已手动修改: {old_price:.2f} -> {trigger_price:.2f}")
+                    self._save_state()
+            
+            if is_sl_order and order.sl_order_id == algo_id:
+                if trigger_price != order.stop_loss_price:
+                    old_price = order.stop_loss_price
+                    order.stop_loss_price = trigger_price
+                    logger.info(f"[手动修改] A{order.level} 止损单价格已更新: {old_price:.2f} -> {trigger_price:.2f}")
+                    print(f"[{datetime.now().strftime('%H:%M:%S')}] ✏️ A{order.level} 止损单已手动修改: {old_price:.2f} -> {trigger_price:.2f}")
+                    self._save_state()
+            
             for o in self.chain_state.orders:
                 if o.state != "filled":
                     continue
-                
-                is_tp_order = order_type_str in ["TAKE_PROFIT_MARKET", "TAKE_PROFIT"]
-                is_sl_order = order_type_str in ["STOP_MARKET", "STOP_LOSS"]
                 
                 if is_tp_order and not o.tp_order_id:
                     expected_tp_price = o.take_profit_price
@@ -968,7 +1348,21 @@ class BinanceLiveTrader:
             
             if not need_new_order:
                 await self._check_and_supplement_orders()
-                notify_orders_recovered(self.chain_state.orders, self.config, current_price)
+                
+                filled_orders = [o for o in self.chain_state.orders if o.state == "filled"]
+                pending_orders = [o for o in self.chain_state.orders if o.state == "pending"]
+                
+                if filled_orders:
+                    max_filled_level = max(o.level for o in filled_orders)
+                    max_level = self.config.get("max_entries", 4)
+                    next_level = max_filled_level + 1
+                    
+                    has_next_pending = any(o.level == next_level for o in pending_orders)
+                    
+                    if next_level <= max_level and not has_next_pending:
+                        new_order = self._create_order(next_level, current_price)
+                        self.chain_state.orders.append(new_order)
+                        await self._place_entry_order(new_order)
             
             print(f"\n🔗 连接用户数据流...")
             self.listen_key = await self.get_listen_key()
@@ -981,47 +1375,177 @@ class BinanceLiveTrader:
             else:
                 print(f"\n📋 已有订单，等待WebSocket事件...")
             
-            ws_uri = f"{self.ws_url}/{self.listen_key}"
-            print(f"\n📡 连接 WebSocket...")
-            print(f"   代理: {self.proxy or '无'}")
+            max_reconnect_attempts = 10
+            reconnect_delay = 5
+            reconnect_attempts = 0
             
-            try:
-                ws_kwargs = {}
-                if self.proxy:
-                    ws_kwargs["proxy"] = self.proxy
+            while True:
+                ws_uri = f"{self.ws_url}/{self.listen_key}"
+                print(f"\n📡 连接 WebSocket...")
+                print(f"   代理: {self.proxy or '无'}")
                 
-                async with session.ws_connect(ws_uri, **ws_kwargs) as websocket:
-                    self.ws_connected = True
-                    print("✅ 连接成功！开始监听订单状态...\n")
+                try:
+                    ws_kwargs = {}
+                    if self.proxy:
+                        ws_kwargs["proxy"] = self.proxy
                     
-                    async def keepalive():
-                        while True:
-                            await asyncio.sleep(1800)
-                            await self.keepalive_listen_key()
-                    
-                    asyncio.create_task(keepalive())
-                    
-                    async for message in websocket:
-                        self.ws_message_count += 1
-                        self.ws_last_message_time = datetime.now()
+                    async with session.ws_connect(ws_uri, **ws_kwargs) as websocket:
+                        self.ws_connected = True
+                        reconnect_attempts = 0
+                        print("✅ 连接成功！开始监听订单状态...\n")
                         
-                        if message.type == aiohttp.WSMsgType.TEXT:
-                            data = json.loads(message.data)
-                            await self._handle_order_update(data)
-                        elif message.type == aiohttp.WSMsgType.ERROR:
-                            self.ws_error_count += 1
-                            logger.error(f"[WebSocket] 错误: {websocket.exception()}")
-                            break
-            
-            except KeyboardInterrupt:
-                print("\n\n⏹️ 停止交易")
-                await self._cancel_all_orders()
-                self._save_state()
-            except Exception as e:
-                logger.error(f"[WebSocket] 运行错误: {e}", exc_info=True)
-                print(f"\n❌ 错误: {e}")
-            finally:
-                self.ws_connected = False
+                        async def keepalive():
+                            while self.ws_connected:
+                                await asyncio.sleep(1800)
+                                try:
+                                    await self.keepalive_listen_key()
+                                except Exception as e:
+                                    logger.error(f"[keepalive] 续期失败: {e}")
+                        
+                        keepalive_task = asyncio.create_task(keepalive())
+                        
+                        try:
+                            async for message in websocket:
+                                self.ws_message_count += 1
+                                self.ws_last_message_time = datetime.now()
+                                
+                                if message.type == aiohttp.WSMsgType.TEXT:
+                                    data = json.loads(message.data)
+                                    await self._handle_order_update(data)
+                                elif message.type == aiohttp.WSMsgType.ERROR:
+                                    self.ws_error_count += 1
+                                    logger.error(f"[WebSocket] 错误: {websocket.exception()}")
+                                    break
+                                elif message.type == aiohttp.WSMsgType.CLOSED:
+                                    logger.warning(f"[WebSocket] 连接关闭")
+                                    break
+                        except asyncio.CancelledError:
+                            logger.info("[WebSocket] 收到取消信号")
+                            raise
+                        finally:
+                            keepalive_task.cancel()
+                            self.ws_connected = False
+                
+                except KeyboardInterrupt:
+                    print("\n\n⏹️ 停止交易")
+                    cancelled_orders = await self._cancel_all_orders()
+                    self._save_state()
+                    
+                    remaining_orders = [o for o in self.chain_state.orders if o.state in ["filled", "pending"]]
+                    
+                    current_price = None
+                    pnl_info = {}
+                    try:
+                        symbol = self.config.get("symbol", "BTCUSDT")
+                        current_price = await self._get_current_price(symbol)
+                        positions = await self.get_positions(symbol)
+                        if positions:
+                            pos = positions[0]
+                            position_qty = Decimal(pos.get("positionAmt", "0"))
+                            entry_price = Decimal(pos.get("entryPrice", "0"))
+                            unrealized_pnl = Decimal(pos.get("unRealizedProfit", "0"))
+                            
+                            roi = None
+                            if entry_price > 0 and position_qty != 0:
+                                roi = float(unrealized_pnl / (entry_price * abs(position_qty)) * 100)
+                            
+                            pnl_info = {
+                                "position_qty": str(position_qty),
+                                "entry_price": f"{entry_price:.2f}",
+                                "unrealized_pnl": f"{unrealized_pnl:.2f}",
+                                "roi": f"{roi:.2f}" if roi is not None else None,
+                                "realized_pnl": "N/A"
+                            }
+                    except Exception as e:
+                        logger.warning(f"[获取盈亏信息] 失败: {e}")
+                    
+                    notify_exit("用户手动停止", self.config, cancelled_orders, remaining_orders, pnl_info, current_price)
+                    break
+                except asyncio.CancelledError:
+                    print("\n\n⏹️ 程序被取消")
+                    try:
+                        cancelled_orders = await self._cancel_all_orders()
+                        self._save_state()
+                        
+                        remaining_orders = [o for o in self.chain_state.orders if o.state in ["filled", "pending"]]
+                        
+                        current_price = None
+                        pnl_info = {}
+                        try:
+                            symbol = self.config.get("symbol", "BTCUSDT")
+                            current_price = await self._get_current_price(symbol)
+                            positions = await self.get_positions(symbol)
+                            if positions:
+                                pos = positions[0]
+                                position_qty = Decimal(pos.get("positionAmt", "0"))
+                                entry_price = Decimal(pos.get("entryPrice", "0"))
+                                unrealized_pnl = Decimal(pos.get("unRealizedProfit", "0"))
+                                
+                                roi = None
+                                if entry_price > 0 and position_qty != 0:
+                                    roi = float(unrealized_pnl / (entry_price * abs(position_qty)) * 100)
+                                
+                                pnl_info = {
+                                    "position_qty": str(position_qty),
+                                    "entry_price": f"{entry_price:.2f}",
+                                    "unrealized_pnl": f"{unrealized_pnl:.2f}",
+                                    "roi": f"{roi:.2f}" if roi is not None else None,
+                                    "realized_pnl": "N/A"
+                                }
+                        except Exception as e:
+                            logger.warning(f"[获取盈亏信息] 失败: {e}")
+                        
+                        notify_exit("用户手动停止", self.config, cancelled_orders, remaining_orders, pnl_info, current_price)
+                    except Exception as e:
+                        logger.error(f"[退出处理] 失败: {e}")
+                    raise
+                except Exception as e:
+                    self.ws_connected = False
+                    reconnect_attempts += 1
+                    logger.error(f"[WebSocket] 连接错误: {e}", exc_info=True)
+                    
+                    if reconnect_attempts >= max_reconnect_attempts:
+                        print(f"\n❌ 重连失败次数超过上限 ({max_reconnect_attempts})，程序退出")
+                        
+                        remaining_orders = [o for o in self.chain_state.orders if o.state in ["filled", "pending"]]
+                        
+                        current_price = None
+                        pnl_info = {}
+                        try:
+                            symbol = self.config.get("symbol", "BTCUSDT")
+                            current_price = await self._get_current_price(symbol)
+                            positions = await self.get_positions(symbol)
+                            if positions:
+                                pos = positions[0]
+                                position_qty = Decimal(pos.get("positionAmt", "0"))
+                                entry_price = Decimal(pos.get("entryPrice", "0"))
+                                unrealized_pnl = Decimal(pos.get("unRealizedProfit", "0"))
+                                
+                                roi = None
+                                if entry_price > 0 and position_qty != 0:
+                                    roi = float(unrealized_pnl / (entry_price * abs(position_qty)) * 100)
+                                
+                                pnl_info = {
+                                    "position_qty": str(position_qty),
+                                    "entry_price": f"{entry_price:.2f}",
+                                    "unrealized_pnl": f"{unrealized_pnl:.2f}",
+                                    "roi": f"{roi:.2f}" if roi is not None else None,
+                                    "realized_pnl": "N/A"
+                                }
+                        except Exception as ex:
+                            logger.warning(f"[获取盈亏信息] 失败: {ex}")
+                        
+                        notify_exit(f"WebSocket 重连失败 ({max_reconnect_attempts} 次)", self.config, [], remaining_orders, pnl_info, current_price)
+                        break
+                    
+                    print(f"\n⚠️ WebSocket 连接断开，{reconnect_delay}秒后重连... (尝试 {reconnect_attempts}/{max_reconnect_attempts})")
+                    await asyncio.sleep(reconnect_delay)
+                    
+                    try:
+                        self.listen_key = await self.get_listen_key()
+                        logger.info(f"[WebSocket] 重新获取 listenKey: {self.listen_key[:20]}...")
+                    except Exception as e:
+                        logger.error(f"[WebSocket] 获取 listenKey 失败: {e}")
 
 
 async def main():
@@ -1040,8 +1564,65 @@ async def main():
     })
     
     trader = BinanceLiveTrader(config, testnet=args.testnet)
-    await trader.run()
+    
+    def signal_handler(signum, frame):
+        """信号处理函数"""
+        signal_name = signal.Signals(signum).name
+        print(f"\n\n⏹️ 收到信号 {signal_name}，程序即将退出")
+        logger.info(f"[信号处理] 收到信号 {signal_name}")
+        
+        try:
+            remaining_orders = [o for o in trader.chain_state.orders if o.state in ["filled", "pending"]]
+            
+            pnl_info = {}
+            try:
+                symbol = config.get("symbol", "BTCUSDT")
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    positions = asyncio.run_coroutine_threadsafe(trader.get_positions(symbol), loop).result(timeout=10)
+                    if positions:
+                        pos = positions[0]
+                        position_qty = Decimal(pos.get("positionAmt", "0"))
+                        entry_price = Decimal(pos.get("entryPrice", "0"))
+                        unrealized_pnl = Decimal(pos.get("unRealizedProfit", "0"))
+                        
+                        roi = None
+                        if entry_price > 0 and position_qty != 0:
+                            roi = float(unrealized_pnl / (entry_price * abs(position_qty)) * 100)
+                        
+                        pnl_info = {
+                            "position_qty": str(position_qty),
+                            "entry_price": f"{entry_price:.2f}",
+                            "unrealized_pnl": f"{unrealized_pnl:.2f}",
+                            "roi": f"{roi:.2f}" if roi is not None else None,
+                            "realized_pnl": "N/A"
+                        }
+            except Exception as e:
+                logger.warning(f"[信号处理] 获取盈亏信息失败: {e}")
+            
+            if signum == signal.SIGINT:
+                exit_reason = "用户手动停止"
+            else:
+                exit_reason = f"收到信号 {signal_name}"
+            
+            notify_exit(exit_reason, config, [], remaining_orders, pnl_info, None)
+        except Exception as e:
+            logger.error(f"[信号处理] 发送退出通知失败: {e}")
+        
+        raise KeyboardInterrupt(f"收到信号 {signal_name}")
+    
+    signal.signal(signal.SIGTERM, signal_handler)
+    signal.signal(signal.SIGINT, signal_handler)
+    
+    try:
+        await trader.run()
+    except (KeyboardInterrupt, asyncio.CancelledError):
+        print("\n\n⏹️ 程序被中断")
+        raise
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("\n\n⏹️ 程序已退出")
