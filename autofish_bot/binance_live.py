@@ -965,13 +965,13 @@ class BinanceLiveTrader:
                         else:
                             if order.tp_order_id and order.tp_order_id in algo_status_map:
                                 algo_info = algo_status_map[order.tp_order_id]
-                                if algo_info.get('status') == 'FILLED':
+                                if algo_info.get('status') in ['TRIGGERED', 'FINISHED']:
                                     if order.sl_order_id and sl_exists:
                                         algo_ids_to_cancel.append(order.sl_order_id)
                                     close_reason = "take_profit"
                             if not close_reason and order.sl_order_id and order.sl_order_id in algo_status_map:
                                 algo_info = algo_status_map[order.sl_order_id]
-                                if algo_info.get('status') == 'FILLED':
+                                if algo_info.get('status') in ['TRIGGERED', 'FINISHED']:
                                     if order.tp_order_id and tp_exists:
                                         algo_ids_to_cancel.append(order.tp_order_id)
                                     close_reason = "stop_loss"
@@ -998,6 +998,18 @@ class BinanceLiveTrader:
                         self.chain_state.orders.pop(i)
                         logger.info(f"[删除订单] A{order.level} (order_id={order.order_id}, state={order.state}) 已从本地删除")
                         break
+            
+            # 调整订单级别：确保级别从 A1 开始连续编号
+            if self.chain_state.orders:
+                # 按原级别排序
+                self.chain_state.orders.sort(key=lambda o: o.level)
+                # 重新分配级别
+                for new_level, order in enumerate(self.chain_state.orders, start=1):
+                    old_level = order.level
+                    if old_level != new_level:
+                        order.level = new_level
+                        logger.info(f"[级别调整] A{old_level} -> A{new_level}")
+                        print(f"   📊 A{old_level} 级别调整为 A{new_level}")
             
             self._save_state()
             
@@ -1150,7 +1162,7 @@ class BinanceLiveTrader:
             
             order = self.chain_state.get_order_by_order_id(order_id)
             if not order:
-                logger.warning(f"[订单匹配] 未找到订单: orderId={order_id}")
+                logger.debug(f"[订单事件] 非入场单订单: orderId={order_id}, status={order_status}")
                 return
             
             if order_status == "FILLED":
@@ -1275,7 +1287,20 @@ class BinanceLiveTrader:
         
         logger.info(f"[Algo事件] algoId={algo_id}, status={algo_status}, orderType={order_type}")
         
-        if algo_status in ["FILLED", "filled"]:
+        # Algo 条件单状态说明:
+        # - TRIGGERING: 触发中（中间状态，不处理）
+        # - TRIGGERED: 已触发（中间状态，不处理，等待 FINISHED）
+        # - FINISHED: 已完成（最终状态，处理止盈/止损）
+        # - CANCELED: 已取消（用户手动取消）
+        # - EXPIRED: 已过期（需要补单）
+        # - REJECTED: 被拒绝（需要补单）
+        # 注意: 只处理 FINISHED 状态，避免重复处理 TRIGGERED 和 FINISHED 两个事件
+        if algo_status in ["FINISHED", "finished"]:
+            # 防止重复处理：如果订单已经是 closed 状态，跳过
+            if order.state == "closed":
+                logger.info(f"[Algo事件] A{order.level} 已处理过，跳过")
+                return
+            
             is_tp = (order.tp_order_id == algo_id)
             close_price = order.take_profit_price if is_tp else order.stop_loss_price
             
@@ -1305,6 +1330,30 @@ class BinanceLiveTrader:
                 await self.cancel_algo_order(self.config.get("symbol", "BTCUSDT"), order.sl_order_id)
             elif not is_tp and order.tp_order_id:
                 await self.cancel_algo_order(self.config.get("symbol", "BTCUSDT"), order.tp_order_id)
+            
+            # 取消下一级挂单（level + 1）
+            # 例如：A1 止盈 → 取消 A2 挂单 → 重新下 A1
+            # 例如：A2 止盈 → 取消 A3 挂单 → 重新下 A2
+            # 注意：下一级订单是 pending 状态（挂单中），还没有成交，所以不会有止盈止损单
+            symbol = self.config.get("symbol", "BTCUSDT")
+            next_level = order.level + 1
+            next_order = None
+            for o in self.chain_state.orders:
+                if o.level == next_level and o.state == "pending":
+                    next_order = o
+                    break
+            
+            if next_order and next_order.order_id:
+                try:
+                    await self.cancel_order(symbol, next_order.order_id)
+                    logger.info(f"[取消下一级挂单] A{next_order.level} 入场单已取消")
+                    print(f"[{datetime.now().strftime('%H:%M:%S')}] 🗑️ A{next_order.level} 下一级挂单已取消")
+                except Exception as e:
+                    logger.warning(f"[取消下一级挂单] A{next_order.level} 取消失败: {e}")
+                
+                # 删除下一级订单的本地记录
+                self.chain_state.orders.remove(next_order)
+                logger.info(f"[删除下一级订单] A{next_order.level} 已删除")
             
             self._save_state()
             

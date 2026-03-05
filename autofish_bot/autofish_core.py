@@ -162,10 +162,19 @@ class ChainState:
         )
     
     def save_to_file(self, filepath: str):
-        """保存到文件"""
-        with open(filepath, 'w', encoding='utf-8') as f:
-            json.dump(self.to_dict(), f, indent=2, ensure_ascii=False)
-        logger.info(f"[状态保存] 成功保存到: {filepath}")
+        """保存到文件（原子写入）"""
+        import os
+        temp_filepath = filepath + '.tmp'
+        try:
+            with open(temp_filepath, 'w', encoding='utf-8') as f:
+                json.dump(self.to_dict(), f, indent=2, ensure_ascii=False)
+            os.replace(temp_filepath, filepath)
+            logger.info(f"[状态保存] 成功保存到: {filepath}")
+        except Exception as e:
+            logger.error(f"[状态保存] 保存失败: {e}")
+            if os.path.exists(temp_filepath):
+                os.remove(temp_filepath)
+            raise
     
     @classmethod
     def load_from_file(cls, filepath: str) -> Optional['ChainState']:
