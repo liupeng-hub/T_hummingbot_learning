@@ -115,8 +115,11 @@ start_program() {
     fi
     
     echo "启动 Autofish V2 Binance Live Trading..."
+    echo "  交易对: $SYMBOL"
+    echo "  网络: $([ "$TESTNET" = "--testnet" ] && echo "测试网" || echo "主网")"
     
-    nohup "$SCRIPT_DIR/binance_live_run.sh" _run > /dev/null 2>&1 &
+    # 传递参数给后台进程
+    nohup "$SCRIPT_DIR/binance_live_run.sh" _run --symbol "$SYMBOL" $TESTNET $DECAY_FACTOR > /dev/null 2>&1 &
     
     sleep 2
     
@@ -290,6 +293,8 @@ case "${COMMAND:-status}" in
         status_program
         ;;
     _run)
+        shift
+        parse_args "$@"
         run_with_restart
         ;;
     -h|--help|help)
