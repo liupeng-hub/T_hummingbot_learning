@@ -340,6 +340,72 @@ class Autofish_OrderCalculator:
         self.stop_loss = stop_loss
         self.leverage = leverage
     
+    def calculate_atr(self, klines: List[Dict], period: int = 14) -> Decimal:
+        """计算 ATR (Average True Range)
+        
+        参数:
+            klines: K 线数据列表，每根 K 线包含 high, low, close
+            period: ATR 周期，默认 14
+            
+        返回:
+            ATR 值
+        """
+        if len(klines) < period + 1:
+            logger.warning(f"[ATR计算] K 线数量不足: {len(klines)} < {period + 1}")
+            return Decimal("0")
+        
+        tr_list = []
+        for i in range(1, period + 1):
+            high = Decimal(str(klines[-i]['high']))
+            low = Decimal(str(klines[-i]['low']))
+            prev_close = Decimal(str(klines[-i-1]['close']))
+            
+            tr = max(high - low, abs(high - prev_close), abs(low - prev_close))
+            tr_list.append(tr)
+        
+        atr = sum(tr_list) / len(tr_list)
+        logger.debug(f"[ATR计算] period={period}, atr={atr:.2f}")
+        return atr
+    
+    def calculate_dynamic_entry_price(
+        self,
+        current_price: Decimal,
+        klines: List[Dict],
+        level: int,
+        atr_multiplier: Decimal = Decimal("0.5"),
+        min_spacing: Decimal = Decimal("0.005"),
+        max_spacing: Decimal = Decimal("0.03")
+    ) -> Decimal:
+        """计算动态入场价格（基于 ATR）
+        
+        参数:
+            current_price: 当前价格
+            klines: K 线数据
+            level: 层级
+            atr_multiplier: ATR 乘数，默认 0.5
+            min_spacing: 最小网格间距，默认 0.5%
+            max_spacing: 最大网格间距，默认 3%
+            
+        返回:
+            入场价格
+        """
+        atr = self.calculate_atr(klines)
+        
+        if atr == 0:
+            return current_price * (Decimal("1") - self.grid_spacing * level)
+        
+        atr_percent = atr / current_price
+        dynamic_spacing = atr_percent * atr_multiplier
+        
+        dynamic_spacing = max(min_spacing, min(max_spacing, dynamic_spacing))
+        
+        entry_price = current_price * (Decimal("1") - dynamic_spacing * level)
+        
+        logger.info(f"[动态入场价格] level={level}, atr={atr:.2f}, atr_percent={float(atr_percent)*100:.2f}%, "
+                   f"dynamic_spacing={float(dynamic_spacing)*100:.2f}%, entry_price={entry_price:.2f}")
+        
+        return entry_price
+    
     def calculate_prices(self, base_price: Decimal) -> Dict[str, Decimal]:
         """计算订单价格
         
@@ -364,7 +430,9 @@ class Autofish_OrderCalculator:
         level: int,
         base_price: Decimal,
         total_amount: Decimal,
-        weight_calculator: Autofish_WeightCalculator
+        weight_calculator: Autofish_WeightCalculator,
+        klines: List[Dict] = None,
+        use_dynamic_entry: bool = True
     ) -> Autofish_Order:
         """创建订单
         
@@ -373,27 +441,36 @@ class Autofish_OrderCalculator:
             base_price: 基准价格
             total_amount: 总资金金额
             weight_calculator: 权重计算器
+            klines: K 线数据（用于 ATR 计算）
+            use_dynamic_entry: 是否使用动态入场价格
             
         返回:
             Autofish_Order 实例
         """
-        prices = self.calculate_prices(base_price)
+        if klines and use_dynamic_entry and level == 1:
+            entry_price = self.calculate_dynamic_entry_price(base_price, klines, level)
+        else:
+            entry_price = base_price * (Decimal("1") - self.grid_spacing * level)
+        
+        take_profit_price = entry_price * (Decimal("1") + self.exit_profit)
+        stop_loss_price = entry_price * (Decimal("1") - self.stop_loss)
+        
         stake_amount = weight_calculator.get_stake_amount(level, total_amount)
-        quantity = stake_amount / prices["entry_price"]
+        quantity = stake_amount / entry_price
         
         order = Autofish_Order(
             level=level,
-            entry_price=prices["entry_price"],
+            entry_price=entry_price,
             quantity=quantity,
             stake_amount=stake_amount,
-            take_profit_price=prices["take_profit_price"],
-            stop_loss_price=prices["stop_loss_price"],
+            take_profit_price=take_profit_price,
+            stop_loss_price=stop_loss_price,
             state="pending",
             created_at=datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
         )
         
-        logger.info(f"[创建订单] A{level}: entry={prices['entry_price']:.2f}, "
-                   f"tp={prices['take_profit_price']:.2f}, sl={prices['stop_loss_price']:.2f}, "
+        logger.info(f"[创建订单] A{level}: entry={entry_price:.2f}, "
+                   f"tp={take_profit_price:.2f}, sl={stop_loss_price:.2f}, "
                    f"stake={stake_amount:.2f} USDT, qty={quantity:.6f} BTC")
         
         return order

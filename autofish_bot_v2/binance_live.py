@@ -1263,7 +1263,8 @@ class AlgoHandler:
         
         if order.level == 1:
             current_price = await self.trader._get_current_price()
-            new_order = self.trader._create_order(1, current_price)
+            klines = await self.trader._get_recent_klines()
+            new_order = await self.trader._create_order(1, current_price, klines)
             self.trader.chain_state.orders.append(new_order)
             
             print(f"\n{'='*60}")
@@ -1369,7 +1370,8 @@ class AlgoHandler:
         self.trader._save_state()
         
         current_price = await self.trader._get_current_price()
-        new_order = self.trader._create_order(order.level, current_price)
+        klines = await self.trader._get_recent_klines()
+        new_order = await self.trader._create_order(order.level, current_price, klines)
         self.trader.chain_state.orders.append(new_order)
         await self.trader._place_entry_order(new_order)
     
@@ -1596,6 +1598,45 @@ class BinanceLiveTrader:
             self.step_size = Decimal("0.001")
             self.min_notional = Decimal("100")
     
+    async def _get_recent_klines(self, limit: int = 30) -> List[Dict]:
+        """获取最近 N 根 K 线
+        
+        参数:
+            limit: K 线数量，默认 30 根
+            
+        返回:
+            K 线数据列表
+        """
+        symbol = self.config.get('symbol', 'BTCUSDT')
+        url = f"{self.client.base_url}/fapi/v1/klines"
+        params = {
+            'symbol': symbol,
+            'interval': '1h',
+            'limit': limit
+        }
+        
+        try:
+            async with self.client.session.get(url, params=params) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    klines = [{
+                        'timestamp': item[0],
+                        'open': Decimal(item[1]),
+                        'high': Decimal(item[2]),
+                        'low': Decimal(item[3]),
+                        'close': Decimal(item[4]),
+                        'volume': Decimal(item[5]),
+                    } for item in data]
+                    logger.info(f"[K线获取] 成功获取 {len(klines)} 根 1h K线")
+                    return klines
+                else:
+                    text = await response.text()
+                    logger.warning(f"[K线获取] 失败: {response.status} - {text}")
+                    return []
+        except Exception as e:
+            logger.warning(f"[K线获取] 异常: {e}")
+            return []
+    
     def _adjust_price(self, price: Decimal) -> Decimal:
         tick_size = getattr(self, 'tick_size', Decimal("0.1"))
         adjusted = (price // tick_size) * tick_size
@@ -1755,8 +1796,6 @@ class BinanceLiveTrader:
                 > **通知类型**: 配置确认
                 > **交易标的**: {self.config.get('symbol', 'BTCUSDT')}
                 > **当前总资金**: {check_result['total_amount']} USDT
-                > **策略所需最小资金**: {suggested_min_ceil} USDT
-                > **建议资金储备**: {suggested_amount_1_5x_ceil} USDT（最小资金的1.5倍）
                 > 
                 > **各层级分配**:
                 {levels_info}
@@ -1787,7 +1826,7 @@ class BinanceLiveTrader:
     def _load_state(self) -> Optional[Dict[str, Any]]:
         return self.state_repository.load()
     
-    def _create_order(self, level: int, base_price: Decimal) -> Any:
+    async def _create_order(self, level: int, base_price: Decimal, klines: List[Dict] = None) -> Any:
         from autofish_core import Autofish_OrderCalculator
         
         order_calculator = Autofish_OrderCalculator(
@@ -1800,7 +1839,9 @@ class BinanceLiveTrader:
             level=level,
             base_price=base_price,
             total_amount=self.config.get("total_amount_quote", Decimal("1200")),
-            weight_calculator=self.calculator
+            weight_calculator=self.calculator,
+            klines=klines,
+            use_dynamic_entry=self.config.get("use_dynamic_entry", True)
         )
         
         order.quantity = self._adjust_quantity(order.quantity, order.entry_price)
@@ -2377,6 +2418,8 @@ class BinanceLiveTrader:
             current_price: 当前价格
             need_new_order: 是否需要新订单
         """
+        klines = await self._get_recent_klines()
+        
         if not need_new_order:
             await self._check_and_supplement_orders()
             
@@ -2391,7 +2434,7 @@ class BinanceLiveTrader:
                 has_next_pending = any(o.level == next_level for o in pending_orders)
                 
                 if next_level <= max_level and not has_next_pending:
-                    new_order = self._create_order(next_level, current_price)
+                    new_order = await self._create_order(next_level, current_price, klines)
                     self.chain_state.orders.append(new_order)
                     print(f"\n{'='*60}")
                     print(f"[{datetime.now().strftime('%H:%M:%S')}] 📥 入场单补下: A{next_level}")
@@ -2400,7 +2443,7 @@ class BinanceLiveTrader:
         
         if need_new_order:
             from autofish_core import Autofish_ChainState
-            order = self._create_order(1, current_price)
+            order = await self._create_order(1, current_price, klines)
             self.chain_state = Autofish_ChainState(base_price=current_price, orders=[order])
             await self._place_entry_order(order)
     
@@ -2687,7 +2730,8 @@ class BinanceLiveTrader:
             return
         
         current_price = await self._get_current_price()
-        new_order = self._create_order(next_level, current_price)
+        klines = await self._get_recent_klines()
+        new_order = await self._create_order(next_level, current_price, klines)
         self.chain_state.orders.append(new_order)
         
         await self._place_entry_order(new_order)

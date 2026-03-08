@@ -103,6 +103,7 @@ class BacktestEngine:
         self.kline_count = 0
         self.start_time = None
         self.end_time = None
+        self.klines_history: List[Dict] = []
     
     def _get_weights(self) -> Dict[int, Decimal]:
         """获取权重"""
@@ -114,8 +115,14 @@ class BacktestEngine:
             weights[i + 1] = Decimal(str(w))
         return weights
     
-    def _create_order(self, level: int, base_price: Decimal) -> Autofish_Order:
-        """创建订单"""
+    def _create_order(self, level: int, base_price: Decimal, klines: List[Dict] = None) -> Autofish_Order:
+        """创建订单
+        
+        参数:
+            level: 层级
+            base_price: 基准价格
+            klines: K 线数据（用于 ATR 计算，仅 A1 使用）
+        """
         grid_spacing = self.config.get("grid_spacing", Decimal("0.01"))
         exit_profit = self.config.get("exit_profit", Decimal("0.01"))
         stop_loss = self.config.get("stop_loss", Decimal("0.08"))
@@ -131,22 +138,31 @@ class BacktestEngine:
         if weights and level in weights:
             weight = weights[level]
             stake_amount = total_amount * weight
-            prices = order_calculator.calculate_prices(base_price)
-            quantity = stake_amount / prices["entry_price"]
+            
+            if klines and level == 1:
+                entry_price = order_calculator.calculate_dynamic_entry_price(
+                    base_price, klines, level
+                )
+            else:
+                entry_price = base_price * (Decimal("1") - grid_spacing * level)
+            
+            take_profit_price = entry_price * (Decimal("1") + exit_profit)
+            stop_loss_price = entry_price * (Decimal("1") - stop_loss)
+            quantity = stake_amount / entry_price
             
             order = Autofish_Order(
                 level=level,
-                entry_price=prices["entry_price"],
+                entry_price=entry_price,
                 quantity=quantity,
                 stake_amount=stake_amount,
-                take_profit_price=prices["take_profit_price"],
-                stop_loss_price=prices["stop_loss_price"],
+                take_profit_price=take_profit_price,
+                stop_loss_price=stop_loss_price,
                 state="pending",
                 created_at=datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
             )
             
-            logger.info(f"[创建订单] A{level}: entry={prices['entry_price']:.2f}, "
-                       f"tp={prices['take_profit_price']:.2f}, sl={prices['stop_loss_price']:.2f}, "
+            logger.info(f"[创建订单] A{level}: entry={entry_price:.2f}, "
+                       f"tp={take_profit_price:.2f}, sl={stop_loss_price:.2f}, "
                        f"stake={stake_amount:.2f} USDT, qty={quantity:.6f} BTC, weight={weight:.4f}")
             
             return order
@@ -155,7 +171,8 @@ class BacktestEngine:
             level=level,
             base_price=base_price,
             total_amount=total_amount,
-            weight_calculator=self.calculator
+            weight_calculator=self.calculator,
+            klines=klines
         )
     
     def _process_entry(self, low_price: Decimal, current_price: Decimal):
@@ -347,7 +364,8 @@ class BacktestEngine:
         first_price = Decimal(klines[0]["open"])
         self.chain_state = Autofish_ChainState(base_price=first_price)
         
-        first_order = self._create_order(1, first_price)
+        self.klines_history = klines[:30] if len(klines) >= 30 else klines
+        first_order = self._create_order(1, first_price, self.klines_history)
         self.chain_state.orders.append(first_order)
         
         logger.info(f"[初始化] 创建 A1: 入场价={first_order.entry_price:.2f}")
