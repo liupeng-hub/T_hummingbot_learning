@@ -2399,8 +2399,9 @@ class BinanceLiveTrader:
                     await self._place_entry_order(new_order, is_supplement=True)
         
         if need_new_order:
+            from autofish_core import Autofish_ChainState
             order = self._create_order(1, current_price)
-            self.chain_state = ChainState(base_price=current_price, orders=[order])
+            self.chain_state = Autofish_ChainState(base_price=current_price, orders=[order])
             await self._place_entry_order(order)
     
     async def run(self) -> None:
