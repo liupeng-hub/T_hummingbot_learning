@@ -5,6 +5,7 @@ cd "$SCRIPT_DIR"
 
 LOG_DIR="$SCRIPT_DIR/logs"
 PID_FILE="$LOG_DIR/autofish.pid"
+PARAMS_FILE="$LOG_DIR/autofish.params"
 LOG_FILE="$LOG_DIR/binance_live.log"
 ERROR_LOG_FILE="$LOG_DIR/binance_live_error.log"
 
@@ -36,7 +37,7 @@ parse_args() {
                 DECAY_FACTOR="--decay-factor $2"
                 shift 2
                 ;;
-            start|stop|restart|status)
+            start|stop|restart|status|_run)
                 COMMAND="$1"
                 shift
                 ;;
@@ -52,6 +53,11 @@ mkdir -p "$LOG_DIR"
 run_with_restart() {
     echo $$ > "$PID_FILE"
     
+    # 保存启动参数到文件
+    echo "SYMBOL=$SYMBOL" > "$PARAMS_FILE"
+    echo "TESTNET=$TESTNET" >> "$PARAMS_FILE"
+    echo "DECAY_FACTOR=$DECAY_FACTOR" >> "$PARAMS_FILE"
+    
     echo "============================================================"
     echo "Autofish V2 Binance Live Trading"
     echo "============================================================"
@@ -61,6 +67,7 @@ run_with_restart() {
     echo "日志文件: $LOG_FILE"
     echo "错误日志: $ERROR_LOG_FILE"
     echo "PID 文件: $PID_FILE"
+    echo "参数文件: $PARAMS_FILE"
     echo "============================================================"
     
     restart_count=0
@@ -68,6 +75,7 @@ run_with_restart() {
     cleanup() {
         echo "$(date '+%Y-%m-%d %H:%M:%S') 收到退出信号，清理中..."
         rm -f "$PID_FILE"
+        rm -f "$PARAMS_FILE"
         exit 0
     }
     
@@ -100,6 +108,7 @@ run_with_restart() {
     done
     
     rm -f "$PID_FILE"
+    rm -f "$PARAMS_FILE"
     echo "$(date '+%Y-%m-%d %H:%M:%S') 程序结束"
 }
 
@@ -172,6 +181,12 @@ stop_program() {
 restart_program() {
     echo "重启程序..."
     
+    # 从参数文件读取保存的参数
+    if [ -f "$PARAMS_FILE" ]; then
+        echo "从参数文件读取启动参数..."
+        source "$PARAMS_FILE"
+    fi
+    
     if [ -f "$PID_FILE" ]; then
         pid=$(cat "$PID_FILE")
         if ps -p $pid > /dev/null 2>&1; then
@@ -228,7 +243,18 @@ status_program() {
     echo "状态: 运行中"
     echo "PID: $pid"
     
+    # 显示保存的参数
+    if [ -f "$PARAMS_FILE" ]; then
+        echo ""
+        echo "启动参数:"
+        source "$PARAMS_FILE"
+        echo "  交易对: $SYMBOL"
+        echo "  网络: $([ "$TESTNET" = "--testnet" ] && echo "测试网" || echo "主网")"
+        echo "  衰减因子: ${DECAY_FACTOR:-默认}"
+    fi
+    
     start_time=$(ps -p $pid -o lstart= | xargs)
+    echo ""
     echo "启动时间: $start_time"
     
     cpu_usage=$(ps -p $pid -o %cpu= | xargs)

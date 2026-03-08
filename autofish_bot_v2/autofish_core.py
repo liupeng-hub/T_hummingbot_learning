@@ -1266,7 +1266,7 @@ class Autofish_AmplitudeAnalyzer:
             
             return (f'  "d_{decay_factor}":{{\n'
                     f'    "symbol":"{self.symbol}",\n'
-                    f'    "total_amount_quote":1200,\n'
+                    f'    "total_amount_quote":5000,\n'
                     f'    "leverage":{int(self.leverage)},\n'
                     f'    "decay_factor":{decay_factor},\n'
                     f'    "max_entries":{max_entries},\n'
@@ -1347,7 +1347,7 @@ class Autofish_AmplitudeAnalyzer:
             return [
                 f'    "d_{decay_factor}":{{',
                 f'      "symbol":"{self.symbol}",',
-                f'      "total_amount_quote":1200,',
+                f'      "total_amount_quote":5000,',
                 f'      "leverage":{int(self.leverage)},',
                 f'      "decay_factor":{decay_factor},',
                 f'      "max_entries":{max_entries},',
