@@ -2753,6 +2753,8 @@ async def main():
     parser.add_argument("--symbol", type=str, default="BTCUSDT", help="交易对 (默认: BTCUSDT)")
     parser.add_argument("--testnet", action="store_true", help="使用测试网")
     parser.add_argument("--no-testnet", action="store_true", help="使用主网")
+    parser.add_argument("--stop-loss", type=float, default=0.08, help="止损比例 (默认: 0.08)")
+    parser.add_argument("--total-amount", type=float, default=10000, help="总投入金额 USDT (默认: 10000)")
     parser.add_argument("--decay-factor", type=float, default=0.5, help="衰减因子 (默认: 0.5)")
     
     args = parser.parse_args()

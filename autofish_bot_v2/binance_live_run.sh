@@ -11,6 +11,42 @@ ERROR_LOG_FILE="$LOG_DIR/binance_live_error.log"
 RESTART_DELAY=10
 MAX_RESTARTS=5
 
+# 默认参数
+SYMBOL="BTCUSDT"
+TESTNET="--testnet"
+DECAY_FACTOR=""
+
+# 解析命令行参数
+parse_args() {
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --symbol)
+                SYMBOL="$2"
+                shift 2
+                ;;
+            --testnet)
+                TESTNET="--testnet"
+                shift
+                ;;
+            --no-testnet)
+                TESTNET="--no-testnet"
+                shift
+                ;;
+            --decay-factor)
+                DECAY_FACTOR="--decay-factor $2"
+                shift 2
+                ;;
+            start|stop|restart|status)
+                COMMAND="$1"
+                shift
+                ;;
+            *)
+                shift
+                ;;
+        esac
+    done
+}
+
 mkdir -p "$LOG_DIR"
 
 run_with_restart() {
@@ -20,6 +56,8 @@ run_with_restart() {
     echo "Autofish V2 Binance Live Trading"
     echo "============================================================"
     echo "启动时间: $(date '+%Y-%m-%d %H:%M:%S')"
+    echo "交易对: $SYMBOL"
+    echo "网络: $([ "$TESTNET" = "--testnet" ] && echo "测试网" || echo "主网")"
     echo "日志文件: $LOG_FILE"
     echo "错误日志: $ERROR_LOG_FILE"
     echo "PID 文件: $PID_FILE"
@@ -40,7 +78,7 @@ run_with_restart() {
     while true; do
         echo "$(date '+%Y-%m-%d %H:%M:%S') 启动程序..."
         
-        python3 binance_live.py --symbol BTCUSDT --testnet 2>> "$ERROR_LOG_FILE"
+        python3 binance_live.py --symbol "$SYMBOL" $TESTNET $DECAY_FACTOR 2>> "$ERROR_LOG_FILE"
         
         EXIT_CODE=$?
         echo "$(date '+%Y-%m-%d %H:%M:%S') 程序退出，退出码: $EXIT_CODE"
@@ -210,7 +248,7 @@ status_program() {
 }
 
 usage() {
-    echo "用法: $0 {start|stop|restart|status}"
+    echo "用法: $0 [选项] {start|stop|restart|status}"
     echo ""
     echo "命令:"
     echo "  start    启动程序"
@@ -218,15 +256,27 @@ usage() {
     echo "  restart  重启程序"
     echo "  status   查看状态 (默认)"
     echo ""
+    echo "选项:"
+    echo "  --symbol SYMBOL      交易对 (默认: BTCUSDT)"
+    echo "  --testnet            使用测试网 (默认)"
+    echo "  --no-testnet         使用主网"
+    echo "  --decay-factor N     衰减因子 (默认: 0.5)"
+    echo ""
     echo "示例:"
-    echo "  $0 start    # 启动程序"
-    echo "  $0 stop     # 停止程序"
-    echo "  $0 restart  # 重启程序"
-    echo "  $0 status   # 查看状态"
-    echo "  $0          # 查看状态 (默认)"
+    echo "  $0 start                              # 启动 BTCUSDT 测试网"
+    echo "  $0 --symbol ETHUSDT start             # 启动 ETHUSDT 测试网"
+    echo "  $0 --symbol BTCUSDT --no-testnet start # 启动 BTCUSDT 主网"
+    echo "  $0 --symbol ETHUSDT --decay-factor 1.0 start  # 启动 ETHUSDT 保守策略"
+    echo "  $0 stop                               # 停止程序"
+    echo "  $0 restart                            # 重启程序"
+    echo "  $0 status                             # 查看状态"
+    echo "  $0                                    # 查看状态 (默认)"
 }
 
-case "${1:-status}" in
+# 解析参数
+parse_args "$@"
+
+case "${COMMAND:-status}" in
     start)
         start_program
         ;;
