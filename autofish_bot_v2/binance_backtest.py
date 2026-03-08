@@ -61,7 +61,30 @@ logger = logging.getLogger(__name__)
 
 
 class BacktestEngine:
-    """回测引擎"""
+    """Binance 回测引擎
+    
+    使用历史 K 线数据模拟链式挂单策略的执行过程。
+    
+    主要功能：
+    1. 获取历史 K 线数据
+    2. 模拟订单执行（入场、止盈、止损）
+    3. 计算盈亏统计
+    4. 生成回测报告
+    
+    回测流程：
+        获取K线 -> 遍历每根K线 -> 检查入场/出场条件 -> 
+        更新状态 -> 计算盈亏 -> 生成报告
+    
+    Attributes:
+        config: 配置字典（symbol, total_amount, leverage 等）
+        interval: K线周期
+        calculator: 权重计算器
+        chain_state: 链式挂单状态
+        results: 回测结果统计
+        kline_count: 已处理的 K 线数量
+        start_time: 回测开始时间
+        end_time: 回测结束时间
+    """
     
     def __init__(self, config: dict):
         self.config = config
@@ -274,7 +297,19 @@ class BacktestEngine:
                     return []
     
     async def run(self, symbol: str = "BTCUSDT", interval: str = "1m", limit: int = 1000):
-        """运行回测"""
+        """运行回测
+        
+        主要流程：
+        1. 获取历史 K 线数据
+        2. 遍历每根 K 线，模拟订单执行
+        3. 统计盈亏结果
+        4. 生成回测报告
+        
+        参数:
+            symbol: 交易对
+            interval: K线周期
+            limit: K线数量
+        """
         self.interval = interval
         logger.info("=" * 60)
         logger.info("Autofish V1 回测开始")
@@ -357,7 +392,17 @@ class BacktestEngine:
         logger.info(f"  净收益: {net_profit:.2f} USDT")
     
     def save_report(self, symbol: str):
-        """保存回测报告到 Markdown 文件"""
+        """保存回测报告到 Markdown 文件
+        
+        生成包含以下内容的报告：
+        1. 回测区间信息
+        2. 振幅配置参数
+        3. 回测结果统计
+        4. 交易明细
+        
+        参数:
+            symbol: 交易对
+        """
         import os
         
         output_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "autofish_output")

@@ -128,6 +128,44 @@ stop_program() {
     echo "程序已强制终止"
 }
 
+restart_program() {
+    echo "重启程序..."
+    
+    if [ -f "$PID_FILE" ]; then
+        pid=$(cat "$PID_FILE")
+        if ps -p $pid > /dev/null 2>&1; then
+            echo "停止程序 (PID: $pid)..."
+            kill -TERM $pid 2>/dev/null
+            
+            for i in {1..10}; do
+                if ! ps -p $pid > /dev/null 2>&1; then
+                    echo "程序已停止"
+                    rm -f "$PID_FILE"
+                    break
+                fi
+                sleep 1
+            done
+            
+            if ps -p $pid > /dev/null 2>&1; then
+                echo "程序未响应，强制终止..."
+                kill -KILL $pid 2>/dev/null
+                pkill -f "binance_live.py" 2>/dev/null
+                pkill -f "binance_live_run.sh" 2>/dev/null
+                rm -f "$PID_FILE"
+            fi
+            
+            sleep 2
+        else
+            echo "程序未运行，直接启动..."
+            rm -f "$PID_FILE"
+        fi
+    else
+        echo "程序未运行，直接启动..."
+    fi
+    
+    start_program
+}
+
 status_program() {
     echo "============================================================"
     echo "Autofish V2 Binance Live Trading - 状态"
@@ -172,16 +210,18 @@ status_program() {
 }
 
 usage() {
-    echo "用法: $0 {start|stop|status}"
+    echo "用法: $0 {start|stop|restart|status}"
     echo ""
     echo "命令:"
-    echo "  start   启动程序"
-    echo "  stop    停止程序"
-    echo "  status  查看状态 (默认)"
+    echo "  start    启动程序"
+    echo "  stop     停止程序"
+    echo "  restart  重启程序"
+    echo "  status   查看状态 (默认)"
     echo ""
     echo "示例:"
     echo "  $0 start    # 启动程序"
     echo "  $0 stop     # 停止程序"
+    echo "  $0 restart  # 重启程序"
     echo "  $0 status   # 查看状态"
     echo "  $0          # 查看状态 (默认)"
 }
@@ -192,6 +232,9 @@ case "${1:-status}" in
         ;;
     stop)
         stop_program
+        ;;
+    restart)
+        restart_program
         ;;
     status)
         status_program

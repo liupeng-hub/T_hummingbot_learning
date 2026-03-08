@@ -666,6 +666,31 @@ def notify_startup(config: dict, current_price: Decimal):
 # ============================================================================
 
 class LongPortClient:
+    """LongPort API 客户端
+    
+    封装 LongPort SDK 的行情和交易接口。
+    
+    主要功能：
+    - 行情查询（实时价格、K线数据）
+    - 订单管理（下单、撤单、查询）
+    - 仓位查询
+    - 账户查询
+    
+    注意：LongPort 不支持服务器端条件单，需要客户端监控价格触发止盈止损。
+    
+    Attributes:
+        app_key: LongPort App Key
+        app_secret: LongPort App Secret
+        access_token: LongPort Access Token
+        quote_ctx: 行情上下文
+        trade_ctx: 交易上下文
+    
+    示例:
+        >>> client = LongPortClient(app_key, app_secret, access_token)
+        >>> await client.connect()
+        >>> price = await client.get_current_price("700.HK")
+    """
+    
     def __init__(self, app_key: str, app_secret: str, access_token: str):
         self.app_key = app_key
         self.app_secret = app_secret
@@ -800,6 +825,36 @@ def _get_currency_from_symbol(symbol: str) -> str:
 
 
 class LongPortLiveTrader:
+    """LongPort 实盘交易器
+    
+    实现链式挂单策略的股票实盘交易，支持港股、美股、A股。
+    
+    主要功能：
+    1. 状态恢复：程序重启后从本地文件恢复订单状态
+    2. 价格监控：客户端监控价格触发止盈止损（LongPort 不支持服务器端条件单）
+    3. 补单机制：检测并补充缺失的止盈止损单
+    4. 异常处理：错误重试、通知和恢复
+    
+    与 Binance 版本的主要区别：
+    - LongPort 不支持服务器端条件单，需要客户端轮询价格
+    - 股票交易有最小交易单位（港股 100 股/手）
+    - 股票交易无杠杆
+    
+    Attributes:
+        config: 配置字典（symbol, total_amount, lot_size 等）
+        client: LongPortClient 实例
+        chain_state: 链式挂单状态
+        state_repository: 状态持久化仓库
+        running: 运行标志
+        lot_size: 最小交易单位（港股 100，美股 1）
+        calculator: 权重计算器
+    
+    示例:
+        >>> config = {"symbol": "700.HK", "total_amount": 12000, ...}
+        >>> trader = LongPortLiveTrader(config)
+        >>> await trader.run()
+    """
+    
     def __init__(self, config: Dict[str, Any]):
         self.config = config
         

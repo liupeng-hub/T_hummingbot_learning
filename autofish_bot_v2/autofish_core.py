@@ -49,7 +49,7 @@ class Autofish_Order:
         tp_supplemented: 止盈单是否为补下
         sl_supplemented: 止损单是否为补下
     
-    Example:
+    示例:
         >>> order = Autofish_Order(
         ...     level=1,
         ...     entry_price=Decimal("50000"),
@@ -160,7 +160,7 @@ class Autofish_ChainState:
         - save_to_file(): 保存状态到文件（原子写入）
         - load_from_file(): 从文件加载状态
     
-    Example:
+    示例:
         >>> state = Autofish_ChainState(base_price=Decimal("50000"))
         >>> state.orders.append(order)
         >>> state.save_to_file("state.json")
@@ -269,7 +269,7 @@ class Autofish_WeightCalculator:
     
     def __init__(self, decay_factor: Decimal = Decimal("0.5")):
         """
-        Args:
+        参数:
             decay_factor: 衰减因子，用于调整权重分布
                          值越大，权重越均匀；值越小，权重越集中在前几层
         """
@@ -295,11 +295,11 @@ class Autofish_WeightCalculator:
     def get_stake_amount(self, level: int, total_amount: Decimal) -> Decimal:
         """获取指定层级的资金金额
         
-        Args:
+        参数:
             level: 层级 (1-4)
             total_amount: 总资金金额
             
-        Returns:
+        返回:
             该层级的资金金额
         """
         weights = self.calculate_weights()
@@ -329,7 +329,7 @@ class Autofish_OrderCalculator:
         leverage: Decimal = Decimal("10")
     ):
         """
-        Args:
+        参数:
             grid_spacing: 网格间距 (小数，如 0.01 表示 1%)
             exit_profit: 止盈比例 (小数，如 0.01 表示 1%)
             stop_loss: 止损比例 (小数，如 0.08 表示 8%)
@@ -343,10 +343,10 @@ class Autofish_OrderCalculator:
     def calculate_prices(self, base_price: Decimal) -> Dict[str, Decimal]:
         """计算订单价格
         
-        Args:
+        参数:
             base_price: 基准价格
             
-        Returns:
+        返回:
             包含 entry_price, take_profit_price, stop_loss_price 的字典
         """
         entry_price = base_price * (Decimal("1") - self.grid_spacing)
@@ -368,13 +368,13 @@ class Autofish_OrderCalculator:
     ) -> Autofish_Order:
         """创建订单
         
-        Args:
+        参数:
             level: 层级
             base_price: 基准价格
             total_amount: 总资金金额
             weight_calculator: 权重计算器
             
-        Returns:
+        返回:
             Autofish_Order 实例
         """
         prices = self.calculate_prices(base_price)
@@ -401,11 +401,11 @@ class Autofish_OrderCalculator:
     def calculate_profit(self, order: Autofish_Order, close_price: Decimal) -> Decimal:
         """计算盈亏
         
-        Args:
+        参数:
             order: 订单
             close_price: 平仓价格
             
-        Returns:
+        返回:
             盈亏金额 (正数为盈利，负数为亏损)
         """
         profit = order.stake_amount * (close_price - order.entry_price) / order.entry_price * self.leverage
@@ -430,7 +430,7 @@ class Autofish_OrderCalculator:
     def get_default_config(source: str = "binance") -> Dict[str, Any]:
         """获取默认配置
         
-        Args:
+        参数:
             source: 数据源，支持 binance 或 longport
         """
         if source == "longport":
@@ -1019,7 +1019,7 @@ class Autofish_AmplitudeAnalyzer:
     async def analyze(self, proxy: str = None) -> dict:
         """执行完整分析
         
-        Args:
+        参数:
             proxy: 代理地址，如果为 None 则自动从环境变量读取
         """
         self.logger.info("=" * 60)

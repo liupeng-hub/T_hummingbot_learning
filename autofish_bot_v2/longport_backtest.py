@@ -93,7 +93,34 @@ def get_period_from_interval(interval: str) -> Period:
 
 
 class LongPortBacktestEngine:
-    """LongPort 回测引擎"""
+    """LongPort 回测引擎
+    
+    使用 LongPort API 获取历史 K 线数据进行策略回测。
+    支持港股、美股、A股。
+    
+    主要功能：
+    1. 获取历史 K 线数据
+    2. 模拟订单执行（入场、止盈、止损）
+    3. 计算盈亏统计
+    4. 生成回测报告
+    
+    与 Binance 版本的主要区别：
+    - 使用 LongPort API 获取数据
+    - 支持港股、美股、A股
+    - 股票交易无杠杆
+    - 时间戳为毫秒级
+    
+    Attributes:
+        config: 配置字典
+        interval: K线周期
+        calculator: 权重计算器
+        chain_state: 链式挂单状态
+        results: 回测结果统计
+        kline_count: 已处理的 K 线数量
+        start_time: 回测开始时间
+        end_time: 回测结束时间
+        quote_ctx: LongPort 行情上下文
+    """
     
     def __init__(self, config: dict):
         self.config = config

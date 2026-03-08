@@ -1,0 +1,51 @@
+# Autofish V2 文档目录
+
+本目录包含 Autofish V2 链式挂单策略的完整设计文档。
+
+## 文档列表
+
+### 策略文档
+
+| 文档 | 说明 |
+|------|------|
+| [autofish_strategy.md](./autofish_strategy.md) | **策略算法说明** - 策略来源、核心公式、算法分析、操作规则、风险分析 |
+
+### 代码设计文档
+
+| 文档 | 说明 |
+|------|------|
+| [autofish_core_design.md](./autofish_core_design.md) | **核心模块设计** - autofish_core.py 设计文档，包含订单类、状态管理、权重计算、振幅分析等 |
+| [binance_live_design.md](./binance_live_design.md) | **Binance实盘设计** - binance_live.py 设计文档，包含REST API客户端、WebSocket监听、订单管理等 |
+| [binance_backtest_design.md](./binance_backtest_design.md) | **Binance回测设计** - binance_backtest.py 设计文档，包含回测引擎、K线处理、报告生成等 |
+| [longport_live_design.md](./longport_live_design.md) | **LongPort实盘设计** - longport_live.py 设计文档，包含港股/美股/A股交易支持 |
+| [longport_backtest_design.md](./longport_backtest_design.md) | **LongPort回测设计** - longport_backtest.py 设计文档，包含多市场回测支持 |
+
+## 快速导航
+
+### 新手入门
+
+1. 先阅读 [autofish_strategy.md](./autofish_strategy.md) 了解策略原理
+2. 再阅读 [autofish_core_design.md](./autofish_core_design.md) 了解核心算法
+3. 根据需要阅读实盘或回测模块设计文档
+
+### 开发者
+
+1. 阅读 [autofish_core_design.md](./autofish_core_design.md) 了解核心类设计
+2. 阅读 [binance_live_design.md](./binance_live_design.md) 了解实盘交易流程
+3. 参考流程图理解代码逻辑
+
+## 文档约定
+
+### 流程图
+
+所有流程图使用 Mermaid 语法绘制，可在支持 Mermaid 的 Markdown 编辑器中查看。
+
+### 代码示例
+
+文档中的代码示例使用 Python 语法，可直接运行。
+
+## 相关资源
+
+- [主 README](../README.md) - 项目概述和快速开始
+- [测试文件](../tests/) - 单元测试
+- [输出文件](../autofish_output/) - 回测报告和配置文件

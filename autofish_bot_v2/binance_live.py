@@ -43,6 +43,13 @@ from urllib.parse import urlencode
 # 常量定义
 # ============================================================================
 
+# 文件名常量
+STATE_FILE = "binance_live_state.json"
+LOG_FILE = "binance_live.log"
+LOG_DIR = "logs"
+MESSAGE_COUNTER_FILE = "message_counter.txt"
+
+
 class OrderState(str, Enum):
     PENDING = "pending"
     FILLED = "filled"
@@ -136,9 +143,6 @@ def get_logger() -> logging.Logger:
 
 
 logger = logging.getLogger("autofish")
-
-
-MESSAGE_COUNTER_FILE = "message_counter.txt"
 
 
 def get_next_message_number() -> int:
@@ -616,7 +620,7 @@ def notify_orders_recovered(orders: list, config: dict, current_price: Decimal, 
         position_qty = pnl_info.get('position_qty', '0')
         if position_qty and position_qty != '0':
             content_lines.append("")
-            content_lines.append("### 💰 盈亏信息")
+            content_lines.append("### 💰 当前盈亏信息")
             content_lines.append(f"> **持仓数量**: {position_qty}")
             content_lines.append(f"> **持仓均价**: {pnl_info.get('entry_price', 'N/A')}")
             
@@ -714,7 +718,7 @@ def notify_exit(reason: str, config: dict, cancelled_orders: list = None, remain
     content_lines.append("请检查程序状态并手动重启。")
     
     content = "\n".join(content_lines)
-    send_wechat_notification("⏹️ Autofish V1 退出", content)
+    send_wechat_notification("⏹️ Autofish V2 退出", content)
 
 
 def notify_startup(config: dict, current_price: Decimal):
@@ -738,7 +742,32 @@ def notify_startup(config: dict, current_price: Decimal):
             {weights_str}
             > **启动时间**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
         """).strip()
-    send_wechat_notification("🚀 Autofish V1 启动", content)
+    send_wechat_notification("🚀 Autofish V2 启动", content)
+
+
+def notify_critical_error(error_msg: str, config: dict):
+    """发送严重错误通知"""
+    symbol = config.get('symbol', 'BTCUSDT')
+    content = dedent(f"""
+        > **错误类型**: 严重错误
+        > **交易标的**: {symbol}
+        > **错误信息**: {error_msg}
+        > **状态**: 程序强制退出
+        > **时间**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+    """).strip()
+    send_wechat_notification("🚨 Autofish V2 严重错误", content)
+
+
+def notify_warning(warning_msg: str, config: dict):
+    """发送警告通知"""
+    symbol = config.get('symbol', 'BTCUSDT')
+    content = dedent(f"""
+        > **通知类型**: 资金提醒
+        > **交易标的**: {symbol}
+        > **提醒内容**: {warning_msg}
+        > **时间**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+    """).strip()
+    send_wechat_notification("⚠️ Autofish 资金提醒", content)
 
 
 # ============================================================================
@@ -746,6 +775,31 @@ def notify_startup(config: dict, current_price: Decimal):
 # ============================================================================
 
 class BinanceClient:
+    """Binance Futures API 客户端
+    
+    提供 Binance Futures 的 REST API 和 WebSocket 接口封装。
+    
+    主要功能：
+    - REST API 请求（签名、限流、重试）
+    - WebSocket 连接（用户数据流）
+    - Algo 条件单管理（止盈止损单）
+    - 订单管理（下单、撤单、查询）
+    - 仓位和账户查询
+    
+    Attributes:
+        api_key: Binance API Key
+        api_secret: Binance API Secret
+        testnet: 是否使用测试网
+        base_url: REST API 基础 URL
+        ws_url: WebSocket URL
+        session: aiohttp 会话
+        rate_limiter: 请求限流器（1000 请求/60 秒）
+    
+    示例:
+        >>> client = BinanceClient(api_key, api_secret, testnet=True)
+        >>> await client.place_order("BTCUSDT", "BUY", "LIMIT", 0.001, 50000)
+    """
+    
     def __init__(self, api_key: str, api_secret: str, testnet: bool = True, proxy: str = None):
         self.api_key = api_key
         self.api_secret = api_secret
@@ -1071,6 +1125,25 @@ class BinanceClient:
 # ============================================================================
 
 class AlgoHandler:
+    """Algo 条件单处理器
+    
+    处理 Binance Algo 条件单（止盈止损单）的状态变化事件。
+    
+    主要功能：
+    - 监听 Algo 条件单状态变化
+    - 处理止盈单触发（TRIGGERED）
+    - 处理止损单触发（TRIGGERED）
+    - 更新订单状态和发送通知
+    
+    Flow:
+        WebSocket 事件 -> handle_algo_update() -> 
+        查找对应订单 -> 检查触发类型 -> 
+        更新状态 -> 发送通知 -> 下下一级订单
+    
+    Attributes:
+        trader: BinanceLiveTrader 实例
+    """
+    
     def __init__(self, trader):
         self.trader = trader
     
@@ -1348,8 +1421,7 @@ class AlgoHandler:
         
         self.trader._save_state()
     
-    async def _handle_new(self, order: Any, algo_data: Dict[str, Any], 
-                          algo_id: int, algo_type: str) -> None:
+    async def _handle_new(self, order: Any, algo_data: Dict[str, Any], algo_id: int, algo_type: str) -> None:
         inner_data = algo_data.get("o", {})
         symbol = inner_data.get("s") or algo_data.get("symbol")
         trigger_price = Decimal(str(inner_data.get("tp") or inner_data.get("sp") or 0))
@@ -1409,11 +1481,57 @@ class AlgoHandler:
 # ============================================================================
 
 class BinanceLiveTrader:
+    """Binance 实盘交易器
+    
+    实现链式挂单策略的实盘交易，是整个系统的核心类。
+    
+    主要功能：
+    1. 状态恢复：程序重启后从本地文件恢复订单状态，与 Binance 同步
+    2. 订单同步：检测 Binance 订单状态变化，更新本地状态
+    3. 补单机制：检测并补充缺失的止盈止损单
+    4. WebSocket 监听：实时监听订单状态变化
+    5. 异常处理：错误重试、通知和恢复
+    
+    交易流程：
+        启动 -> 初始化精度 -> 状态恢复 -> 补单检查 -> 
+        下入场单 -> WebSocket 监听 -> 处理事件 -> 循环
+    
+    订单生命周期：
+        pending（挂单中）-> filled（已成交）-> closed（已平仓）
+        
+        成交后：
+        1. 下止盈止损条件单
+        2. 发送成交通知
+        3. 下下一级入场单
+        
+        平仓后：
+        1. 取消另一个条件单
+        2. 发送平仓通知
+        3. 更新盈亏统计
+    
+    Attributes:
+        config: 配置字典（symbol, total_amount, leverage 等）
+        testnet: 是否使用测试网
+        chain_state: 链式挂单状态（包含所有订单）
+        state_repository: 状态持久化仓库
+        running: 运行标志
+        client: BinanceClient 实例
+        algo_handler: AlgoHandler 实例
+        calculator: 权重计算器
+        price_precision: 价格精度
+        qty_precision: 数量精度
+    
+    示例:
+        >>> config = {"symbol": "BTCUSDT", "total_amount": 1200, ...}
+        >>> trader = BinanceLiveTrader(config, testnet=True)
+        >>> await trader.run()
+    """
+    
     def __init__(self, config: Dict[str, Any], testnet: bool = True):
         self.config = config
         self.testnet = testnet
         
-        state_file = "binance_live_state.json"
+        state_file = STATE_FILE
         self.chain_state: Optional[Any] = None
         self.state_repository = StateRepository(state_file)
         self.running = True
@@ -1464,25 +1582,200 @@ class BinanceLiveTrader:
                             self.tick_size = Decimal(f.get("tickSize", "0.01"))
                         elif f.get("filterType") == "LOT_SIZE":
                             self.step_size = Decimal(f.get("stepSize", "0.001"))
+                        elif f.get("filterType") == "MIN_NOTIONAL":
+                            self.min_notional = Decimal(f.get("notional", "100"))
                     break
             
-            logger.info(f"[精度初始化] {symbol}: price_precision={self.price_precision}, qty_precision={self.qty_precision}, tick_size={self.tick_size}, step_size={self.step_size}")
+            if not hasattr(self, 'min_notional'):
+                self.min_notional = Decimal("100")
+            
+            logger.info(f"[精度初始化] {symbol}: 价格精度={self.price_precision}位小数, 数量精度={self.qty_precision}位小数, 价格步长={self.tick_size}, 数量步长={self.step_size}, 最小金额={self.min_notional} USDT")
         except Exception as e:
             logger.warning(f"[精度初始化] 获取精度失败，使用默认值: {e}")
             self.tick_size = Decimal("0.1")
             self.step_size = Decimal("0.001")
+            self.min_notional = Decimal("100")
     
     def _adjust_price(self, price: Decimal) -> Decimal:
         tick_size = getattr(self, 'tick_size', Decimal("0.1"))
         adjusted = (price // tick_size) * tick_size
         return adjusted
     
-    def _adjust_quantity(self, quantity: Decimal) -> Decimal:
+    def _adjust_quantity(self, quantity: Decimal, price: Decimal = None) -> Decimal:
+        """调整数量精度，并确保满足最小金额要求
+        
+        参数:
+            quantity: 原始数量
+            price: 入场价格（用于检查最小金额要求）
+        
+        返回:
+            调整后的数量
+        """
         step_size = getattr(self, 'step_size', Decimal("0.001"))
         adjusted = (quantity // step_size) * step_size
+        
         if adjusted <= 0:
             adjusted = step_size
+        
+        min_notional = getattr(self, 'min_notional', Decimal("100"))
+        
+        if price and price > 0:
+            current_notional = adjusted * price
+            if current_notional < min_notional:
+                min_quantity = (min_notional / price // step_size + 1) * step_size
+                logger.warning(f"[数量调整] 订单金额 {current_notional:.2f} USDT < 最小要求 {min_notional} USDT，"
+                              f"数量从 {adjusted:.6f} 调整为 {min_quantity:.6f}")
+                print(f"   ⚠️ 订单金额不足，数量调整为 {min_quantity:.6f} (金额: {min_quantity * price:.2f} USDT)")
+                adjusted = min_quantity
+        
         return adjusted
+    
+    def _ceil_amount(self, amount: float) -> int:
+        """金额向上取整
+        
+        参数:
+            amount: 原始金额
+        
+        返回:
+            向上取整后的金额
+        """
+        return int(amount) + 1 if amount != int(amount) else int(amount)
+    
+    def _print_level_check_results(self, results: List[Dict], show_status: bool = True) -> None:
+        """打印各层级检查结果
+        
+        参数:
+            results: 各层级检查结果列表
+            show_status: 是否显示状态图标
+        """
+        for r in results:
+            if show_status:
+                status = "✅" if r['satisfied'] else "❌"
+                print(f"    A{r['level']}: {self._ceil_amount(r['stake'])} USDT ({r['weight']*100:.1f}%) {status}")
+            else:
+                print(f"    A{r['level']}: {self._ceil_amount(r['stake'])} USDT ({r['weight']*100:.1f}%)")
+    
+    def _check_min_notional(self) -> Tuple[bool, Dict]:
+        """检查配置是否满足最小金额要求
+        
+        返回:
+            (是否满足, 检查结果详情)
+        """
+        min_notional = getattr(self, 'min_notional', Decimal("100"))
+        total_amount = Decimal(str(self.config.get('total_amount_quote', 1200)))
+        max_entries = self.config.get('max_entries', 4)
+        
+        results = []
+        all_satisfied = True
+        
+        for level in range(1, max_entries + 1):
+            weight_pct = self.calculator.get_weight_percentage(level)
+            weight = Decimal(str(weight_pct)) / Decimal("100")
+            stake = total_amount * weight
+            
+            satisfied = stake >= min_notional
+            if not satisfied:
+                all_satisfied = False
+            
+            results.append({
+                'level': level,
+                'weight': float(weight),
+                'stake': float(stake),
+                'satisfied': satisfied
+            })
+        
+        min_weight = min(r['weight'] for r in results)
+        suggested_min_amount = min_notional / Decimal(str(min_weight))
+        
+        return all_satisfied, {
+            'results': results,
+            'min_notional': float(min_notional),
+            'total_amount': float(total_amount),
+            'suggested_min_amount': float(suggested_min_amount)
+        }
+    
+    async def _check_fund_sufficiency(self) -> bool:
+        """检查资金是否充足
+        
+        返回:
+            True: 资金满足要求，继续运行
+            False: 资金不满足要求，需要退出
+        """
+        satisfied, check_result = self._check_min_notional()
+        
+        if not satisfied:
+            suggested_min_ceil = self._ceil_amount(check_result['suggested_min_amount'])
+            logger.error(f"[预检查] 配置不满足最小金额要求，程序退出 - 当前资金: {check_result['total_amount']} USDT，需要: {suggested_min_ceil} USDT")
+            
+            error_msg = f"总资金 {check_result['total_amount']} USDT 不满足最小金额要求，建议最小总资金: {suggested_min_ceil} USDT"
+            notify_critical_error(error_msg, self.config)
+            
+            print(f"\n{'='*60}")
+            print(f"❌ 配置预检查失败，程序退出")
+            print(f"{'='*60}")
+            print(f"  最小金额要求: {check_result['min_notional']} USDT")
+            print(f"  当前总资金: {check_result['total_amount']} USDT")
+            print(f"  建议最小总资金: {suggested_min_ceil} USDT")
+            print(f"\n  各层级检查:")
+            self._print_level_check_results(check_result['results'])
+            print(f"\n  请增加总资金或减少最大层级数量")
+            print(f"{'='*60}\n")
+            
+            return False
+        
+        suggested_amount_1_5x = check_result['suggested_min_amount'] * 1.5
+        suggested_amount_1_5x_ceil = self._ceil_amount(suggested_amount_1_5x)
+        suggested_min_ceil = self._ceil_amount(check_result['suggested_min_amount'])
+        
+        if check_result['total_amount'] < suggested_amount_1_5x:
+            logger.warning(f"[预检查] 资金储备可能不足 - 当前资金: {check_result['total_amount']} USDT，最小资金: {suggested_min_ceil} USDT，建议资金: {suggested_amount_1_5x_ceil} USDT")
+            
+            warning_msg = f"当前总资金 {check_result['total_amount']} USDT，建议资金储备: {suggested_amount_1_5x_ceil} USDT（最小资金的1.5倍）"
+            notify_warning(warning_msg, self.config)
+            
+            print(f"\n{'='*60}")
+            print(f"⚠️ 资金储备提醒")
+            print(f"{'='*60}")
+            print(f"  当前总资金: {check_result['total_amount']} USDT")
+            print(f"  策略所需最小资金: {suggested_min_ceil} USDT")
+            print(f"  建议资金储备: {suggested_amount_1_5x_ceil} USDT（最小资金的1.5倍）")
+            print(f"\n  各层级检查:")
+            self._print_level_check_results(check_result['results'])
+            print(f"\n  资金储备可能不足，建议增加资金以提高策略稳定性")
+            print(f"{'='*60}\n")
+        else:
+            logger.info(f"[预检查] 资金配置检查通过 - 当前资金: {check_result['total_amount']} USDT，最小资金: {suggested_min_ceil} USDT，建议资金: {suggested_amount_1_5x_ceil} USDT")
+            
+            levels_info = "\n".join([
+                f"> A{r['level']}: {self._ceil_amount(r['stake'])} USDT ({r['weight']*100:.1f}%)"
+                for r in check_result['results']
+            ])
+            
+            content = dedent(f"""
+                > **通知类型**: 配置确认
+                > **交易标的**: {self.config.get('symbol', 'BTCUSDT')}
+                > **当前总资金**: {check_result['total_amount']} USDT
+                > **策略所需最小资金**: {suggested_min_ceil} USDT
+                > **建议资金储备**: {suggested_amount_1_5x_ceil} USDT（最小资金的1.5倍）
+                > 
+                > **各层级分配**:
+                {levels_info}
+                > 
+                > **时间**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+            """).strip()
+            send_wechat_notification("✅ Autofish V2 配置确认", content)
+            
+            print(f"\n{'='*60}")
+            print(f"✅ 资金配置检查通过")
+            print(f"{'='*60}")
+            print(f"  当前总资金: {check_result['total_amount']} USDT")
+            print(f"  策略所需最小资金: {suggested_min_ceil} USDT")
+            print(f"  建议资金储备: {suggested_amount_1_5x_ceil} USDT（最小资金的1.5倍）")
+            print(f"\n  各层级分配:")
+            self._print_level_check_results(check_result['results'], show_status=False)
+            print(f"{'='*60}\n")
+        
+        return True
     
     def _save_state(self) -> None:
         if self.chain_state:
@@ -1510,7 +1803,7 @@ class BinanceLiveTrader:
             weight_calculator=self.calculator
         )
         
-        order.quantity = self._adjust_quantity(order.quantity)
+        order.quantity = self._adjust_quantity(order.quantity, order.entry_price)
         order.entry_price = self._adjust_price(order.entry_price)
         order.take_profit_price = self._adjust_price(order.take_profit_price)
         order.stop_loss_price = self._adjust_price(order.stop_loss_price)
@@ -1533,6 +1826,16 @@ class BinanceLiveTrader:
         signal.signal(signal.SIGINT, signal_handler)
     
     async def _handle_exit(self, reason: str) -> None:
+        """处理程序退出
+        
+        执行退出前的清理工作：
+        1. 取消所有挂单
+        2. 保存当前状态
+        3. 发送退出通知
+        
+        参数:
+            reason: 退出原因
+        """
         if self.exit_notified:
             return
         
@@ -1565,10 +1868,26 @@ class BinanceLiveTrader:
             logger.error(f"[退出处理] 处理失败: {e}")
     
     async def _place_entry_order(self, order: Any, is_supplement: bool = False) -> None:
+        """下单入场单
+        
+        创建并提交一个限价买入订单。如果订单金额小于 Binance 最小要求（100 USDT），
+        会自动调整数量以满足要求。
+        
+        参数:
+            order: 订单对象，包含入场价、数量等信息
+            is_supplement: 是否为补下订单（状态恢复时补下）
+        
+        副作用:
+            - 更新 order.order_id
+            - 更新 order.quantity（可能被调整）
+            - 更新 order.stake_amount
+            - 保存状态到文件
+            - 发送微信通知
+        """
         symbol = self.config.get("symbol", "BTCUSDT")
         
-        quantity = self._adjust_quantity(order.quantity)
         price = self._adjust_price(order.entry_price)
+        quantity = self._adjust_quantity(order.quantity, price)
         
         result = await self.client.place_order(
             symbol=symbol,
@@ -1581,6 +1900,7 @@ class BinanceLiveTrader:
         if "orderId" in result:
             order.order_id = result["orderId"]
             order.quantity = quantity
+            order.stake_amount = quantity * price
             
             weight_pct = self.calculator.get_weight_percentage(order.level)
             
@@ -1614,9 +1934,23 @@ class BinanceLiveTrader:
     
     async def _place_exit_orders(self, order: Any, place_tp: bool = True, 
                                   place_sl: bool = True) -> None:
+        """下止盈止损条件单
+        
+        为已成交的入场单创建止盈和止损条件单。
+        
+        参数:
+            order: 已成交的订单对象
+            place_tp: 是否下止盈单
+            place_sl: 是否下止损单
+        
+        副作用:
+            - 更新 order.tp_order_id
+            - 更新 order.sl_order_id
+            - 保存状态到文件
+        """
         symbol = self.config.get("symbol", "BTCUSDT")
         
-        quantity = self._adjust_quantity(order.quantity)
+        quantity = self._adjust_quantity(order.quantity, order.entry_price)
         
         if place_tp:
             tp_trigger_price = self._adjust_price(order.take_profit_price)
@@ -1692,6 +2026,28 @@ class BinanceLiveTrader:
         return None
     
     async def _restore_orders(self, current_price: Decimal) -> bool:
+        """恢复订单状态
+        
+        程序重启后从本地文件恢复订单状态，并与 Binance 同步。
+        
+        主要流程：
+        1. 加载本地保存的状态
+        2. 查询 Binance 订单状态
+        3. 同步本地状态（检测成交、取消等）
+        4. 检查止盈止损单是否存在
+        5. 补充缺失的止盈止损单
+        
+        参数:
+            current_price: 当前价格
+        
+        返回:
+            bool: 是否需要创建新订单（如果没有恢复到任何订单）
+        
+        副作用:
+            - 更新 self.chain_state
+            - 保存状态到文件
+            - 发送通知
+        """
         symbol = self.config.get("symbol", "BTCUSDT")
         state_data = self._load_state()
         need_new_order = True
@@ -1703,8 +2059,6 @@ class BinanceLiveTrader:
             if saved_state and saved_state.orders:
                 logger.info(f"[状态恢复] 发现本地保存的状态: {len(saved_state.orders)} 个订单")
                 print(f"\n🔄 发现本地保存的状态: {len(saved_state.orders)} 个订单")
-                
-                notify_startup(self.config, current_price)
                 
                 self.chain_state = saved_state
                 self.chain_state.base_price = current_price
@@ -1726,6 +2080,7 @@ class BinanceLiveTrader:
                 
                 orders_to_remove = []
                 algo_ids_to_cancel = []
+                orders_need_process = []
                 
                 for order in self.chain_state.orders:
                     logger.info(f"[订单恢复] A{order.level}: state={order.state}")
@@ -1747,14 +2102,23 @@ class BinanceLiveTrader:
                         try:
                             binance_order = await self.client.get_order_status(symbol, order.order_id)
                             binance_status = binance_order.get("status")
-                            logger.info(f"  Binance 状态: {binance_status}")
+                            binance_avg_price = binance_order.get("avgPrice", "0")
+                            binance_qty = binance_order.get("executedQty", "0")
+                            binance_side = binance_order.get("side", "")
+                            binance_type = binance_order.get("type", "")
+                            
+                            logger.info(f"  Binance 订单查询: orderId={order.order_id}, status={binance_status}, "
+                                       f"side={binance_side}, type={binance_type}, avgPrice={binance_avg_price}, "
+                                       f"executedQty={binance_qty}")
+                            print(f"   📋 Binance: orderId={order.order_id}, status={binance_status}, "
+                                  f"avgPrice={binance_avg_price}, qty={binance_qty}")
                             
                             if binance_status == "FILLED":
                                 filled_price = Decimal(str(binance_order.get("avgPrice", order.entry_price)))
-                                order.state = "filled"
                                 order.entry_price = filled_price
-                                logger.info(f"[状态同步] A{order.level} 已在 Binance 成交，更新本地状态")
-                                print(f"   ⚡ A{order.level} 已在 Binance 成交，同步状态")
+                                orders_need_process.append((order, filled_price))
+                                logger.info(f"[状态同步] A{order.level} 已在 Binance 成交，记录待处理")
+                                print(f"   ⚡ A{order.level} 已在 Binance 成交，待处理")
                             elif binance_status in ["CANCELED", "EXPIRED"]:
                                 if order.tp_order_id:
                                     algo_ids_to_cancel.append(order.tp_order_id)
@@ -1876,6 +2240,9 @@ class BinanceLiveTrader:
                 
                 self._save_state()
                 
+                for order, filled_price in orders_need_process:
+                    await self._process_order_filled(order, filled_price, is_recovery=True)
+                
                 if self.chain_state.orders:
                     pnl_info = await self._get_pnl_info()
                     notify_orders_recovered(self.chain_state.orders, self.config, current_price, pnl_info or {})
@@ -1886,11 +2253,22 @@ class BinanceLiveTrader:
         else:
             from autofish_core import Autofish_ChainState
             self.chain_state = Autofish_ChainState(base_price=current_price, orders=[])
-            notify_startup(self.config, current_price)
         
         return need_new_order
     
     async def _check_and_supplement_orders(self) -> None:
+        """检查并补充缺失的止盈止损单
+        
+        遍历所有已成交订单，检查止盈止损单是否存在：
+        - 如果止盈单缺失，补充下止盈单
+        - 如果止损单缺失，补充下止损单
+        - 如果当前价已超过止盈/止损价，执行市价平仓
+        
+        副作用:
+            - 更新 order.tp_order_id
+            - 更新 order.sl_order_id
+            - 保存状态到文件
+        """
         symbol = self.config.get("symbol", "BTCUSDT")
         algo_orders = await self.client.get_open_algo_orders(symbol)
         logger.info(f"[补单检查] 获取到 {len(algo_orders)} 个 Algo 条件单")
@@ -1931,7 +2309,7 @@ class BinanceLiveTrader:
     async def _place_tp_order(self, order: Any) -> None:
         symbol = self.config.get("symbol", "BTCUSDT")
         
-        quantity = self._adjust_quantity(order.quantity)
+        quantity = self._adjust_quantity(order.quantity, order.take_profit_price)
         trigger_price = self._adjust_price(order.take_profit_price)
         
         tp_result = await self.client.place_algo_order(
@@ -1951,7 +2329,7 @@ class BinanceLiveTrader:
     async def _place_sl_order(self, order: Any) -> None:
         symbol = self.config.get("symbol", "BTCUSDT")
         
-        quantity = self._adjust_quantity(order.quantity)
+        quantity = self._adjust_quantity(order.quantity, order.stop_loss_price)
         trigger_price = self._adjust_price(order.stop_loss_price)
         
         sl_result = await self.client.place_algo_order(
@@ -1972,7 +2350,7 @@ class BinanceLiveTrader:
         symbol = self.config.get("symbol", "BTCUSDT")
         
         try:
-            quantity = self._adjust_quantity(order.quantity)
+            quantity = self._adjust_quantity(order.quantity, order.entry_price)
             
             result = await self.client.place_order(
                 symbol=symbol,
@@ -1992,6 +2370,39 @@ class BinanceLiveTrader:
             logger.error(f"[市价平仓] A{order.level} 失败: {e}")
             print(f"[{datetime.now().strftime('%H:%M:%S')}] ❌ A{order.level} 市价平仓失败: {e}")
     
+    async def _handle_entry_supplement(self, current_price: Decimal, need_new_order: bool) -> None:
+        """处理入场单补充逻辑
+        
+        参数:
+            current_price: 当前价格
+            need_new_order: 是否需要新订单
+        """
+        if not need_new_order:
+            await self._check_and_supplement_orders()
+            
+            filled_orders = [o for o in self.chain_state.orders if o.state == "filled"]
+            pending_orders = [o for o in self.chain_state.orders if o.state == "pending"]
+            
+            if filled_orders:
+                max_filled_level = max(o.level for o in filled_orders)
+                max_level = self.config.get("max_entries", 4)
+                next_level = max_filled_level + 1
+                
+                has_next_pending = any(o.level == next_level for o in pending_orders)
+                
+                if next_level <= max_level and not has_next_pending:
+                    new_order = self._create_order(next_level, current_price)
+                    self.chain_state.orders.append(new_order)
+                    print(f"\n{'='*60}")
+                    print(f"[{datetime.now().strftime('%H:%M:%S')}] 📥 入场单补下: A{next_level}")
+                    print(f"{'='*60}")
+                    await self._place_entry_order(new_order, is_supplement=True)
+        
+        if need_new_order:
+            order = self._create_order(1, current_price)
+            self.chain_state = ChainState(base_price=current_price, orders=[order])
+            await self._place_entry_order(order)
+    
     async def run(self) -> None:
         from autofish_core import Autofish_ChainState
         
@@ -2007,63 +2418,84 @@ class BinanceLiveTrader:
         print(f"  止盈比例: {self.config.get('take_profit_pct', 0.01) * 100}%")
         print(f"  止损比例: {self.config.get('stop_loss_pct', 0.08) * 100}%")
         print(f"  衰减因子: {self.config.get('decay_factor', 0.5)}")
-        print(f"  日志文件: logs/binance_live.log")
-        print(f"  状态文件: binance_live_state.json")
+        print(f"  日志文件: {LOG_DIR}/{LOG_FILE}")
+        print(f"  状态文件: {STATE_FILE}")
         print(f"{'='*60}\n")
         
         logger.info(f"[启动] 交易对={self.config.get('symbol')}, 测试网={self.testnet}, 总投入={self.config.get('total_amount')}")
         
+        self.consecutive_errors = 0
+        self.max_consecutive_errors = 5
+        
         try:
-            await self._init_precision()
-            
-            current_price = await self._get_current_price()
-            
-            need_new_order = await self._restore_orders(current_price)
-            
-            if not need_new_order:
-                await self._check_and_supplement_orders()
-                
-                filled_orders = [o for o in self.chain_state.orders if o.state == "filled"]
-                pending_orders = [o for o in self.chain_state.orders if o.state == "pending"]
-                
-                if filled_orders:
-                    max_filled_level = max(o.level for o in filled_orders)
-                    max_level = self.config.get("max_entries", 4)
-                    next_level = max_filled_level + 1
+            while self.running:
+                try:
+                    await self._init_precision()
                     
-                    has_next_pending = any(o.level == next_level for o in pending_orders)
+                    current_price = await self._get_current_price()
                     
-                    if next_level <= max_level and not has_next_pending:
-                        new_order = self._create_order(next_level, current_price)
-                        self.chain_state.orders.append(new_order)
+                    # 发送启动通知
+                    notify_startup(self.config, current_price)
+                    
+                    # 预检查资金是否充足
+                    if not await self._check_fund_sufficiency():
+                        await self.client.close()
+                        return
+                    
+                    need_new_order = await self._restore_orders(current_price)
+                    
+                    # 处理入场单补充
+                    await self._handle_entry_supplement(current_price, need_new_order)
+                    
+                    self.consecutive_errors = 0
+                    
+                    await self._ws_loop()
+                    
+                    if not self.running:
+                        await self._handle_exit("用户停止")
+                        break
+                        
+                except KeyboardInterrupt:
+                    logger.info("[运行] 收到 KeyboardInterrupt")
+                    await self._handle_exit("用户中断 (Ctrl+C)")
+                    break
+                except asyncio.CancelledError:
+                    logger.info("[运行] 收到 CancelledError")
+                    await self._handle_exit("任务取消")
+                    break
+                except Exception as e:
+                    self.consecutive_errors += 1
+                    logger.error(f"[运行] 发生异常 ({self.consecutive_errors}/{self.max_consecutive_errors}): {e}")
+                    
+                    if self.consecutive_errors >= self.max_consecutive_errors:
+                        logger.error(f"[运行] 连续错误 {self.consecutive_errors} 次，退出")
+                        await self._handle_exit(f"连续错误 {self.consecutive_errors} 次: {e}")
+                        break
+                    else:
+                        notify_critical_error(str(e), self.config)
                         print(f"\n{'='*60}")
-                        print(f"[{datetime.now().strftime('%H:%M:%S')}] 📥 入场单补下: A{next_level}")
-                        print(f"{'='*60}")
-                        await self._place_entry_order(new_order, is_supplement=True)
-            
-            if need_new_order:
-                order = self._create_order(1, current_price)
-                self.chain_state = ChainState(base_price=current_price, orders=[order])
-                await self._place_entry_order(order)
-            
-            await self._ws_loop()
-            
-            if not self.running:
-                await self._handle_exit("用户停止")
-            
-        except KeyboardInterrupt:
-            logger.info("[运行] 收到 KeyboardInterrupt")
-            await self._handle_exit("用户中断 (Ctrl+C)")
-        except asyncio.CancelledError:
-            logger.info("[运行] 收到 CancelledError")
-            await self._handle_exit("任务取消")
-        except Exception as e:
-            logger.error(f"[运行] 异常退出: {e}")
-            await self._handle_exit(f"异常退出: {e}")
+                        print(f"[{datetime.now().strftime('%H:%M:%S')}] ⚠️ 发生异常，等待重试...")
+                        print(f"  错误: {e}")
+                        print(f"  连续错误: {self.consecutive_errors}/{self.max_consecutive_errors}")
+                        print(f"{'='*60}\n")
+                        await asyncio.sleep(10)
         finally:
             await self.client.close()
     
     async def _ws_loop(self) -> None:
+        """WebSocket 主循环
+        
+        建立 WebSocket 连接，监听用户数据流事件：
+        - ORDER_TRADE_UPDATE: 订单状态变化
+        - listenKeyExpired: listen key 过期
+        
+        支持自动重连，最多重连 10 次。
+        
+        副作用:
+            - 更新订单状态
+            - 触发止盈止损处理
+            - 发送通知
+        """
         max_reconnect_attempts = 10
         reconnect_attempts = 0
         
@@ -2127,6 +2559,15 @@ class BinanceLiveTrader:
                 logger.warning(f"[WebSocket] 续期失败: {e}")
     
     async def _handle_ws_message(self, data: Dict[str, Any]) -> None:
+        """处理 WebSocket 消息
+        
+        根据事件类型分发处理：
+        - ORDER_TRADE_UPDATE: 订单状态变化
+        - listenKeyExpired: listen key 过期
+        
+        参数:
+            data: WebSocket 消息数据
+        """
         event_type = data.get("e")
         
         if event_type == "ORDER_TRADE_UPDATE":
@@ -2138,6 +2579,15 @@ class BinanceLiveTrader:
             self.ws_connected = False
     
     async def _handle_order_update(self, order_data: Dict[str, Any]) -> None:
+        """处理订单状态更新
+        
+        根据 Binance 订单状态执行相应处理：
+        - FILLED: 订单成交，下止盈止损单，发通知，下下一级订单
+        - CANCELED/EXPIRED: 订单取消，删除本地订单
+        
+        参数:
+            order_data: Binance 订单数据
+        """
         order_id = order_data.get("orderId")
         order_status = order_data.get("orderStatus")
         
@@ -2155,12 +2605,19 @@ class BinanceLiveTrader:
         elif order_status in ["CANCELED", "EXPIRED", "TRADE_PREVENT"]:
             await self._handle_order_cancelled(order, order_data)
     
-    async def _handle_order_filled(self, order: Any, order_data: Dict[str, Any]) -> None:
-        logger.info(f"[订单成交] A{order.level}")
-        print(f"[{datetime.now().strftime('%H:%M:%S')}] ✅ 入场成交 A{order.level}")
+    async def _process_order_filled(self, order: Any, filled_price: Decimal, is_recovery: bool = False) -> None:
+        """处理订单成交后的通用逻辑
+        
+        参数:
+            order: 订单对象
+            filled_price: 成交价格
+            is_recovery: 是否为状态恢复时的处理
+        """
+        if is_recovery:
+            logger.info(f"[状态恢复] A{order.level} 检测到成交，执行后续处理")
+            print(f"   ⚡ A{order.level} 检测到成交，执行后续处理")
         
         order.state = "filled"
-        filled_price = Decimal(str(order_data.get("avgPrice", order.entry_price)))
         order.entry_price = filled_price
         
         await self._place_exit_orders(order)
@@ -2171,6 +2628,14 @@ class BinanceLiveTrader:
         await self._place_next_level_order(order)
         
         self._save_state()
+    
+    async def _handle_order_filled(self, order: Any, order_data: Dict[str, Any]) -> None:
+        """WebSocket 实时成交处理"""
+        logger.info(f"[订单成交] A{order.level}")
+        print(f"[{datetime.now().strftime('%H:%M:%S')}] ✅ 入场成交 A{order.level}")
+        
+        filled_price = Decimal(str(order_data.get("avgPrice", order.entry_price)))
+        await self._process_order_filled(order, filled_price)
     
     async def _handle_order_cancelled(self, order: Any, order_data: Dict[str, Any]) -> None:
         logger.info(f"[订单取消] A{order.level}")
@@ -2198,6 +2663,18 @@ class BinanceLiveTrader:
                 logger.warning(f"[取消关联条件单] 失败 algoId={algo_id}: {e}")
     
     async def _place_next_level_order(self, order: Any) -> None:
+        """下下一级入场单
+        
+        当前订单成交后，创建下一级入场单。
+        
+        参数:
+            order: 当前已成交的订单
+        
+        副作用:
+            - 创建新订单并添加到 chain_state.orders
+            - 下入场单
+            - 保存状态
+        """
         next_level = order.level + 1
         max_level = self.config.get("max_entries", 4)
         
@@ -2232,10 +2709,9 @@ async def main():
     
     load_dotenv()
     
-    setup_logger(name="autofish", log_file="binance_live.log")
+    setup_logger(name="autofish", log_file=LOG_FILE)
     
     testnet = not args.no_testnet if args.no_testnet else args.testnet
-    
     if testnet:
         api_key = os.getenv("BINANCE_TESTNET_API_KEY", "")
         api_secret = os.getenv("BINANCE_TESTNET_SECRET_KEY", "")
@@ -2245,7 +2721,6 @@ async def main():
     
     decay_factor = Decimal(str(args.decay_factor))
     amplitude_config = Autofish_AmplitudeConfig.load_latest(args.symbol, decay_factor=decay_factor)
-    
     if amplitude_config:
         config = {
             "symbol": amplitude_config.get_symbol(),

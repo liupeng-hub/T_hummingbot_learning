@@ -1,7 +1,7 @@
 {
   "d_0.5":{
     "symbol":"BTCUSDT",
-    "total_amount_quote":1200,
+    "total_amount_quote":10000,
     "leverage":10,
     "decay_factor":0.5,
     "max_entries":4,
@@ -14,7 +14,7 @@
   },
   "d_1.0":{
     "symbol":"BTCUSDT",
-    "total_amount_quote":1200,
+    "total_amount_quote":10000,
     "leverage":10,
     "decay_factor":1.0,
     "max_entries":4,
