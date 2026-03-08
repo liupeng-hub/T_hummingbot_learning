@@ -2486,8 +2486,6 @@ class BinanceLiveTrader:
         print(f"  状态文件: {STATE_FILE}")
         print(f"{'='*60}\n")
         
-        logger.info(f"[启动] 交易对={self.config.get('symbol')}, 测试网={self.testnet}, 总投入={self.config.get('total_amount')}")
-        
         self.consecutive_errors = 0
         self.max_consecutive_errors = 5
         
@@ -2815,6 +2813,16 @@ async def main():
     config["api_key"] = api_key
     config["api_secret"] = api_secret
     
+    # 启动日志 - 醒目的分隔线
+    logger.info("=" * 60)
+    logger.info("🚀 Autofish V2 Binance Live Trading 启动")
+    logger.info("=" * 60)
+    logger.info(f"  启动时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    logger.info(f"  交易对: {config.get('symbol')}")
+    logger.info(f"  网络: {'测试网' if testnet else '主网'}")
+    logger.info("=" * 60)
+    
+    # 配置加载日志
     logger.info(f"[配置加载] {'使用振幅分析配置' if amplitude_config else '使用默认配置'}: {args.symbol}")
     logger.info(f"  配置文件: {config_file}")
     logger.info(f"  交易标的: {config.get('symbol')}")
@@ -2826,6 +2834,7 @@ async def main():
     logger.info(f"  衰减因子: {float(decay_factor)}")
     logger.info(f"  最大层级: {config['max_entries']}")
     logger.info(f"  网格权重: {config.get('weights', [])}")
+    logger.info("=" * 60)
     
     trader = BinanceLiveTrader(config, testnet=testnet)
     await trader.run()
