@@ -2052,7 +2052,11 @@ class BinanceLiveTrader:
                     cancelled_orders.append(order)
                     logger.info(f"[取消订单] A{order.level} orderId={order.order_id}")
                 except Exception as e:
-                    logger.warning(f"[取消订单] 失败 A{order.level}: {e}")
+                    error_msg = str(e)
+                    if "-2011" in error_msg:
+                        logger.info(f"[取消订单] A{order.level} 订单已不存在（可能已成交或取消）")
+                    else:
+                        logger.warning(f"[取消订单] 失败 A{order.level}: {e}")
         
         return cancelled_orders
     

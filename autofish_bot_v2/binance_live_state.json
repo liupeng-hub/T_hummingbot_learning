@@ -1,5 +1,5 @@
 {
-  "base_price": "66466.40",
+  "base_price": "66159.60",
   "orders": [
     {
       "level": 1,
@@ -23,19 +23,19 @@
     },
     {
       "level": 2,
-      "entry_price": "65134.20",
+      "entry_price": "64836.40",
       "quantity": "0.027",
-      "stake_amount": "1758.62340",
-      "take_profit_price": "65785.50",
-      "stop_loss_price": "59923.40",
+      "stake_amount": "1750.58280",
+      "take_profit_price": "65484.70",
+      "stop_loss_price": "59649.40",
       "state": "pending",
-      "order_id": 12709912276,
+      "order_id": 12710243753,
       "tp_order_id": null,
       "sl_order_id": null,
       "close_price": null,
       "close_reason": null,
       "profit": null,
-      "created_at": "2026-03-09 07:26:06",
+      "created_at": "2026-03-09 07:44:43",
       "filled_at": null,
       "closed_at": null,
       "tp_supplemented": false,
