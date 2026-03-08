@@ -462,8 +462,10 @@ async def _restore_orders(self, current_price: Decimal) -> bool:
 | --testnet | - | 使用测试网 |
 | --no-testnet | - | 使用主网 |
 | --decay-factor | 0.5 | 衰减因子 |
-| --stop-loss | 0.08 | 止损比例 |
-| --total-amount | 2000 | 总投入金额 |
+
+**说明**：
+- `stop_loss`、`total_amount_quote`、`entry_price_strategy` 从配置文件读取
+- 配置文件由振幅分析生成，或使用内置默认配置
 
 ## 七、使用示例
 

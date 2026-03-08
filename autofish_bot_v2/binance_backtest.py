@@ -535,7 +535,7 @@ async def main():
     parser.add_argument("--limit", type=int, default=1500, help="K线数量 (默认: 1500)")
     parser.add_argument("--decay-factor", type=float, default=0.5, help="衰减因子 (默认: 0.5，可选: 0.5/1.0)")
     parser.add_argument("--stop-loss", type=float, default=0.08, help="止损比例 (默认: 0.08)")
-    parser.add_argument("--total-amount", type=float, default=1200, help="总投入金额 (默认: 1200)")
+    parser.add_argument("--total-amount", type=float, default=10000, help="总投入金额 (默认: 10000)")
     
     args = parser.parse_args()
     

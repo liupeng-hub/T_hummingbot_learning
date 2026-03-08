@@ -2753,8 +2753,6 @@ async def main():
     parser.add_argument("--symbol", type=str, default="BTCUSDT", help="交易对 (默认: BTCUSDT)")
     parser.add_argument("--testnet", action="store_true", help="使用测试网")
     parser.add_argument("--no-testnet", action="store_true", help="使用主网")
-    parser.add_argument("--stop-loss", type=float, default=0.08, help="止损比例 (默认: 0.08)")
-    parser.add_argument("--total-amount", type=float, default=2000, help="总投入金额 USDT (默认: 2000，最小: 100)")
     parser.add_argument("--decay-factor", type=float, default=0.5, help="衰减因子 (默认: 0.5)")
     
     args = parser.parse_args()
@@ -2793,10 +2791,6 @@ async def main():
         config = Autofish_OrderCalculator.get_default_config("binance")
         config["symbol"] = args.symbol
         config["decay_factor"] = decay_factor
-        config.update({
-            "stop_loss": Decimal(str(args.stop_loss)),
-            "total_amount_quote": Decimal(str(args.total_amount)),
-        })
         config_file = "无（使用内置默认配置）"
     
     config["api_key"] = api_key

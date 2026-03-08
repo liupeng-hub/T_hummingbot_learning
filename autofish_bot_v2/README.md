@@ -50,14 +50,14 @@ pip install -r requirements.txt
 # 激活虚拟环境
 source venv/bin/activate
 
-# 分析 BTCUSDT 日线振幅（Binance）
+# 分析 BTCUSDT 日线振幅（Binance，默认 ATR 入场策略）
 python autofish_core.py --symbol BTCUSDT
 
-# 分析 ETHUSDT
-python autofish_core.py --symbol ETHUSDT
+# 分析 ETHUSDT（使用布林带入场策略）
+python autofish_core.py --symbol ETHUSDT --entry-strategy bollinger
 
-# 分析 SOLUSDT
-python autofish_core.py --symbol SOLUSDT
+# 分析 SOLUSDT（使用综合入场策略）
+python autofish_core.py --symbol SOLUSDT --entry-strategy composite
 
 # 分析腾讯控股 700.HK（LongPort）
 python autofish_core.py --symbol 700.HK --source longport
@@ -82,6 +82,7 @@ python autofish_core.py --help
 | --leverage | 10 | 杠杆倍数（LongPort 股票默认为 1） |
 | --source | binance | 数据源: binance 或 longport |
 | --output | None | 输出文件路径 |
+| --entry-strategy | atr | 入场价格策略: fixed, atr, bollinger, support, composite |
 
 **输出文件**：
 
@@ -115,13 +116,12 @@ python binance_backtest.py --help
 | --interval | 1h | K线周期 |
 | --limit | 500 | K线数量 |
 | --decay-factor | 0.5 | 衰减因子（0.5 激进 / 1.0 保守） |
-| --stop-loss | 0.08 | 止损比例（无振幅配置时使用） |
-| --total-amount | 2000 | 总投入金额（无振幅配置时使用） |
 
 **说明**：
 - 回测会自动加载对应的振幅配置文件 `{source}_{symbol}_amplitude_config.json`
 - 根据指定的 `--decay-factor` 读取对应的策略配置（d_0.5 或 d_1.0）
 - 如果没有振幅配置文件，则使用内置默认配置
+- `stop_loss`、`total_amount_quote`、`entry_price_strategy` 从配置文件读取
 
 ### 3. Binance 实盘交易
 
@@ -153,8 +153,12 @@ python binance_live.py --symbol BTCUSDT --no-testnet --decay-factor 1.0
 | --testnet | - | 使用测试网 |
 | --no-testnet | - | 使用主网 |
 | --decay-factor | 0.5 | 衰减因子（0.5 激进 / 1.0 保守） |
-| --stop-loss | 0.08 | 止损比例（无振幅配置时使用） |
-| --total-amount | 2000 | 总投入金额（无振幅配置时使用） |
+
+**说明**：
+- 实盘会自动加载对应的振幅配置文件 `{source}_{symbol}_amplitude_config.json`
+- 根据指定的 `--decay-factor` 读取对应的策略配置（d_0.5 或 d_1.0）
+- 如果没有振幅配置文件，则使用内置默认配置
+- `stop_loss`、`total_amount_quote`、`entry_price_strategy` 从配置文件读取
 
 **特性**：
 - 自动加载振幅配置文件
@@ -190,8 +194,12 @@ python longport_backtest.py --help
 | --interval | 1d | K线周期 |
 | --count | 200 | K线数量 |
 | --decay-factor | 0.5 | 衰减因子（0.5 激进 / 1.0 保守） |
-| --stop-loss | 0.08 | 止损比例（无振幅配置时使用） |
-| --total-amount | 1200 | 总投入金额（无振幅配置时使用） |
+
+**说明**：
+- 回测会自动加载对应的振幅配置文件 `{source}_{symbol}_amplitude_config.json`
+- 根据指定的 `--decay-factor` 读取对应的策略配置（d_0.5 或 d_1.0）
+- 如果没有振幅配置文件，则使用内置默认配置
+- `stop_loss`、`total_amount_quote`、`entry_price_strategy` 从配置文件读取
 
 ### 5. LongPort 实盘交易
 
@@ -215,8 +223,12 @@ python longport_live.py --help
 |------|--------|------|
 | --symbol | 700.HK | 交易对 |
 | --decay-factor | 0.5 | 衰减因子（0.5 激进 / 1.0 保守） |
-| --stop-loss | 0.08 | 止损比例（无振幅配置时使用） |
-| --total-amount | 1200 | 总投入金额（无振幅配置时使用） |
+
+**说明**：
+- 实盘会自动加载对应的振幅配置文件 `{source}_{symbol}_amplitude_config.json`
+- 根据指定的 `--decay-factor` 读取对应的策略配置（d_0.5 或 d_1.0）
+- 如果没有振幅配置文件，则使用内置默认配置
+- `stop_loss`、`total_amount_quote`、`entry_price_strategy` 从配置文件读取
 
 ## 核心算法
 
@@ -319,7 +331,16 @@ HTTPS_PROXY=http://127.0.0.1:1087
     "grid_spacing": 0.01,
     "exit_profit": 0.01,
     "stop_loss": 0.08,
-    "total_expected_return": 0.2942
+    "total_expected_return": 0.2942,
+    "entry_price_strategy": {
+      "name": "atr",
+      "params": {
+        "atr_period": 14,
+        "atr_multiplier": 0.5,
+        "min_spacing": 0.005,
+        "max_spacing": 0.03
+      }
+    }
   },
   "d_1.0": {
     "symbol": "BTCUSDT",
@@ -332,7 +353,16 @@ HTTPS_PROXY=http://127.0.0.1:1087
     "grid_spacing": 0.01,
     "exit_profit": 0.01,
     "stop_loss": 0.08,
-    "total_expected_return": 0.2942
+    "total_expected_return": 0.2942,
+    "entry_price_strategy": {
+      "name": "atr",
+      "params": {
+        "atr_period": 14,
+        "atr_multiplier": 0.5,
+        "min_spacing": 0.005,
+        "max_spacing": 0.03
+      }
+    }
   }
 }
 ```
@@ -362,6 +392,19 @@ HTTPS_PROXY=http://127.0.0.1:1087
 | grid_spacing | 0.01 (1%) | 网格间距 |
 | exit_profit | 0.01 (1%) | 止盈比例 |
 | stop_loss | 0.08 (8%) | 止损比例 |
+| entry_price_strategy | {"name": "atr", ...} | 入场价格策略配置 |
+
+### 入场价格策略
+
+| 策略名称 | 说明 |
+|----------|------|
+| fixed | 固定网格间距（默认） |
+| atr | 基于 ATR 动态计算 |
+| bollinger | 布林带下轨入场 |
+| support | 支撑位入场 |
+| composite | 综合多种指标 |
+
+详细说明请参考 [入场价格策略文档](docs/entry_price_strategy.md)
 
 ## 日志文件
 
@@ -386,6 +429,8 @@ HTTPS_PROXY=http://127.0.0.1:1087
 5. **代理支持**：振幅分析自动从 `.env` 读取代理配置
 6. **双策略支持**：配置文件同时包含 d=0.5（激进）和 d=1.0（保守）两种策略
 7. **配置简化**：移除冗余参数，统一使用 `--decay-factor` 选择策略
+8. **入场价格策略**：支持 5 种入场价格策略（fixed, atr, bollinger, support, composite）
+9. **CLI 简化**：移除 `--stop-loss` 和 `--total-amount` 参数，从配置文件读取
 
 ### 类名对照
 
