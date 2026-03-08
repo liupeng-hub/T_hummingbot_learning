@@ -1539,6 +1539,7 @@ class BinanceLiveTrader:
         self.running = True
         self.exit_notified = False
         self._shutdown_event = asyncio.Event()
+        self._exit_lock = asyncio.Lock()
         
         from autofish_core import Autofish_WeightCalculator
         self.calculator = Autofish_WeightCalculator(Decimal(str(config.get("decay_factor", 0.5))))
@@ -1897,11 +1898,12 @@ class BinanceLiveTrader:
         参数:
             reason: 退出原因
         """
-        if self.exit_notified:
-            return
-        
-        self.exit_notified = True
-        self.running = False
+        async with self._exit_lock:
+            if self.exit_notified:
+                return
+            
+            self.exit_notified = True
+            self.running = False
         
         print(f"\n\n⏹️ 停止交易: {reason}")
         
