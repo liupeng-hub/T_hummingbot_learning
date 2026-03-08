@@ -2791,6 +2791,10 @@ async def main():
         config = Autofish_OrderCalculator.get_default_config("binance")
         config["symbol"] = args.symbol
         config["decay_factor"] = decay_factor
+        config.update({
+            "stop_loss": Decimal(str(args.stop_loss)),
+            "total_amount_quote": Decimal(str(args.total_amount)),
+        })
         config_file = "无（使用内置默认配置）"
     
     config["api_key"] = api_key

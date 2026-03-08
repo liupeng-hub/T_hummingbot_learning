@@ -1302,8 +1302,6 @@ async def main():
     
     parser = argparse.ArgumentParser(description="Autofish V2 LongPort 实盘交易")
     parser.add_argument("--symbol", type=str, default="700.HK", help="交易对 (默认: 700.HK)")
-    parser.add_argument("--stop-loss", type=float, default=0.08, help="止损比例 (默认: 0.08)")
-    parser.add_argument("--total-amount", type=float, default=1200, help="总投入金额 (默认: 1200)")
     parser.add_argument("--decay-factor", type=float, default=0.5, help="衰减因子 (默认: 0.5)")
     
     args = parser.parse_args()
@@ -1326,16 +1324,13 @@ async def main():
             "weights": amplitude_config.get_weights(),
             "valid_amplitudes": amplitude_config.get_valid_amplitudes(),
             "total_expected_return": amplitude_config.get_total_expected_return(),
+            "entry_price_strategy": amplitude_config.get_entry_price_strategy(),
         }
         config_file = amplitude_config.config_path
     else:
         config = Autofish_OrderCalculator.get_default_config("longport")
         config["symbol"] = args.symbol
         config["decay_factor"] = decay_factor
-        config.update({
-            "stop_loss": Decimal(str(args.stop_loss)),
-            "total_amount_quote": Decimal(str(args.total_amount)),
-        })
         config_file = "无（使用内置默认配置）"
     
     config["app_key"] = os.getenv("LONGPORT_APP_KEY", "")
