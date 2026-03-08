@@ -135,14 +135,26 @@ python binance_live.py --symbol BTCUSDT --testnet --decay-factor 0.5
 # 启动实盘（主网，使用 d=1.0 保守策略）
 python binance_live.py --symbol BTCUSDT --no-testnet --decay-factor 1.0
 
-# 或使用脚本启动
+# 或使用脚本启动（默认 BTCUSDT 测试网）
 ./binance_live_run.sh start
+
+# 使用脚本启动指定交易对
+./binance_live_run.sh --symbol ETHUSDT start
+
+# 使用脚本启动主网
+./binance_live_run.sh --symbol BTCUSDT --no-testnet start
+
+# 使用脚本启动保守策略
+./binance_live_run.sh --symbol ETHUSDT --decay-factor 1.0 start
 
 # 查看状态
 ./binance_live_run.sh status
 
 # 停止实盘
 ./binance_live_run.sh stop
+
+# 重启实盘
+./binance_live_run.sh restart
 ```
 
 **命令行参数**：
@@ -150,9 +162,11 @@ python binance_live.py --symbol BTCUSDT --no-testnet --decay-factor 1.0
 | 参数 | 默认值 | 说明 |
 |------|--------|------|
 | --symbol | BTCUSDT | 交易对 |
-| --testnet | - | 使用测试网 |
+| --testnet | - | 使用测试网（默认） |
 | --no-testnet | - | 使用主网 |
 | --decay-factor | 0.5 | 衰减因子（0.5 激进 / 1.0 保守） |
+| --stop-loss | 0.08 | 止损比例（无振幅配置时使用） |
+| --total-amount | 10000 | 总投入金额（无振幅配置时使用） |
 
 **说明**：
 - 实盘会自动加载对应的振幅配置文件 `{source}_{symbol}_amplitude_config.json`
@@ -166,6 +180,7 @@ python binance_live.py --symbol BTCUSDT --no-testnet --decay-factor 1.0
 - 日志记录：输出到 `logs/binance_live.log`
 - PID 管理：防止重复运行
 - 优雅退出：支持 SIGTERM 信号优雅退出
+- 脚本参数：支持 `--symbol`、`--testnet`、`--no-testnet`、`--decay-factor` 参数
 
 ### 4. LongPort 回测（港股/美股/A股）
 

@@ -482,8 +482,17 @@ python binance_live.py --symbol BTCUSDT --no-testnet --decay-factor 1.0
 ### 7.2 使用脚本管理
 
 ```bash
-# 启动
+# 启动（默认 BTCUSDT 测试网）
 ./binance_live_run.sh start
+
+# 启动指定交易对
+./binance_live_run.sh --symbol ETHUSDT start
+
+# 启动主网
+./binance_live_run.sh --symbol BTCUSDT --no-testnet start
+
+# 启动保守策略
+./binance_live_run.sh --symbol ETHUSDT --decay-factor 1.0 start
 
 # 查看状态
 ./binance_live_run.sh status
@@ -494,6 +503,19 @@ python binance_live.py --symbol BTCUSDT --no-testnet --decay-factor 1.0
 # 重启（智能判断：运行中先停止再启动，未运行直接启动）
 ./binance_live_run.sh restart
 ```
+
+**脚本参数**：
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| --symbol | BTCUSDT | 交易对 |
+| --testnet | - | 使用测试网（默认） |
+| --no-testnet | - | 使用主网 |
+| --decay-factor | 0.5 | 衰减因子 |
+
+**说明**：
+- 参数可以放在命令前或命令后，如 `--symbol ETHUSDT start` 或 `start --symbol ETHUSDT`
+- 脚本会自动将参数传递给后台进程
 
 ## 八、相关文档
 
