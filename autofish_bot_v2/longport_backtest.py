@@ -154,13 +154,19 @@ class LongPortBacktestEngine:
         return "USD"
     
     def _get_weights(self) -> Dict[int, Decimal]:
-        """获取权重"""
-        weights_list = self.config.get("weights", [])
+        """获取归一化后的权重"""
+        from autofish_core import normalize_weights
+        
+        weights_list = [Decimal(str(w)) for w in self.config.get("weights", [])]
         if not weights_list:
             return {}
+        
+        max_entries = self.config.get('max_entries', 4)
+        normalized_weights = normalize_weights(weights_list, max_entries)
+        
         weights = {}
-        for i, w in enumerate(weights_list):
-            weights[i + 1] = Decimal(str(w))
+        for i, w in enumerate(normalized_weights):
+            weights[i + 1] = w
         return weights
     
     def _create_order(self, level: int, base_price: Decimal) -> Autofish_Order:
@@ -200,11 +206,15 @@ class LongPortBacktestEngine:
             
             return order
         
+        # fallback: 使用默认权重
+        weights_list = [Decimal(str(w)) for w in self.config.get("weights", [])]
+        max_entries = self.config.get('max_entries', 4)
         return order_calculator.create_order(
             level=level,
             base_price=base_price,
             total_amount=total_amount,
-            weight_calculator=self.calculator
+            weights=weights_list,
+            max_entries=max_entries
         )
     
     def _process_entry(self, low_price: Decimal, current_price: Decimal):
@@ -216,7 +226,8 @@ class LongPortBacktestEngine:
             if Autofish_OrderCalculator.check_entry_triggered(low_price, pending_order.entry_price):
                 pending_order.set_state("filled", "K线触发入场")
                 
-                weight_pct = self.calculator.get_weight_percentage(pending_order.level)
+                weights = self._get_weights()
+                weight_pct = float(weights.get(pending_order.level, Decimal("0"))) * 100
                 logger.info(f"[入场成交] A{pending_order.level} (权重 {weight_pct:.2f}%): "
                            f"入场价={pending_order.entry_price:.2f}, "
                            f"数量={pending_order.quantity:.6f}, "

@@ -37,6 +37,30 @@ DEFAULT_ENTRY_STRATEGY = {
 }
 
 
+def normalize_weights(weights: List[Decimal], max_entries: int) -> List[Decimal]:
+    """归一化权重
+    
+    取前 max_entries 个权重，然后归一化使总和为 1
+    
+    参数:
+        weights: 原始权重列表
+        max_entries: 最大层级数
+        
+    返回:
+        归一化后的权重列表
+    """
+    if not weights:
+        return []
+    
+    selected_weights = weights[:max_entries]
+    
+    total = sum(selected_weights)
+    if total == 0:
+        return selected_weights
+    
+    return [w / total for w in selected_weights]
+
+
 @dataclass
 class Autofish_Order:
     """
@@ -780,7 +804,8 @@ class Autofish_OrderCalculator:
         level: int,
         base_price: Decimal,
         total_amount: Decimal,
-        weight_calculator: Autofish_WeightCalculator,
+        weights: List[Decimal] = None,
+        max_entries: int = 4,
         klines: List[Dict] = None
     ) -> Autofish_Order:
         """创建订单
@@ -789,7 +814,8 @@ class Autofish_OrderCalculator:
             level: 层级
             base_price: 基准价格
             total_amount: 总资金金额
-            weight_calculator: 权重计算器
+            weights: 权重列表（从配置文件读取）
+            max_entries: 最大层级数（用于归一化）
             klines: K 线数据（用于策略计算）
             
         返回:
@@ -810,7 +836,15 @@ class Autofish_OrderCalculator:
         take_profit_price = entry_price * (Decimal("1") + self.exit_profit)
         stop_loss_price = entry_price * (Decimal("1") - self.stop_loss)
         
-        stake_amount = weight_calculator.get_stake_amount(level, total_amount)
+        # 归一化权重
+        normalized_weights = normalize_weights(weights, max_entries) if weights else None
+        
+        # 使用归一化后的权重计算金额
+        if normalized_weights and level <= len(normalized_weights):
+            stake_amount = total_amount * normalized_weights[level - 1]
+        else:
+            # 默认平均分配
+            stake_amount = total_amount / Decimal(str(max_entries))
         quantity = stake_amount / entry_price
         
         order = Autofish_Order(

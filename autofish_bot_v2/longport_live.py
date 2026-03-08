@@ -923,11 +923,16 @@ class LongPortLiveTrader:
             stop_loss=self.config.get("stop_loss", Decimal("0.08"))
         )
         
+        # 从配置文件获取权重
+        weights = [Decimal(str(w)) for w in self.config.get("weights", [])]
+        max_entries = self.config.get('max_entries', 4)
+        
         return order_calculator.create_order(
             level=level,
             base_price=base_price,
             total_amount=self.config.get("total_amount_quote", Decimal("1200")),
-            weight_calculator=self.calculator
+            weights=weights,
+            max_entries=max_entries
         )
     
     def _setup_signal_handlers(self) -> None:

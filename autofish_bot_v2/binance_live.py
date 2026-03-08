@@ -726,10 +726,8 @@ def notify_startup(config: dict, current_price: Decimal):
     
     weights_str = ""
     weights = config.get('weights', [])
-    max_entries = config.get('max_entries', 4)
     if weights:
-        display_weights = weights[:max_entries]
-        weights_str = "> **网格权重**: " + ", ".join([f"A{i+1}: {w*100:.1f}%" for i, w in enumerate(display_weights)])
+        weights_str = "> **网格权重**: " + ", ".join([f"A{i+1}: {w*100:.1f}%" for i, w in enumerate(weights)])
     
     content = dedent(f"""
             > **交易标的**: {symbol}
@@ -1704,17 +1702,22 @@ class BinanceLiveTrader:
         返回:
             (是否满足, 检查结果详情)
         """
+        from autofish_core import normalize_weights
+        
         min_notional = getattr(self, 'min_notional', Decimal("100"))
         total_amount = Decimal(str(self.config.get('total_amount_quote', 1200)))
         max_entries = self.config.get('max_entries', 4)
-        weights = self.config.get('weights', [])
+        weights = [Decimal(str(w)) for w in self.config.get('weights', [])]
+        
+        # 归一化权重
+        normalized_weights = normalize_weights(weights, max_entries)
         
         results = []
         all_satisfied = True
         
         for level in range(1, max_entries + 1):
-            if level <= len(weights):
-                weight = Decimal(str(weights[level - 1]))
+            if level <= len(normalized_weights):
+                weight = normalized_weights[level - 1]
             else:
                 weight = Decimal("0")
             stake = total_amount * weight
@@ -1848,11 +1851,16 @@ class BinanceLiveTrader:
             entry_strategy=strategy
         )
         
+        # 从配置文件获取权重
+        weights = [Decimal(str(w)) for w in self.config.get("weights", [])]
+        max_entries = self.config.get('max_entries', 4)
+        
         order = order_calculator.create_order(
             level=level,
             base_price=base_price,
             total_amount=self.config.get("total_amount_quote", Decimal("1200")),
-            weight_calculator=self.calculator,
+            weights=weights,
+            max_entries=max_entries,
             klines=klines
         )
         
