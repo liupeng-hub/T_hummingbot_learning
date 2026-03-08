@@ -4,8 +4,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
 LOG_DIR="$SCRIPT_DIR/logs"
-PID_FILE="$LOG_DIR/autofish.pid"
-PARAMS_FILE="$LOG_DIR/autofish.params"
+PID_FILE="$LOG_DIR/binance_live_run.pid"
+PARAMS_FILE="$LOG_DIR/binance_live_run.params"
 LOG_FILE="$LOG_DIR/binance_live.log"
 ERROR_LOG_FILE="$LOG_DIR/binance_live_error.log"
 
