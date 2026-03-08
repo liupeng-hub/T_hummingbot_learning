@@ -1707,7 +1707,7 @@ async def main():
         args.leverage = 1
     
     # 构建入场策略配置
-    entry_strategy = Autofish_AmplitudeAnalyzer.DEFAULT_ENTRY_STRATEGY.copy()
+    entry_strategy = DEFAULT_ENTRY_STRATEGY.copy()
     entry_strategy["name"] = args.entry_strategy
     
     analyzer = Autofish_AmplitudeAnalyzer(
