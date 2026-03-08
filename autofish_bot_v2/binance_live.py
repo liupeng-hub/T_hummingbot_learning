@@ -1827,12 +1827,20 @@ class BinanceLiveTrader:
         return self.state_repository.load()
     
     async def _create_order(self, level: int, base_price: Decimal, klines: List[Dict] = None) -> Any:
-        from autofish_core import Autofish_OrderCalculator
+        from autofish_core import Autofish_OrderCalculator, EntryPriceStrategyFactory
+        
+        # 从配置创建入场价格策略
+        strategy_config = self.config.get("entry_price_strategy", {"name": "fixed"})
+        strategy = EntryPriceStrategyFactory.create(
+            strategy_config.get("name", "fixed"),
+            **strategy_config.get("params", {})
+        )
         
         order_calculator = Autofish_OrderCalculator(
             grid_spacing=self.config.get("grid_spacing", Decimal("0.01")),
             exit_profit=self.config.get("exit_profit", Decimal("0.01")),
-            stop_loss=self.config.get("stop_loss", Decimal("0.08"))
+            stop_loss=self.config.get("stop_loss", Decimal("0.08")),
+            entry_strategy=strategy
         )
         
         order = order_calculator.create_order(
@@ -1840,8 +1848,7 @@ class BinanceLiveTrader:
             base_price=base_price,
             total_amount=self.config.get("total_amount_quote", Decimal("1200")),
             weight_calculator=self.calculator,
-            klines=klines,
-            use_dynamic_entry=self.config.get("use_dynamic_entry", True)
+            klines=klines
         )
         
         order.quantity = self._adjust_quantity(order.quantity, order.entry_price)

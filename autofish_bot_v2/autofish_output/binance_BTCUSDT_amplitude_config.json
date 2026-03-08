@@ -10,7 +10,16 @@
     "grid_spacing":0.01,
     "exit_profit":0.01,
     "stop_loss":0.08,
-    "total_expected_return":0.2942
+    "total_expected_return":0.2942,
+    "entry_price_strategy": {
+      "name": "atr",
+      "params": {
+        "atr_period": 14,
+        "atr_multiplier": 0.5,
+        "min_spacing": 0.005,
+        "max_spacing": 0.03
+      }
+    }
   },
   "d_1.0":{
     "symbol":"BTCUSDT",
@@ -23,6 +32,15 @@
     "grid_spacing":0.01,
     "exit_profit":0.01,
     "stop_loss":0.08,
-    "total_expected_return":0.2942
+    "total_expected_return":0.2942,
+    "entry_price_strategy": {
+      "name": "atr",
+      "params": {
+        "atr_period": 14,
+        "atr_multiplier": 0.5,
+        "min_spacing": 0.005,
+        "max_spacing": 0.03
+      }
+    }
   }
 }

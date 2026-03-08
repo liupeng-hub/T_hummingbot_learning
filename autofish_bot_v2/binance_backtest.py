@@ -121,17 +121,27 @@ class BacktestEngine:
         参数:
             level: 层级
             base_price: 基准价格
-            klines: K 线数据（用于 ATR 计算，仅 A1 使用）
+            klines: K 线数据（用于策略计算，仅 A1 使用）
         """
+        from autofish_core import EntryPriceStrategyFactory
+        
         grid_spacing = self.config.get("grid_spacing", Decimal("0.01"))
         exit_profit = self.config.get("exit_profit", Decimal("0.01"))
         stop_loss = self.config.get("stop_loss", Decimal("0.08"))
         total_amount = self.config.get("total_amount_quote", Decimal("1200"))
         
+        # 从配置创建入场价格策略
+        strategy_config = self.config.get("entry_price_strategy", {"name": "fixed"})
+        strategy = EntryPriceStrategyFactory.create(
+            strategy_config.get("name", "fixed"),
+            **strategy_config.get("params", {})
+        )
+        
         order_calculator = Autofish_OrderCalculator(
             grid_spacing=grid_spacing,
             exit_profit=exit_profit,
-            stop_loss=stop_loss
+            stop_loss=stop_loss,
+            entry_strategy=strategy
         )
         
         weights = self._get_weights()
@@ -139,9 +149,13 @@ class BacktestEngine:
             weight = weights[level]
             stake_amount = total_amount * weight
             
-            if klines and level == 1:
-                entry_price = order_calculator.calculate_dynamic_entry_price(
-                    base_price, klines, level
+            # 使用策略计算入场价格（仅 A1 使用策略）
+            if level == 1:
+                entry_price = strategy.calculate_entry_price(
+                    current_price=base_price,
+                    level=level,
+                    grid_spacing=grid_spacing,
+                    klines=klines
                 )
             else:
                 entry_price = base_price * (Decimal("1") - grid_spacing * level)
@@ -163,7 +177,8 @@ class BacktestEngine:
             
             logger.info(f"[创建订单] A{level}: entry={entry_price:.2f}, "
                        f"tp={take_profit_price:.2f}, sl={stop_loss_price:.2f}, "
-                       f"stake={stake_amount:.2f} USDT, qty={quantity:.6f} BTC, weight={weight:.4f}")
+                       f"stake={stake_amount:.2f} USDT, qty={quantity:.6f} BTC, "
+                       f"weight={weight:.4f}, strategy={strategy.name}")
             
             return order
         

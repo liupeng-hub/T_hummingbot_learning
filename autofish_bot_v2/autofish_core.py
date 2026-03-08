@@ -315,6 +315,338 @@ class Autofish_WeightCalculator:
         return weights[-1] * 100
 
 
+# ============================================================================
+# 入场价格策略
+# ============================================================================
+
+from abc import ABC, abstractmethod
+
+
+class EntryPriceStrategy(ABC):
+    """入场价格策略基类
+    
+    所有入场价格计算策略都需要继承此类并实现 calculate_entry_price 方法。
+    """
+    
+    @property
+    @abstractmethod
+    def name(self) -> str:
+        """策略名称"""
+        pass
+    
+    @abstractmethod
+    def calculate_entry_price(
+        self,
+        current_price: Decimal,
+        level: int,
+        grid_spacing: Decimal,
+        klines: Optional[List[Dict]] = None,
+        **kwargs
+    ) -> Decimal:
+        """计算入场价格
+        
+        参数:
+            current_price: 当前价格
+            level: 层级
+            grid_spacing: 网格间距
+            klines: K 线数据
+            **kwargs: 其他参数
+            
+        返回:
+            入场价格
+        """
+        pass
+
+
+class FixedGridStrategy(EntryPriceStrategy):
+    """固定网格间距策略
+    
+    使用固定的网格间距计算入场价格。
+    入场价格 = 当前价格 × (1 - 网格间距 × 层级)
+    """
+    
+    @property
+    def name(self) -> str:
+        return "fixed"
+    
+    def calculate_entry_price(
+        self,
+        current_price: Decimal,
+        level: int,
+        grid_spacing: Decimal,
+        klines: Optional[List[Dict]] = None,
+        **kwargs
+    ) -> Decimal:
+        return current_price * (Decimal("1") - grid_spacing * level)
+
+
+class ATRDynamicStrategy(EntryPriceStrategy):
+    """ATR 动态策略
+    
+    基于 ATR（平均真实波幅）动态计算入场价格。
+    网格间距 = ATR × 乘数 / 当前价格
+    """
+    
+    def __init__(
+        self,
+        atr_period: int = 14,
+        atr_multiplier: Decimal = Decimal("0.5"),
+        min_spacing: Decimal = Decimal("0.005"),
+        max_spacing: Decimal = Decimal("0.03")
+    ):
+        self.atr_period = atr_period
+        self.atr_multiplier = atr_multiplier
+        self.min_spacing = min_spacing
+        self.max_spacing = max_spacing
+    
+    @property
+    def name(self) -> str:
+        return "atr"
+    
+    def calculate_entry_price(
+        self,
+        current_price: Decimal,
+        level: int,
+        grid_spacing: Decimal,
+        klines: Optional[List[Dict]] = None,
+        **kwargs
+    ) -> Decimal:
+        if not klines or len(klines) < self.atr_period + 1:
+            return current_price * (Decimal("1") - grid_spacing * level)
+        
+        atr = self._calculate_atr(klines)
+        if atr == 0:
+            return current_price * (Decimal("1") - grid_spacing * level)
+        
+        atr_percent = atr / current_price
+        dynamic_spacing = atr_percent * self.atr_multiplier
+        dynamic_spacing = max(self.min_spacing, min(self.max_spacing, dynamic_spacing))
+        
+        logger.info(f"[ATR策略] atr={atr:.2f}, atr_percent={float(atr_percent)*100:.2f}%, "
+                   f"dynamic_spacing={float(dynamic_spacing)*100:.2f}%")
+        
+        return current_price * (Decimal("1") - dynamic_spacing * level)
+    
+    def _calculate_atr(self, klines: List[Dict]) -> Decimal:
+        """计算 ATR"""
+        tr_list = []
+        for i in range(1, self.atr_period + 1):
+            high = Decimal(str(klines[-i]['high']))
+            low = Decimal(str(klines[-i]['low']))
+            prev_close = Decimal(str(klines[-i-1]['close']))
+            tr = max(high - low, abs(high - prev_close), abs(low - prev_close))
+            tr_list.append(tr)
+        return sum(tr_list) / len(tr_list)
+
+
+class BollingerBandStrategy(EntryPriceStrategy):
+    """布林带策略
+    
+    将入场价格设置在布林带下轨附近。
+    入场价格 = max(下轨, 当前价格 × (1 - 最小间距))
+    """
+    
+    def __init__(
+        self,
+        period: int = 20,
+        std_multiplier: Decimal = Decimal("2"),
+        min_spacing: Decimal = Decimal("0.005")
+    ):
+        self.period = period
+        self.std_multiplier = std_multiplier
+        self.min_spacing = min_spacing
+    
+    @property
+    def name(self) -> str:
+        return "bollinger"
+    
+    def calculate_entry_price(
+        self,
+        current_price: Decimal,
+        level: int,
+        grid_spacing: Decimal,
+        klines: Optional[List[Dict]] = None,
+        **kwargs
+    ) -> Decimal:
+        if not klines or len(klines) < self.period:
+            return current_price * (Decimal("1") - grid_spacing * level)
+        
+        lower_band = self._calculate_lower_band(klines)
+        min_entry = current_price * (Decimal("1") - self.min_spacing)
+        
+        entry_price = max(lower_band, min_entry)
+        
+        if entry_price >= current_price:
+            entry_price = min_entry
+        
+        logger.info(f"[布林带策略] lower_band={lower_band:.2f}, entry_price={entry_price:.2f}")
+        
+        return entry_price
+    
+    def _calculate_lower_band(self, klines: List[Dict]) -> Decimal:
+        """计算布林带下轨"""
+        closes = [Decimal(str(k['close'])) for k in klines[-self.period:]]
+        middle = sum(closes) / self.period
+        variance = sum([(c - middle) ** 2 for c in closes]) / self.period
+        std = variance.sqrt()
+        return middle - self.std_multiplier * std
+
+
+class SupportLevelStrategy(EntryPriceStrategy):
+    """支撑位策略
+    
+    将入场价格设置在最近支撑位附近。
+    支撑位 = 最近 N 根 K 线的最低价
+    """
+    
+    def __init__(
+        self,
+        lookback: int = 20,
+        min_spacing: Decimal = Decimal("0.005")
+    ):
+        self.lookback = lookback
+        self.min_spacing = min_spacing
+    
+    @property
+    def name(self) -> str:
+        return "support"
+    
+    def calculate_entry_price(
+        self,
+        current_price: Decimal,
+        level: int,
+        grid_spacing: Decimal,
+        klines: Optional[List[Dict]] = None,
+        **kwargs
+    ) -> Decimal:
+        if not klines or len(klines) < self.lookback:
+            return current_price * (Decimal("1") - grid_spacing * level)
+        
+        support = self._find_support(klines)
+        min_entry = current_price * (Decimal("1") - self.min_spacing)
+        
+        entry_price = max(support, min_entry)
+        
+        if entry_price >= current_price:
+            entry_price = min_entry
+        
+        logger.info(f"[支撑位策略] support={support:.2f}, entry_price={entry_price:.2f}")
+        
+        return entry_price
+    
+    def _find_support(self, klines: List[Dict]) -> Decimal:
+        """找到最近支撑位"""
+        lows = [Decimal(str(k['low'])) for k in klines[-self.lookback:]]
+        return min(lows)
+
+
+class CompositeStrategy(EntryPriceStrategy):
+    """综合策略
+    
+    综合多种技术指标，找到最优入场价格。
+    入场价格 = max(布林带下轨, 支撑位, ATR 动态价格)
+    """
+    
+    def __init__(self):
+        self.atr_strategy = ATRDynamicStrategy()
+        self.bollinger_strategy = BollingerBandStrategy()
+        self.support_strategy = SupportLevelStrategy()
+    
+    @property
+    def name(self) -> str:
+        return "composite"
+    
+    def calculate_entry_price(
+        self,
+        current_price: Decimal,
+        level: int,
+        grid_spacing: Decimal,
+        klines: Optional[List[Dict]] = None,
+        **kwargs
+    ) -> Decimal:
+        if not klines:
+            return current_price * (Decimal("1") - grid_spacing * level)
+        
+        atr_price = self.atr_strategy.calculate_entry_price(
+            current_price, level, grid_spacing, klines
+        )
+        bollinger_price = self.bollinger_strategy.calculate_entry_price(
+            current_price, level, grid_spacing, klines
+        )
+        support_price = self.support_strategy.calculate_entry_price(
+            current_price, level, grid_spacing, klines
+        )
+        
+        entry_price = max(atr_price, bollinger_price, support_price)
+        
+        min_entry = current_price * (Decimal("1") - Decimal("0.005"))
+        if entry_price >= current_price:
+            entry_price = min_entry
+        
+        logger.info(f"[综合策略] atr={atr_price:.2f}, bollinger={bollinger_price:.2f}, "
+                   f"support={support_price:.2f}, final={entry_price:.2f}")
+        
+        return entry_price
+
+
+class EntryPriceStrategyFactory:
+    """入场价格策略工厂
+    
+    用于创建和管理入场价格策略实例。
+    """
+    
+    _strategies = {
+        "fixed": FixedGridStrategy,
+        "atr": ATRDynamicStrategy,
+        "bollinger": BollingerBandStrategy,
+        "support": SupportLevelStrategy,
+        "composite": CompositeStrategy,
+    }
+    
+    @classmethod
+    def create(cls, strategy_name: str, **kwargs) -> EntryPriceStrategy:
+        """创建策略实例
+        
+        参数:
+            strategy_name: 策略名称
+            **kwargs: 策略参数
+            
+        返回:
+            策略实例
+        """
+        if strategy_name not in cls._strategies:
+            logger.warning(f"[策略工厂] 未知策略: {strategy_name}，使用默认策略")
+            return FixedGridStrategy()
+        
+        strategy_class = cls._strategies[strategy_name]
+        
+        # 转换参数类型
+        params = {}
+        for key, value in kwargs.items():
+            if isinstance(value, float):
+                params[key] = Decimal(str(value))
+            else:
+                params[key] = value
+        
+        return strategy_class(**params)
+    
+    @classmethod
+    def register(cls, name: str, strategy_class: type):
+        """注册新策略
+        
+        参数:
+            name: 策略名称
+            strategy_class: 策略类
+        """
+        cls._strategies[name] = strategy_class
+        logger.info(f"[策略工厂] 注册策略: {name}")
+    
+    @classmethod
+    def list_strategies(cls) -> List[str]:
+        """列出所有可用策略"""
+        return list(cls._strategies.keys())
+
+
 class Autofish_OrderCalculator:
     """订单计算器
     
@@ -326,7 +658,8 @@ class Autofish_OrderCalculator:
         grid_spacing: Decimal = Decimal("0.01"),
         exit_profit: Decimal = Decimal("0.01"),
         stop_loss: Decimal = Decimal("0.08"),
-        leverage: Decimal = Decimal("10")
+        leverage: Decimal = Decimal("10"),
+        entry_strategy: Optional[EntryPriceStrategy] = None
     ):
         """
         参数:
@@ -334,11 +667,13 @@ class Autofish_OrderCalculator:
             exit_profit: 止盈比例 (小数，如 0.01 表示 1%)
             stop_loss: 止损比例 (小数，如 0.08 表示 8%)
             leverage: 杠杆倍数
+            entry_strategy: 入场价格策略
         """
         self.grid_spacing = grid_spacing
         self.exit_profit = exit_profit
         self.stop_loss = stop_loss
         self.leverage = leverage
+        self.entry_strategy = entry_strategy or FixedGridStrategy()
     
     def calculate_atr(self, klines: List[Dict], period: int = 14) -> Decimal:
         """计算 ATR (Average True Range)
@@ -431,8 +766,7 @@ class Autofish_OrderCalculator:
         base_price: Decimal,
         total_amount: Decimal,
         weight_calculator: Autofish_WeightCalculator,
-        klines: List[Dict] = None,
-        use_dynamic_entry: bool = True
+        klines: List[Dict] = None
     ) -> Autofish_Order:
         """创建订单
         
@@ -441,15 +775,21 @@ class Autofish_OrderCalculator:
             base_price: 基准价格
             total_amount: 总资金金额
             weight_calculator: 权重计算器
-            klines: K 线数据（用于 ATR 计算）
-            use_dynamic_entry: 是否使用动态入场价格
+            klines: K 线数据（用于策略计算）
             
         返回:
             Autofish_Order 实例
         """
-        if klines and use_dynamic_entry and level == 1:
-            entry_price = self.calculate_dynamic_entry_price(base_price, klines, level)
+        # 使用策略计算入场价格（仅 A1 使用策略）
+        if level == 1:
+            entry_price = self.entry_strategy.calculate_entry_price(
+                current_price=base_price,
+                level=level,
+                grid_spacing=self.grid_spacing,
+                klines=klines
+            )
         else:
+            # 其他层级使用固定网格间距
             entry_price = base_price * (Decimal("1") - self.grid_spacing * level)
         
         take_profit_price = entry_price * (Decimal("1") + self.exit_profit)
@@ -471,7 +811,8 @@ class Autofish_OrderCalculator:
         
         logger.info(f"[创建订单] A{level}: entry={entry_price:.2f}, "
                    f"tp={take_profit_price:.2f}, sl={stop_loss_price:.2f}, "
-                   f"stake={stake_amount:.2f} USDT, qty={quantity:.6f} BTC")
+                   f"stake={stake_amount:.2f} USDT, qty={quantity:.6f} BTC, "
+                   f"strategy={self.entry_strategy.name}")
         
         return order
     
