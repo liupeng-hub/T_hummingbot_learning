@@ -726,8 +726,10 @@ def notify_startup(config: dict, current_price: Decimal):
     
     weights_str = ""
     weights = config.get('weights', [])
+    max_entries = config.get('max_entries', 4)
     if weights:
-        weights_str = "> **网格权重**: " + ", ".join([f"A{i+1}: {w*100:.1f}%" for i, w in enumerate(weights)])
+        display_weights = weights[:max_entries]
+        weights_str = "> **网格权重**: " + ", ".join([f"A{i+1}: {w*100:.1f}%" for i, w in enumerate(display_weights)])
     
     content = dedent(f"""
             > **交易标的**: {symbol}
@@ -1705,13 +1707,16 @@ class BinanceLiveTrader:
         min_notional = getattr(self, 'min_notional', Decimal("100"))
         total_amount = Decimal(str(self.config.get('total_amount_quote', 1200)))
         max_entries = self.config.get('max_entries', 4)
+        weights = self.config.get('weights', [])
         
         results = []
         all_satisfied = True
         
         for level in range(1, max_entries + 1):
-            weight_pct = self.calculator.get_weight_percentage(level)
-            weight = Decimal(str(weight_pct)) / Decimal("100")
+            if level <= len(weights):
+                weight = Decimal(str(weights[level - 1]))
+            else:
+                weight = Decimal("0")
             stake = total_amount * weight
             
             satisfied = stake >= min_notional
@@ -1725,8 +1730,8 @@ class BinanceLiveTrader:
                 'satisfied': satisfied
             })
         
-        min_weight = min(r['weight'] for r in results)
-        suggested_min_amount = min_notional / Decimal(str(min_weight))
+        min_weight = min(r['weight'] for r in results) if results else Decimal("1")
+        suggested_min_amount = min_notional / Decimal(str(min_weight)) if min_weight > 0 else min_notional
         
         return all_satisfied, {
             'results': results,
