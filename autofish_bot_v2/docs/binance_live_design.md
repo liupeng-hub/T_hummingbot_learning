@@ -141,22 +141,25 @@ flowchart TD
 | 方法 | 说明 |
 |------|------|
 | run() | 主运行方法 |
-| _init_precision() | 初始化精度 |
-| _get_current_price() | 获取当前价格 |
+| _init_precision() | 初始化精度（含 min_notional） |
+| _adjust_price() | 调整价格精度 |
+| _adjust_quantity() | 调整数量精度 |
+| _ceil_amount() | 金额向上取整 |
+| _print_level_check_results() | 打印层级检查结果 |
+| _check_min_notional() | 检查最小金额要求 |
+| _check_fund_sufficiency() | 检查资金是否充足 |
 | _restore_orders() | 恢复订单状态 |
-| _check_and_supplement_orders() | 补单检查 |
+| _check_and_supplement_orders() | 补单检查（止盈止损） |
+| _handle_entry_supplement() | 处理入场单补充 |
 | _create_order() | 创建订单对象 |
 | _place_entry_order() | 下入场单 |
 | _place_exit_orders() | 下止盈止损单 |
 | _place_tp_order() | 下止盈单 |
 | _place_sl_order() | 下止损单 |
 | _process_order_filled() | 处理成交 |
-| _place_next_level_order() | 下下一级订单 |
 | _ws_loop() | WebSocket 循环 |
 | _handle_ws_message() | 处理消息 |
 | _handle_order_update() | 处理订单更新 |
-| _adjust_quantity() | 调整数量精度 |
-| _adjust_price() | 调整价格精度 |
 | _handle_exit() | 处理退出 |
 
 ## 三、流程图
@@ -167,23 +170,29 @@ flowchart TD
 flowchart TD
     A[启动] --> B[加载配置]
     B --> C[初始化客户端]
-    C --> D[初始化精度]
-    D --> E[获取当前价格]
-    E --> F{恢复状态}
-    F -->|有状态| G[同步订单状态]
-    F -->|无状态| H[创建 A1 订单]
-    G --> I[补单检查]
-    H --> I
-    I --> J[WebSocket 监听]
-    J --> K{订单事件}
-    K -->|入场成交| L[下止盈止损单]
-    K -->|止盈触发| M[发送通知]
-    K -->|止损触发| N[发送通知]
-    L --> O[下下一级订单]
-    M --> P[更新状态]
-    N --> P
-    O --> J
-    P --> J
+        C --> D[初始化精度]
+        D --> E[获取当前价格]
+        E --> F[发送启动通知]
+        F --> G{资金预检查}
+        G -->|不满足| H[发送严重告警并退出]
+        G -->|满足但不足1.5倍| I[发送资金提醒]
+        G -->|满足| J[发送配置确认]
+        I --> K[恢复订单状态]
+        J --> K
+        K --> L{需要新订单?}
+        L -->|是| M[创建 A1 订单]
+        L -->|否| N[补单检查]
+        M --> O[WebSocket 监听]
+        N --> O
+        O --> P{订单事件}
+        P -->|入场成交| Q[下止盈止损单]
+        P -->|止盈触发| R[发送通知]
+        P -->|止损触发| S[发送通知]
+        Q --> T[下下一级订单]
+        R --> U[更新状态]
+        S --> U
+        T --> O
+        U --> O
 ```
 
 ### 3.2 订单状态机
@@ -285,12 +294,12 @@ flowchart TD
 
 ### 4.1 最小金额调整算法
 
-Binance 要求订单名义价值不小于 100 USDT。
+Binance 要求订单名义价值不小于 min_notional（通常为 100 USDT），该值从 API 获取。
 
 ```python
 def _adjust_quantity(self, quantity: Decimal, price: Decimal = None) -> Decimal:
     """调整数量精度，并确保满足最小金额要求"""
-    MIN_NOTIONAL = Decimal("100")
+    min_notional = getattr(self, 'min_notional', Decimal("100"))
     
     # 调整精度
     adjusted = (quantity // self.step_size) * self.step_size
@@ -300,15 +309,45 @@ def _adjust_quantity(self, quantity: Decimal, price: Decimal = None) -> Decimal:
     # 检查最小金额
     if price and price > 0:
         current_notional = adjusted * price
-        if current_notional < MIN_NOTIONAL:
+        if current_notional < min_notional:
             # 调整数量以满足最小金额要求
-            min_quantity = (MIN_NOTIONAL / price // self.step_size + 1) * self.step_size
+            min_quantity = (min_notional / price // self.step_size + 1) * self.step_size
             adjusted = min_quantity
     
     return adjusted
 ```
 
-### 4.2 异常重试机制
+### 4.2 资金预检查算法
+
+```python
+async def _check_fund_sufficiency(self) -> bool:
+    """检查资金是否充足
+    
+    返回:
+        True: 资金满足要求，继续运行
+        False: 资金不满足要求，需要退出
+    """
+    satisfied, check_result = self._check_min_notional()
+    
+    if not satisfied:
+        # 严重告警：资金不满足最小要求，退出程序
+        notify_critical_error(...)
+        return False
+    
+    # 检查资金是否充足（建议为最小资金的1.5倍）
+    suggested_amount_1_5x = check_result['suggested_min_amount'] * 1.5
+    
+    if check_result['total_amount'] < suggested_amount_1_5x:
+        # 警告：资金储备可能不足
+        notify_warning(...)
+    else:
+        # 确认：资金充足
+        send_wechat_notification("✅ Autofish V2 配置确认", ...)
+    
+    return True
+```
+
+### 4.3 异常重试机制
 
 ```python
 # 连续错误计数
@@ -359,11 +398,14 @@ async def _restore_orders(self, current_price: Decimal) -> bool:
 
 | 通知类型 | 函数 | 触发时机 |
 |----------|------|----------|
+| 启动 | notify_startup() | 程序启动 |
 | 入场单 | notify_entry_order() | 下入场单成功 |
 | 成交 | notify_entry_filled() | 入场单成交 |
 | 止盈 | notify_take_profit() | 止盈单触发 |
 | 止损 | notify_stop_loss() | 止损单触发 |
-| 严重错误 | notify_critical_error() | 发生异常 |
+| 严重错误 | notify_critical_error() | 资金不足或发生异常 |
+| 资金提醒 | notify_warning() | 资金储备不足 |
+| 配置确认 | send_wechat_notification() | 资金配置检查通过 |
 
 ### 5.2 通知渠道
 
