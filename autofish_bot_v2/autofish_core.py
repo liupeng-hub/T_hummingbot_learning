@@ -22,6 +22,21 @@ import asyncio
 logger = logging.getLogger(__name__)
 
 
+# ============================================================================
+# 全局常量
+# ============================================================================
+
+DEFAULT_ENTRY_STRATEGY = {
+    "name": "atr",
+    "params": {
+        "atr_period": 14,
+        "atr_multiplier": 0.5,
+        "min_spacing": 0.005,
+        "max_spacing": 0.03
+    }
+}
+
+
 @dataclass
 class Autofish_Order:
     """
@@ -858,11 +873,12 @@ class Autofish_OrderCalculator:
                 "exit_profit": Decimal("0.01"),
                 "stop_loss": Decimal("0.08"),
                 "decay_factor": Decimal("0.5"),
-                "total_amount_quote": Decimal("1200"),
+                "total_amount_quote": Decimal("10000"),
                 "leverage": Decimal("1"),
                 "max_entries": 4,
                 "valid_amplitudes":[1, 2, 3, 4, 5, 6, 7, 8],
                 "weights":[0.3999, 0.3933, 0.1586, 0.0422, 0.0021, 0.0036, 0.0001, 0.0001],
+                "entry_price_strategy": DEFAULT_ENTRY_STRATEGY.copy(),
             }
         else:
             return {
@@ -871,11 +887,12 @@ class Autofish_OrderCalculator:
                 "exit_profit": Decimal("0.01"),
                 "stop_loss": Decimal("0.08"),
                 "decay_factor": Decimal("0.5"),
-                "total_amount_quote": Decimal("1200"),
+                "total_amount_quote": Decimal("10000"),
                 "leverage": Decimal("10"),
                 "max_entries": 4,
                 "valid_amplitudes":[1, 2, 3, 4, 5, 6, 7, 8, 9],
                 "weights":[0.0852, 0.2956, 0.3177, 0.137, 0.1008, 0.0282, 0.0271, 0.0066, 0.0019],
+                "entry_price_strategy": DEFAULT_ENTRY_STRATEGY.copy(),
             }
 
 
@@ -895,16 +912,6 @@ class Autofish_AmplitudeAnalyzer:
     LIQUIDATION_AMPLITUDE = 10
     VALID_AMPLITUDE_MIN = 1
     
-    DEFAULT_ENTRY_STRATEGY = {
-        "name": "atr",
-        "params": {
-            "atr_period": 14,
-            "atr_multiplier": 0.5,
-            "min_spacing": 0.005,
-            "max_spacing": 0.03
-        }
-    }
-    
     def __init__(self, symbol: str = "BTCUSDT", interval: str = "1d", limit: int = 1000, 
                  leverage: int = 10, source: str = "binance", output_dir: str = "autofish_output",
                  log_dir: str = "logs", entry_strategy: dict = None):
@@ -915,7 +922,7 @@ class Autofish_AmplitudeAnalyzer:
         self.source = source
         self.output_dir = output_dir
         self.log_dir = log_dir
-        self.entry_strategy = entry_strategy or self.DEFAULT_ENTRY_STRATEGY.copy()
+        self.entry_strategy = entry_strategy or DEFAULT_ENTRY_STRATEGY.copy()
         self.klines: List[dict] = []
         self.amplitudes: List[Decimal] = []
         self.amplitude_counts: Dict[int, int] = {amp: 0 for amp in self.AMPLITUDE_RANGES}
@@ -1331,6 +1338,12 @@ class Autofish_AmplitudeAnalyzer:
             weight_list = [round(float(weights_dict.get(amp, Decimal("0"))), 4) for amp in sorted(weights_dict.keys())]
             valid_amps = sorted(weights_dict.keys())
             total_ret = sum(self.expected_returns.get(amp, Decimal("0")) for amp in valid_amps)
+            
+            strategy = self.entry_strategy
+            name = strategy.get("name", "atr")
+            params = strategy.get("params", {})
+            params_str = ", ".join([f'"{k}": {json.dumps(v)}' for k, v in params.items()])
+            
             return [
                 f'    "d_{decay_factor}":{{',
                 f'      "symbol":"{self.symbol}",',
@@ -1343,7 +1356,8 @@ class Autofish_AmplitudeAnalyzer:
                 f'      "grid_spacing":0.01,',
                 f'      "exit_profit":0.01,',
                 f'      "stop_loss":0.08,',
-                f'      "total_expected_return":{round(float(total_ret), 4)}',
+                f'      "total_expected_return":{round(float(total_ret), 4)},',
+                f'      "entry_price_strategy":{{"name":"{name}","params":{{{params_str}}}}}',
                 f'    }}'
             ]
         
@@ -1433,6 +1447,36 @@ class Autofish_AmplitudeAnalyzer:
             lines.append(f"| leverage | {int(self.leverage)}x | 杠杆倍数 |")
             lines.append(f"| total_expected_return | {float(total_ret)*100:.2f}% | 总预期收益（所有正收益区间之和） |")
             lines.append(f"")
+        
+        lines.append(f"## 入场价格策略")
+        lines.append(f"")
+        lines.append(f"| 字段 | 值 | 说明 |")
+        lines.append(f"|------|-----|------|")
+        lines.append(f"| name | {self.entry_strategy.get('name', 'atr')} | 策略名称 |")
+        
+        params = self.entry_strategy.get('params', {})
+        if self.entry_strategy.get('name') == 'atr':
+            lines.append(f"| atr_period | {params.get('atr_period', 14)} | ATR 计算周期 |")
+            lines.append(f"| atr_multiplier | {params.get('atr_multiplier', 0.5)} | ATR 乘数 |")
+            lines.append(f"| min_spacing | {params.get('min_spacing', 0.005) * 100:.1f}% | 最小网格间距 |")
+            lines.append(f"| max_spacing | {params.get('max_spacing', 0.03) * 100:.1f}% | 最大网格间距 |")
+        elif self.entry_strategy.get('name') == 'bollinger':
+            lines.append(f"| period | {params.get('period', 20)} | 布林带周期 |")
+            lines.append(f"| std_multiplier | {params.get('std_multiplier', 2)} | 标准差乘数 |")
+            lines.append(f"| min_spacing | {params.get('min_spacing', 0.005) * 100:.1f}% | 最小网格间距 |")
+        elif self.entry_strategy.get('name') == 'support':
+            lines.append(f"| lookback | {params.get('lookback', 20)} | 回溯 K 线数量 |")
+            lines.append(f"| min_spacing | {params.get('min_spacing', 0.005) * 100:.1f}% | 最小网格间距 |")
+        
+        lines.append(f"")
+        lines.append(f"**策略说明**: 入场价格策略用于计算 A1 订单的入场价格。")
+        lines.append(f"")
+        lines.append(f"- **fixed**: 固定网格间距，入场价格 = 当前价格 × (1 - 网格间距)")
+        lines.append(f"- **atr**: 基于 ATR 动态计算，适应市场波动性")
+        lines.append(f"- **bollinger**: 布林带下轨入场，适用于震荡市场")
+        lines.append(f"- **support**: 支撑位入场，适用于趋势市场")
+        lines.append(f"- **composite**: 综合多种技术指标")
+        lines.append(f"")
         
         lines.append(f"## 算法说明")
         lines.append(f"")
