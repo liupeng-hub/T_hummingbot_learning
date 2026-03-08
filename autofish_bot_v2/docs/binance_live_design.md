@@ -488,6 +488,9 @@ python binance_live.py --symbol BTCUSDT --no-testnet --decay-factor 1.0
 
 # 停止
 ./binance_live_run.sh stop
+
+# 重启（智能判断：运行中先停止再启动，未运行直接启动）
+./binance_live_run.sh restart
 ```
 
 ## 八、相关文档
