@@ -556,6 +556,7 @@ async def main():
             "weights": amplitude_config.get_weights(),
             "valid_amplitudes": amplitude_config.get_valid_amplitudes(),
             "total_expected_return": amplitude_config.get_total_expected_return(),
+            "entry_price_strategy": amplitude_config.get_entry_price_strategy(),
         }
         config_file = amplitude_config.config_path
     else:

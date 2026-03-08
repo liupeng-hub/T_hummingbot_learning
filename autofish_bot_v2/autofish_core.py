@@ -895,9 +895,19 @@ class Autofish_AmplitudeAnalyzer:
     LIQUIDATION_AMPLITUDE = 10
     VALID_AMPLITUDE_MIN = 1
     
+    DEFAULT_ENTRY_STRATEGY = {
+        "name": "atr",
+        "params": {
+            "atr_period": 14,
+            "atr_multiplier": 0.5,
+            "min_spacing": 0.005,
+            "max_spacing": 0.03
+        }
+    }
+    
     def __init__(self, symbol: str = "BTCUSDT", interval: str = "1d", limit: int = 1000, 
                  leverage: int = 10, source: str = "binance", output_dir: str = "autofish_output",
-                 log_dir: str = "logs"):
+                 log_dir: str = "logs", entry_strategy: dict = None):
         self.symbol = symbol
         self.interval = interval
         self.limit = limit
@@ -905,6 +915,7 @@ class Autofish_AmplitudeAnalyzer:
         self.source = source
         self.output_dir = output_dir
         self.log_dir = log_dir
+        self.entry_strategy = entry_strategy or self.DEFAULT_ENTRY_STRATEGY.copy()
         self.klines: List[dict] = []
         self.amplitudes: List[Decimal] = []
         self.amplitude_counts: Dict[int, int] = {amp: 0 for amp in self.AMPLITUDE_RANGES}
@@ -1221,6 +1232,19 @@ class Autofish_AmplitudeAnalyzer:
         
         os.makedirs(os.path.dirname(filepath), exist_ok=True)
         
+        def build_entry_strategy_str() -> str:
+            """构建入场策略配置字符串"""
+            strategy = self.entry_strategy
+            name = strategy.get("name", "atr")
+            params = strategy.get("params", {})
+            
+            params_str = ", ".join([f'"{k}": {json.dumps(v)}' for k, v in params.items()])
+            
+            return (f'    "entry_price_strategy": {{\n'
+                    f'      "name": "{name}",\n'
+                    f'      "params": {{{params_str}}}\n'
+                    f'    }}')
+        
         def build_config_str(decay_factor: float, decay_key: str) -> str:
             weights_dict = self.weights.get(decay_key, {})
             max_entries = min(4, len(weights_dict))
@@ -1244,7 +1268,8 @@ class Autofish_AmplitudeAnalyzer:
                     f'    "grid_spacing":0.01,\n'
                     f'    "exit_profit":0.01,\n'
                     f'    "stop_loss":0.08,\n'
-                    f'    "total_expected_return":{round(float(total_ret), 4)}\n'
+                    f'    "total_expected_return":{round(float(total_ret), 4)},\n'
+                    f'{build_entry_strategy_str()}\n'
                     f'  }}')
         
         config_d05_str = build_config_str(0.5, "d_0.5")
@@ -1592,6 +1617,19 @@ class Autofish_AmplitudeConfig:
         """获取权重列表"""
         config = self._get_recommended_config()
         return config.get("weights", [])
+    
+    def get_entry_price_strategy(self) -> dict:
+        """获取入场价格策略配置"""
+        config = self._get_recommended_config()
+        return config.get("entry_price_strategy", {
+            "name": "atr",
+            "params": {
+                "atr_period": 14,
+                "atr_multiplier": 0.5,
+                "min_spacing": 0.005,
+                "max_spacing": 0.03
+            }
+        })
 
     @classmethod
     def load_latest(cls, symbol: str = "BTCUSDT", output_dir: str = "autofish_output", 
@@ -1614,6 +1652,9 @@ async def main():
     parser.add_argument("--leverage", type=int, default=10, help="杠杆倍数 (默认: 10)")
     parser.add_argument("--source", type=str, default="binance", choices=["binance", "longport"], help="数据源: binance(加密货币) 或 longport(港股/美股/A股)")
     parser.add_argument("--output", type=str, default=None, help="输出文件路径 (默认: {source}_{symbol}_amplitude_config.json)")
+    parser.add_argument("--entry-strategy", type=str, default="atr", 
+                        choices=["fixed", "atr", "bollinger", "support", "composite"],
+                        help="入场价格策略: fixed(固定网格), atr(ATR动态), bollinger(布林带), support(支撑位), composite(综合) (默认: atr)")
     
     args = parser.parse_args()
     
@@ -1621,12 +1662,17 @@ async def main():
         args.source = "longport"
         args.leverage = 1
     
+    # 构建入场策略配置
+    entry_strategy = Autofish_AmplitudeAnalyzer.DEFAULT_ENTRY_STRATEGY.copy()
+    entry_strategy["name"] = args.entry_strategy
+    
     analyzer = Autofish_AmplitudeAnalyzer(
         symbol=args.symbol,
         interval=args.interval,
         limit=args.limit,
         leverage=args.leverage,
-        source=args.source
+        source=args.source,
+        entry_strategy=entry_strategy
     )
     
     result = await analyzer.analyze()
