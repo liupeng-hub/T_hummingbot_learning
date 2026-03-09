@@ -191,7 +191,20 @@ class KlineFetcher:
     
     def _find_missing_ranges(self, symbol: str, interval: str,
                               start_time: int, end_time: int) -> List[Tuple[int, int]]:
-        """找出缺失的时间范围"""
+        """找出缺失的时间范围
+        
+        检查缓存中是否已覆盖请求的时间范围。
+        如果缓存中有数据，但中间有缺失，也会检测出来。
+        
+        参数:
+            symbol: 交易对
+            interval: K 线周期
+            start_time: 请求的开始时间戳（毫秒）
+            end_time: 请求的结束时间戳（毫秒）
+        
+        返回:
+            缺失的时间范围列表，每个元素为 (start, end) 元组
+        """
         table = self._get_table_name(symbol, interval)
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
@@ -209,24 +222,63 @@ class KlineFetcher:
                 FROM {table}
             """)
             row = cursor.fetchone()
-            conn.close()
             
             if not row or row[2] == 0:
+                conn.close()
                 return [(start_time, end_time)]
             
             min_time, max_time, count = row
             
-            missing_ranges = []
+            # 计算预期的 K 线数量
+            interval_minutes = {
+                "1m": 1, "3m": 3, "5m": 5, "15m": 15, "30m": 30,
+                "1h": 60, "2h": 120, "4h": 240, "6h": 360, "12h": 720,
+                "1d": 1440, "3d": 4320, "1w": 10080
+            }
+            minutes = interval_minutes.get(interval, 1)
+            expected_count = int((end_time - start_time) / (1000 * 60 * minutes))
             
-            # 检查开始时间之前的缺失
-            if min_time > start_time:
-                missing_ranges.append((start_time, min_time - 1))
+            # 如果缓存数量小于预期数量，说明有缺失
+            if count < expected_count * 0.9:  # 允许 10% 的误差
+                # 获取缓存中已有的所有时间戳
+                cursor.execute(f"""
+                    SELECT timestamp FROM {table}
+                    WHERE timestamp >= ? AND timestamp <= ?
+                    ORDER BY timestamp ASC
+                """, (start_time, end_time))
+                timestamps = [row[0] for row in cursor.fetchall()]
+                conn.close()
+                
+                # 找出缺失的时间范围
+                missing_ranges = []
+                expected_timestamp = start_time
+                
+                for ts in timestamps:
+                    if ts > expected_timestamp:
+                        # 有缺失
+                        missing_ranges.append((expected_timestamp, ts - 1))
+                    expected_timestamp = ts + minutes * 60 * 1000
+                
+                # 检查最后一段
+                if expected_timestamp <= end_time:
+                    missing_ranges.append((expected_timestamp, end_time))
+                
+                return missing_ranges
+            else:
+                # 缓存数量足够，检查边界
+                missing_ranges = []
+                
+                # 检查开始时间之前的缺失
+                if min_time > start_time:
+                    missing_ranges.append((start_time, min_time - 1))
+                
+                # 检查结束时间之后的缺失
+                if max_time < end_time:
+                    missing_ranges.append((max_time + 1, end_time))
+                
+                conn.close()
+                return missing_ranges
             
-            # 检查结束时间之后的缺失
-            if max_time < end_time:
-                missing_ranges.append((max_time + 1, end_time))
-            
-            return missing_ranges
         except Exception as e:
             logger.error(f"[检查缺失] 失败: {e}")
             conn.close()

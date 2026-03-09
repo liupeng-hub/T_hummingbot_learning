@@ -374,10 +374,10 @@ class BacktestEngine:
         self._process_entry(low_price, close_price)
         self._process_exit(open_price, high_price, low_price, close_price)
     
-    async def fetch_klines(self, symbol: str, interval: str = "1m", limit: int = 1000, days: int = None, start_time: int = None, end_time: int = None) -> List[dict]:
+    async def fetch_klines(self, symbol: str, interval: str = "1m", limit: int = 1000, days: int = None, start_time: int = None, end_time: int = None, auto_fetch: bool = True) -> List[dict]:
         """获取历史 K 线数据
         
-        优先从本地缓存获取，如果缓存无数据则提示用户运行 binance_kline_fetcher.py
+        优先从本地缓存获取，如果缓存数据不完整则自动补充缺失数据
         
         参数:
             symbol: 交易对
@@ -386,12 +386,54 @@ class BacktestEngine:
             days: 回测天数
             start_time: 开始时间戳（毫秒）
             end_time: 结束时间戳（毫秒）
+            auto_fetch: 是否自动获取缺失数据
         """
         from binance_kline_fetcher import KlineFetcher
         
         fetcher = KlineFetcher()
         
-        # 从本地缓存查询
+        # 计算时间范围（如果未指定）
+        if not start_time or not end_time:
+            end_time = int(datetime.now().timestamp() * 1000)
+            if days:
+                start_time = end_time - days * 24 * 60 * 60 * 1000
+            else:
+                interval_minutes = {
+                    "1m": 1, "3m": 3, "5m": 5, "15m": 15, "30m": 30,
+                    "1h": 60, "2h": 120, "4h": 240, "6h": 360, "12h": 720,
+                    "1d": 1440, "3d": 4320, "1w": 10080
+                }
+                minutes = interval_minutes.get(interval, 1)
+                start_time = end_time - limit * minutes * 60 * 1000
+        
+        # 检查缓存覆盖情况
+        missing_ranges = fetcher._find_missing_ranges(symbol, interval, start_time, end_time)
+        
+        # 如果有缺失且启用自动获取
+        if missing_ranges and auto_fetch:
+            print(f"\n⚠️  缓存数据不完整，缺失 {len(missing_ranges)} 个时间段:")
+            for range_start, range_end in missing_ranges:
+                start_dt = datetime.fromtimestamp(range_start / 1000)
+                end_dt = datetime.fromtimestamp(range_end / 1000)
+                print(f"  - {start_dt.strftime('%Y-%m-%d')} ~ {end_dt.strftime('%Y-%m-%d')}")
+            
+            print(f"\n[自动补充] 正在获取缺失数据...")
+            
+            # 自动获取缺失数据
+            for range_start, range_end in missing_ranges:
+                try:
+                    klines = await fetcher._fetch_from_api(symbol, interval, range_start, range_end)
+                    if klines:
+                        fetcher._save_to_cache(symbol, interval, klines)
+                except Exception as e:
+                    logger.error(f"[自动补充] 获取失败: {e}")
+                    print(f"\n❌ 自动获取失败，请手动运行:")
+                    print(f"   python binance_kline_fetcher.py --symbol {symbol} --interval {interval}")
+                    return []
+            
+            print(f"\n✅ 缓存已更新")
+        
+        # 从缓存读取数据
         klines = fetcher.query_cache(symbol, interval, start_time, end_time)
         
         if klines:
@@ -399,17 +441,19 @@ class BacktestEngine:
             print(f"[获取K线] 从本地缓存获取 {len(klines)} 条数据")
             return klines
         
-        # 缓存无数据，提示用户
-        logger.error(f"[获取K线] 本地缓存无数据")
-        print(f"\n❌ 本地缓存无数据，请先运行:")
-        print(f"   python binance_kline_fetcher.py --symbol {symbol} --interval {interval} --days 365")
-        print(f"   或")
-        print(f"   python binance_kline_fetcher.py --symbol {symbol} --interval {interval} --date-range \"yyyymmdd-yyyymmdd\"")
-        print()
+        # 缓存无数据
+        if not auto_fetch:
+            logger.error(f"[获取K线] 本地缓存无数据，自动获取已禁用")
+            print(f"\n❌ 本地缓存无数据，自动获取已禁用，请手动运行:")
+            print(f"   python binance_kline_fetcher.py --symbol {symbol} --interval {interval}")
+        else:
+            logger.error(f"[获取K线] 本地缓存无数据")
+            print(f"\n❌ 本地缓存无数据，请先运行:")
+            print(f"   python binance_kline_fetcher.py --symbol {symbol} --interval {interval}")
         
         return []
     
-    async def run(self, symbol: str = "BTCUSDT", interval: str = "1m", limit: int = 1000, days: int = None, start_time: int = None, end_time: int = None):
+    async def run(self, symbol: str = "BTCUSDT", interval: str = "1m", limit: int = 1000, days: int = None, start_time: int = None, end_time: int = None, auto_fetch: bool = True):
         """运行回测
         
         主要流程：
@@ -425,6 +469,7 @@ class BacktestEngine:
             days: 回测天数（如果指定，则分批获取足够的数据）
             start_time: 开始时间戳（毫秒）
             end_time: 结束时间戳（毫秒）
+            auto_fetch: 是否自动获取缺失数据
         """
         self.interval = interval
         self.days = days  # 保存回测天数
@@ -454,7 +499,7 @@ class BacktestEngine:
         print(f"  总资金: {self.config.get('total_amount_quote', 1200)} USDT")
         print(f"  最大层级: {self.config.get('max_entries', 4)}")
         
-        klines = await self.fetch_klines(symbol, interval, limit, days, start_time, end_time)
+        klines = await self.fetch_klines(symbol, interval, limit, days, start_time, end_time, auto_fetch)
         
         if not klines:
             logger.error("获取 K 线数据失败")
@@ -784,6 +829,7 @@ async def main():
     parser.add_argument("--decay-factor", type=float, default=0.5, help="衰减因子 (默认: 0.5，可选: 0.5/1.0)")
     parser.add_argument("--stop-loss", type=float, default=0.08, help="止损比例 (默认: 0.08)")
     parser.add_argument("--total-amount", type=float, default=10000, help="总投入金额 (默认: 10000)")
+    parser.add_argument("--no-auto-fetch", action="store_true", help="禁用自动获取缺失数据（仅使用缓存）")
     
     args = parser.parse_args()
     
@@ -897,14 +943,15 @@ async def main():
                 limit=args.limit, 
                 days=dr['days'], 
                 start_time=dr['start_time'], 
-                end_time=dr['end_time']
+                end_time=dr['end_time'],
+                auto_fetch=not args.no_auto_fetch
             )
             engine.save_report(args.symbol, dr['days'], dr['date_range_str'])
             engine.save_history(args.symbol, dr['days'], dr['date_range_str'])
     else:
         # 单次回测（使用 --days 或 --limit）
         engine = BacktestEngine(config)
-        await engine.run(symbol=args.symbol, interval=args.interval, limit=args.limit, days=args.days)
+        await engine.run(symbol=args.symbol, interval=args.interval, limit=args.limit, days=args.days, auto_fetch=not args.no_auto_fetch)
         engine.save_report(args.symbol, args.days)
         engine.save_history(args.symbol, args.days)
 
