@@ -89,6 +89,7 @@ class BacktestEngine:
     def __init__(self, config: dict):
         self.config = config
         self.interval = None
+        self.days = None  # 回测天数
         
         self.calculator = Autofish_WeightCalculator(Decimal(str(self.config.get("decay_factor", 0.5))))
         self.chain_state: Optional[Autofish_ChainState] = None
@@ -462,6 +463,7 @@ class BacktestEngine:
             days: 回测天数（如果指定，则分批获取足够的数据）
         """
         self.interval = interval
+        self.days = days  # 保存回测天数
         logger.info("=" * 60)
         logger.info("Autofish V1 回测开始")
         logger.info("=" * 60)
@@ -546,7 +548,7 @@ class BacktestEngine:
         logger.info(f"  总亏损: {self.results['total_loss']:.2f} USDT")
         logger.info(f"  净收益: {net_profit:.2f} USDT")
     
-    def save_report(self, symbol: str):
+    def save_report(self, symbol: str, days: int = None):
         """保存回测报告到 Markdown 文件
         
         生成包含以下内容的报告：
@@ -557,13 +559,17 @@ class BacktestEngine:
         
         参数:
             symbol: 交易对
+            days: 回测天数（可选，用于文件名）
         """
         import os
         
         output_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "autofish_output")
         os.makedirs(output_dir, exist_ok=True)
         
-        filepath = os.path.join(output_dir, f"binance_{symbol}_backtest_report.md")
+        if days:
+            filepath = os.path.join(output_dir, f"binance_{symbol}_backtest_report_{days}d.md")
+        else:
+            filepath = os.path.join(output_dir, f"binance_{symbol}_backtest_report.md")
         
         net_profit = self.results["total_profit"] - self.results["total_loss"]
         win_rate = (self.results["win_trades"] / self.results["total_trades"] * 100 
@@ -709,7 +715,7 @@ async def main():
     
     engine = BacktestEngine(config)
     await engine.run(symbol=args.symbol, interval=args.interval, limit=args.limit, days=args.days)
-    engine.save_report(args.symbol)
+    engine.save_report(args.symbol, args.days)
 
 
 if __name__ == "__main__":
