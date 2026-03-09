@@ -867,36 +867,51 @@ async def main():
     
     args = parser.parse_args()
     
-    # 解析时间范围
-    start_time = None
-    end_time = None
-    date_range_str = None
+    # 解析时间范围（支持多段，用逗号分隔）
+    date_ranges = []
     
     if args.date_range:
-        try:
-            # 支持两种格式: yyyymmdd-yyyymmdd 或 yyyy-mm-dd-yyyy-mm-dd
-            if args.date_range.count("-") == 1:
-                # 格式: yyyymmdd-yyyymmdd
-                parts = args.date_range.split("-")
-                start_date = datetime.strptime(parts[0], "%Y%m%d")
-                end_date = datetime.strptime(parts[1], "%Y%m%d")
-            elif args.date_range.count("-") == 4:
-                # 格式: yyyy-mm-dd-yyyy-mm-dd
-                parts = args.date_range.split("-")
-                start_date = datetime.strptime(f"{parts[0]}-{parts[1]}-{parts[2]}", "%Y-%m-%d")
-                end_date = datetime.strptime(f"{parts[3]}-{parts[4]}-{parts[5]}", "%Y-%m-%d")
-            else:
-                raise ValueError(f"不支持的日期格式: {args.date_range}")
+        # 支持多段时间范围，用逗号分隔
+        range_parts = args.date_range.split(",")
+        
+        for range_str in range_parts:
+            range_str = range_str.strip()
+            if not range_str:
+                continue
             
-            start_time = int(start_date.timestamp() * 1000)
-            end_time = int(end_date.timestamp() * 1000) + 86400000 - 1  # 结束日期的 23:59:59
-            # 计算天数
-            days = (end_date - start_date).days + 1
-            # 生成文件名用的日期范围字符串，格式: {days}d_yyyymmdd-yyyymmdd
-            date_range_str = f"{days}d_{start_date.strftime('%Y%m%d')}-{end_date.strftime('%Y%m%d')}"
-            logger.info(f"[时间范围] {start_date.strftime('%Y-%m-%d')} ~ {end_date.strftime('%Y-%m-%d')} ({days} 天)")
-        except ValueError as e:
-            logger.error(f"[时间范围] 解析失败: {e}")
+            try:
+                # 支持两种格式: yyyymmdd-yyyymmdd 或 yyyy-mm-dd-yyyy-mm-dd
+                if range_str.count("-") == 1:
+                    # 格式: yyyymmdd-yyyymmdd
+                    parts = range_str.split("-")
+                    start_date = datetime.strptime(parts[0], "%Y%m%d")
+                    end_date = datetime.strptime(parts[1], "%Y%m%d")
+                elif range_str.count("-") == 4:
+                    # 格式: yyyy-mm-dd-yyyy-mm-dd
+                    parts = range_str.split("-")
+                    start_date = datetime.strptime(f"{parts[0]}-{parts[1]}-{parts[2]}", "%Y-%m-%d")
+                    end_date = datetime.strptime(f"{parts[3]}-{parts[4]}-{parts[5]}", "%Y-%m-%d")
+                else:
+                    logger.error(f"[时间范围] 格式错误: {range_str}")
+                    continue
+                
+                start_time = int(start_date.timestamp() * 1000)
+                end_time = int(end_date.timestamp() * 1000) + 86400000 - 1  # 结束日期的 23:59:59
+                days = (end_date - start_date).days + 1
+                date_range_str = f"{days}d_{start_date.strftime('%Y%m%d')}-{end_date.strftime('%Y%m%d')}"
+                
+                date_ranges.append({
+                    "start_time": start_time,
+                    "end_time": end_time,
+                    "days": days,
+                    "date_range_str": date_range_str,
+                    "start_date": start_date,
+                    "end_date": end_date,
+                })
+                
+                logger.info(f"[时间范围] {start_date.strftime('%Y-%m-%d')} ~ {end_date.strftime('%Y-%m-%d')} ({days} 天)")
+            except ValueError as e:
+                logger.error(f"[时间范围] 解析失败: {range_str}, 错误: {e}")
     
     decay_factor = Decimal(str(args.decay_factor))
     
@@ -940,10 +955,33 @@ async def main():
     logger.info(f"  最大层级: {config['max_entries']}")
     logger.info(f"  网格权重: {config.get('weights', [])}")
     
-    engine = BacktestEngine(config)
-    await engine.run(symbol=args.symbol, interval=args.interval, limit=args.limit, days=args.days, start_time=start_time, end_time=end_time)
-    engine.save_report(args.symbol, args.days, date_range_str)
-    engine.save_history(args.symbol, args.days, date_range_str)
+    # 处理回测
+    if date_ranges:
+        # 多段时间范围
+        print(f"\n📊 共 {len(date_ranges)} 个时间段需要回测")
+        
+        for i, dr in enumerate(date_ranges, 1):
+            print(f"\n{'='*60}")
+            print(f"📅 第 {i}/{len(date_ranges)} 个时间段: {dr['start_date'].strftime('%Y-%m-%d')} ~ {dr['end_date'].strftime('%Y-%m-%d')} ({dr['days']} 天)")
+            print(f"{'='*60}")
+            
+            engine = BacktestEngine(config)
+            await engine.run(
+                symbol=args.symbol, 
+                interval=args.interval, 
+                limit=args.limit, 
+                days=dr['days'], 
+                start_time=dr['start_time'], 
+                end_time=dr['end_time']
+            )
+            engine.save_report(args.symbol, dr['days'], dr['date_range_str'])
+            engine.save_history(args.symbol, dr['days'], dr['date_range_str'])
+    else:
+        # 单次回测（使用 --days 或 --limit）
+        engine = BacktestEngine(config)
+        await engine.run(symbol=args.symbol, interval=args.interval, limit=args.limit, days=args.days)
+        engine.save_report(args.symbol, args.days)
+        engine.save_history(args.symbol, args.days)
 
 
 if __name__ == "__main__":
