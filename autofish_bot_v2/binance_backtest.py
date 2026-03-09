@@ -99,6 +99,7 @@ class BacktestEngine:
             "total_profit": Decimal("0"),
             "total_loss": Decimal("0"),
             "trades": [],
+            "simultaneous_triggers": 0,
         }
         self.kline_count = 0
         self.start_time = None
@@ -223,12 +224,17 @@ class BacktestEngine:
                     self.chain_state.orders.append(new_order)
                     logger.info(f"[链式下单] 创建 A{next_level}: 入场价={new_order.entry_price:.2f}")
     
-    def _process_exit(self, high_price: Decimal, low_price: Decimal, current_price: Decimal):
-        """处理出场"""
-        grid_spacing = self.config.get("grid_spacing", Decimal("0.01"))
-        exit_profit = self.config.get("exit_profit", Decimal("0.01"))
-        stop_loss = self.config.get("stop_loss", Decimal("0.08"))
-        total_amount = self.config.get("total_amount_quote", Decimal("1200"))
+    def _process_exit(self, open_price: Decimal, high_price: Decimal, low_price: Decimal, current_price: Decimal):
+        """处理出场
+        
+        改进：当 K 线同时触及止盈止损时，根据 K 线形态判断触发顺序
+        
+        参数:
+            open_price: K 线开盘价
+            high_price: K 线最高价
+            low_price: K 线最低价
+            current_price: 当前价格（收盘价）
+        """
         leverage = self.config.get("leverage", Decimal("10"))
         
         filled_orders = self.chain_state.get_filled_orders()
@@ -237,21 +243,72 @@ class BacktestEngine:
             if order.state != "filled":
                 continue
             
-            if Autofish_OrderCalculator.check_take_profit_triggered(high_price, order.take_profit_price):
+            tp_triggered = high_price >= order.take_profit_price
+            sl_triggered = low_price <= order.stop_loss_price
+            
+            if tp_triggered and sl_triggered:
+                self.results["simultaneous_triggers"] += 1
+                
+                exit_type = self._determine_exit_order(order, open_price, high_price, low_price, current_price)
+                
+                logger.warning(
+                    f"[同时触发] K线同时触及止盈止损: "
+                    f"A{order.level}, TP={order.take_profit_price:.2f}, SL={order.stop_loss_price:.2f}, "
+                    f"K线 O={open_price:.2f} H={high_price:.2f} L={low_price:.2f} C={current_price:.2f}, "
+                    f"判断结果: {exit_type}"
+                )
+                
+                if exit_type == "take_profit":
+                    self._close_order(order, "take_profit", order.take_profit_price, leverage)
+                else:
+                    self._close_order(order, "stop_loss", order.stop_loss_price, leverage)
+                
+                self.chain_state.cancel_pending_orders()
+                new_order = self._create_order(order.level, current_price)
+                self.chain_state.orders.append(new_order)
+                logger.info(f"[{'止盈' if exit_type == 'take_profit' else '止损'}后重建] 创建 A{new_order.level}: 入场价={new_order.entry_price:.2f}")
+                break
+                
+            elif tp_triggered:
                 self._close_order(order, "take_profit", order.take_profit_price, leverage)
                 self.chain_state.cancel_pending_orders()
                 new_order = self._create_order(order.level, current_price)
                 self.chain_state.orders.append(new_order)
                 logger.info(f"[止盈后重建] 创建 A{new_order.level}: 入场价={new_order.entry_price:.2f}")
                 break
-
-            elif Autofish_OrderCalculator.check_stop_loss_triggered(low_price, order.stop_loss_price):
+                
+            elif sl_triggered:
                 self._close_order(order, "stop_loss", order.stop_loss_price, leverage)
                 self.chain_state.cancel_pending_orders()
                 new_order = self._create_order(order.level, current_price)
                 self.chain_state.orders.append(new_order)
                 logger.info(f"[止损后重建] 创建 A{new_order.level}: 入场价={new_order.entry_price:.2f}")
                 break
+    
+    def _determine_exit_order(self, order: Autofish_Order, open_price: Decimal, high_price: Decimal, low_price: Decimal, close_price: Decimal) -> str:
+        """判断止盈止损触发顺序
+        
+        当 K 线同时触及止盈止损时，根据 K 线形态判断触发顺序：
+        - 阳线（close > open）：假设先跌后涨，止损先触发
+        - 阴线（close < open）：假设先涨后跌，止盈先触发
+        - 十字星（close ≈ open）：假设止损先触发（保守估计）
+        
+        参数:
+            order: 订单对象
+            open_price: K 线开盘价
+            high_price: K 线最高价
+            low_price: K 线最低价
+            close_price: K 线收盘价
+            
+        返回:
+            "take_profit" 或 "stop_loss"
+        """
+        if close_price > open_price:
+            return "stop_loss"
+        elif close_price < open_price:
+            return "take_profit"
+        else:
+            return "stop_loss"
     
     def _close_order(self, order: Autofish_Order, reason: str, close_price: Decimal, leverage: Decimal):
         """平仓"""
@@ -298,7 +355,7 @@ class BacktestEngine:
                         f"O={open_price:.2f} H={high_price:.2f} L={low_price:.2f} C={close_price:.2f}")
         
         self._process_entry(low_price, close_price)
-        self._process_exit(high_price, low_price, close_price)
+        self._process_exit(open_price, high_price, low_price, close_price)
     
     async def fetch_klines(self, symbol: str, interval: str = "1m", limit: int = 1000) -> List[dict]:
         """获取历史 K 线数据"""
@@ -517,6 +574,9 @@ class BacktestEngine:
         if self.config.get('total_amount_quote'):
             roi = float(net_profit) / float(self.config.get('total_amount_quote', 1200)) * 100
             lines.append(f"| 收益率 | {roi:.2f}% | 净收益 / 总投入 |")
+        
+        if self.results.get('simultaneous_triggers', 0) > 0:
+            lines.append(f"| 同时触及止盈止损 | {self.results['simultaneous_triggers']} 次 | K线同时触及止盈止损，根据K线形态判断 |")
         lines.append(f"")
         
         if self.results['trades']:

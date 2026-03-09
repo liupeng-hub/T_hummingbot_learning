@@ -115,19 +115,60 @@ Autofish 是**振幅触发**算法，不是**周期触发**算法：
 - 实现复杂
 - 仍然存在假设偏差
 
-### 方案三：使用 Tick 数据
+### 方案三：使用 Tick 数据（Binance 支持）
 
 **原理**：使用逐笔成交数据，而不是 K 线数据。
+
+**Binance API 支持**：
+- `/api/v3/trades`：最近成交记录
+- `/api/v3/historicalTrades`：历史成交记录（需要 API Key）
+- `/api/v3/aggTrades`：归集成交记录
+
+**API 限制**：
+- 每次请求最多 1000 条交易
+- 使用时间参数时，间隔最多 1 小时
 
 **优点**：
 - 最精确的回测
 - 完全模拟实际交易
+- 可以准确判断止盈止损触发顺序
 
 **缺点**：
-- 数据获取困难
-- 数据量巨大
+- 数据量大（一天可能有数百万条）
 - 回测速度慢
-- Binance 不提供历史 Tick 数据 API
+- 需要分批获取，处理复杂
+
+**实现建议**：
+```python
+async def fetch_tick_data(self, symbol: str, start_time: int, end_time: int) -> List[dict]:
+    """获取逐笔成交数据"""
+    url = "https://fapi.binance.com/fapi/v1/aggTrades"
+    all_trades = []
+    from_id = None
+    
+    while True:
+        params = {"symbol": symbol, "limit": 1000}
+        if from_id:
+            params["fromId"] = from_id
+        
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, params=params) as resp:
+                trades = await resp.json()
+        
+        if not trades:
+            break
+        
+        # 过滤时间范围
+        filtered = [t for t in trades if start_time <= t["T"] <= end_time]
+        all_trades.extend(filtered)
+        
+        if len(trades) < 1000:
+            break
+        
+        from_id = trades[-1]["a"] + 1
+    
+    return all_trades
+```
 
 ### 方案四：混合方案（推荐）
 
@@ -275,7 +316,17 @@ def _determine_exit_order(self, order, open_price, high_price, low_price, close_
 2. **大周期 K 线确实存在回测偏差**
 3. **使用最小周期是有效的改进方法**
 
+**重要发现**：Binance **支持** Tick 级别历史数据！
+
 建议：
-- 短期：使用 1m K 线 + K 线内判断逻辑
-- 中期：提供置信区间估计
-- 长期：收集 Tick 数据，实现精确回测
+- **短期**：使用 1m K 线 + K 线内判断逻辑
+- **中期**：提供置信区间估计
+- **长期**：使用 Binance aggTrades API 获取 Tick 数据，实现精确回测
+
+### Binance Tick 数据接口
+
+| 接口 | 说明 | 限制 |
+|------|------|------|
+| `/api/v3/trades` | 最近成交 | 最多 1000 条 |
+| `/api/v3/historicalTrades` | 历史成交 | 需要 API Key |
+| `/api/v3/aggTrades` | 归集成交 | 时间间隔最多 1 小时 |
