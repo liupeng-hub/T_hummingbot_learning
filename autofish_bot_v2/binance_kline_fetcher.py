@@ -245,17 +245,24 @@ class KlineFetcher:
         minutes = interval_minutes.get(interval, 1)
         total_klines = int((end_time - start_time) / (1000 * 60 * minutes))
         
-        logger.info(f"[获取K线] {symbol} {interval}: 需要 {total_klines} 条")
+        # 计算预计 API 请求次数
+        batch_size = 1500
+        estimated_requests = (total_klines + batch_size - 1) // batch_size
+        
+        logger.info(f"[获取K线] {symbol} {interval}: 需要 {total_klines} 条，预计 {estimated_requests} 次 API 请求")
+        print(f"[获取K线] {symbol} {interval}: 需要 {total_klines} 条，预计 {estimated_requests} 次 API 请求")
         
         all_klines = []
         current_end_time = end_time
-        batch_size = 1500
+        request_count = 0  # 当前请求次数
         
         proxy = HTTPS_PROXY or HTTP_PROXY or None
         
         connector = aiohttp.TCPConnector(ssl=False)
         async with aiohttp.ClientSession(connector=connector) as session:
             while len(all_klines) < total_klines:
+                request_count += 1
+                
                 params = {
                     "symbol": symbol,
                     "interval": interval,
@@ -279,6 +286,7 @@ class KlineFetcher:
                                 break
                             elif response.status == 429:
                                 logger.warning(f"[获取K线] API 限制，等待 60 秒后重试")
+                                print(f"⚠️  API 限制，等待 60 秒后重试...")
                                 await asyncio.sleep(60)
                                 retry_count += 1
                             else:
@@ -289,6 +297,7 @@ class KlineFetcher:
                                     await asyncio.sleep(5)
                     except asyncio.TimeoutError:
                         logger.warning(f"[获取K线] 超时，重试 {retry_count + 1}/{max_retries}")
+                        print(f"⚠️  请求超时，重试 {retry_count + 1}/{max_retries}...")
                         retry_count += 1
                         if retry_count < max_retries:
                             await asyncio.sleep(5)
@@ -328,8 +337,11 @@ class KlineFetcher:
                 
                 current_end_time = earliest_time - 1
                 
-                logger.info(f"[获取K线] 已获取 {len(all_klines)} 条")
-                print(f"[获取K线] {symbol} {interval}: 已获取 {len(all_klines)} 条")
+                # 显示进度
+                progress = min(100, int(len(all_klines) / total_klines * 100))
+                remaining_requests = estimated_requests - request_count
+                logger.info(f"[获取K线] 已获取 {len(all_klines)} 条 ({progress}%)，剩余 {remaining_requests} 次请求")
+                print(f"[获取K线] 进度: {progress}% | 已获取 {len(all_klines)} 条 | 剩余 {remaining_requests} 次请求")
                 
                 await asyncio.sleep(1.0)
                 
