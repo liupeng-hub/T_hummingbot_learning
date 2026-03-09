@@ -500,7 +500,7 @@ class BacktestEngine:
                 print(f"[获取K线] 已获取 {len(all_klines)} 条数据，继续获取...")
                 
                 # 添加请求间隔，避免 API 限制
-                await asyncio.sleep(0.5)
+                await asyncio.sleep(1.0)
                 
                 if len(data) < batch_size:
                     logger.info(f"[获取K线] 数据不足 {batch_size} 条，已获取全部可用数据")
@@ -991,6 +991,11 @@ async def main():
             print(f"\n{'='*60}")
             print(f"📅 第 {i}/{len(date_ranges)} 个时间段: {dr['start_date'].strftime('%Y-%m-%d')} ~ {dr['end_date'].strftime('%Y-%m-%d')} ({dr['days']} 天)")
             print(f"{'='*60}")
+            
+            # 如果不是第一个时间段，等待一段时间避免 API 限制
+            if i > 1:
+                print(f"⏳ 等待 30 秒避免 API 限制...")
+                await asyncio.sleep(30)
             
             engine = BacktestEngine(config)
             await engine.run(
