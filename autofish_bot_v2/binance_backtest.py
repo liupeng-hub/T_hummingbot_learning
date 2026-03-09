@@ -377,144 +377,37 @@ class BacktestEngine:
     async def fetch_klines(self, symbol: str, interval: str = "1m", limit: int = 1000, days: int = None, start_time: int = None, end_time: int = None) -> List[dict]:
         """获取历史 K 线数据
         
+        优先从本地缓存获取，如果缓存无数据则提示用户运行 binance_kline_fetcher.py
+        
         参数:
             symbol: 交易对
             interval: K 线周期
             limit: 单次获取数量（最大 1500）
-            days: 回测天数（如果指定，则分批获取足够的数据）
+            days: 回测天数
             start_time: 开始时间戳（毫秒）
             end_time: 结束时间戳（毫秒）
         """
-        url = "https://fapi.binance.com/fapi/v1/klines"
+        from binance_kline_fetcher import KlineFetcher
         
-        # 计算需要获取的总 K 线数量
-        if start_time and end_time:
-            # 使用时间范围
-            interval_minutes = {
-                "1m": 1, "3m": 3, "5m": 5, "15m": 15, "30m": 30,
-                "1h": 60, "2h": 120, "4h": 240, "6h": 360, "12h": 720,
-                "1d": 1440, "3d": 4320, "1w": 10080
-            }
-            minutes = interval_minutes.get(interval, 1)
-            total_klines = int((end_time - start_time) / (1000 * 60 * minutes))
-            logger.info(f"[获取K线] 需要获取 {total_klines} 条 K 线（时间范围，{interval} 周期）")
-        elif days:
-            interval_minutes = {
-                "1m": 1, "3m": 3, "5m": 5, "15m": 15, "30m": 30,
-                "1h": 60, "2h": 120, "4h": 240, "6h": 360, "12h": 720,
-                "1d": 1440, "3d": 4320, "1w": 10080
-            }
-            minutes = interval_minutes.get(interval, 1)
-            total_klines = int(days * 24 * 60 / minutes)
-            logger.info(f"[获取K线] 需要获取 {total_klines} 条 K 线（{days} 天，{interval} 周期）")
-        else:
-            total_klines = limit
+        fetcher = KlineFetcher()
         
-        all_klines = []
-        current_end_time = end_time  # 从指定结束时间开始获取
-        batch_size = min(limit, 1500)  # Binance API 限制每次最多 1500 条
+        # 从本地缓存查询
+        klines = fetcher.query_cache(symbol, interval, start_time, end_time)
         
-        proxy = HTTPS_PROXY or HTTP_PROXY or None
-        logger.info(f"[获取K线] symbol={symbol}, interval={interval}, proxy={proxy}")
+        if klines:
+            logger.info(f"[获取K线] 从本地缓存获取 {len(klines)} 条数据")
+            print(f"[获取K线] 从本地缓存获取 {len(klines)} 条数据")
+            return klines
         
-        connector = aiohttp.TCPConnector(ssl=False)
-        async with aiohttp.ClientSession(connector=connector) as session:
-            while len(all_klines) < total_klines:
-                params = {
-                    "symbol": symbol,
-                    "interval": interval,
-                    "limit": batch_size,
-                }
-                
-                # 只设置 endTime，从后往前获取
-                if current_end_time:
-                    params["endTime"] = current_end_time
-                
-                kwargs = {"params": params}
-                if proxy:
-                    kwargs["proxy"] = proxy
-                
-                # 添加重试机制
-                max_retries = 3
-                retry_count = 0
-                data = None
-                
-                while retry_count < max_retries:
-                    try:
-                        async with session.get(url, **kwargs, timeout=aiohttp.ClientTimeout(total=30)) as response:
-                            if response.status == 200:
-                                data = await response.json()
-                                break
-                            else:
-                                text = await response.text()
-                                logger.error(f"[获取K线] 失败: {response.status} - {text}")
-                                retry_count += 1
-                                if retry_count < max_retries:
-                                    await asyncio.sleep(2)
-                    except asyncio.TimeoutError:
-                        logger.warning(f"[获取K线] 请求超时，重试 {retry_count + 1}/{max_retries}")
-                        retry_count += 1
-                        if retry_count < max_retries:
-                            await asyncio.sleep(3)
-                    except Exception as e:
-                        logger.error(f"[获取K线] 请求异常: {e}")
-                        retry_count += 1
-                        if retry_count < max_retries:
-                            await asyncio.sleep(2)
-                
-                if data is None:
-                    logger.error(f"[获取K线] 重试 {max_retries} 次后仍失败")
-                    break
-                
-                if not data:
-                    logger.info(f"[获取K线] 没有更多数据")
-                    break
-                
-                # 解析 K 线数据
-                for item in data:
-                    kline_time = item[0]
-                    # 检查是否在时间范围内
-                    if start_time and kline_time < start_time:
-                        continue
-                    if end_time and kline_time > end_time:
-                        continue
-                    all_klines.append({
-                        "timestamp": item[0],
-                        "open": item[1],
-                        "high": item[2],
-                        "low": item[3],
-                        "close": item[4],
-                        "volume": item[5],
-                    })
-                
-                # 更新 current_end_time 为最早一条 K 线的时间 - 1
-                earliest_time = data[0][0]
-                if start_time and earliest_time <= start_time:
-                    logger.info(f"[获取K线] 已到达开始时间")
-                    print(f"[获取K线] 已到达开始时间，共获取 {len(all_klines)} 条数据")
-                    break
-                
-                current_end_time = earliest_time - 1
-                
-                logger.info(f"[获取K线] 已获取 {len(all_klines)} 条数据，继续获取...")
-                print(f"[获取K线] 已获取 {len(all_klines)} 条数据，继续获取...")
-                
-                # 添加请求间隔，避免 API 限制
-                await asyncio.sleep(1.0)
-                
-                if len(data) < batch_size:
-                    logger.info(f"[获取K线] 数据不足 {batch_size} 条，已获取全部可用数据")
-                    break
+        # 缓存无数据，提示用户
+        logger.error(f"[获取K线] 本地缓存无数据")
+        print(f"\n❌ 本地缓存无数据，请先运行:")
+        print(f"   python binance_kline_fetcher.py --symbol {symbol} --interval {interval} --days 365")
+        print(f"   或")
+        print(f"   python binance_kline_fetcher.py --symbol {symbol} --interval {interval} --date-range \"yyyymmdd-yyyymmdd\"")
+        print()
         
-        # 按时间正序排列（从早到晚）
-        all_klines.sort(key=lambda x: x["timestamp"])
-        
-        # 截取需要的数量
-        if len(all_klines) > total_klines:
-            all_klines = all_klines[-total_klines:]
-        
-        logger.info(f"[获取K线] 成功获取 {len(all_klines)} 条数据")
-        return all_klines
+        return []
     
     async def run(self, symbol: str = "BTCUSDT", interval: str = "1m", limit: int = 1000, days: int = None, start_time: int = None, end_time: int = None):
         """运行回测
