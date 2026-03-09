@@ -2631,7 +2631,7 @@ class BinanceLiveTrader:
         
         根据事件类型分发处理：
         - ORDER_TRADE_UPDATE: 普通订单状态变化
-        - LISTEN_FOR_ALGO: ALGO 条件单（止盈止损）状态变化
+        - ALGO_UPDATE: ALGO 条件单（止盈止损）状态变化
         - listenKeyExpired: listen key 过期
         
         参数:
@@ -2643,7 +2643,7 @@ class BinanceLiveTrader:
             order_data = data.get("o", {})
             await self._handle_order_update(order_data)
         
-        elif event_type == "LISTEN_FOR_ALGO":
+        elif event_type == "ALGO_UPDATE":
             algo_data = data.get("o", {})
             await self.algo_handler.handle_algo_update(algo_data)
         
