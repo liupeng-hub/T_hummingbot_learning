@@ -1194,6 +1194,8 @@ class AlgoHandler:
         
         order.state = "closed"
         order.close_reason = CloseReason.TAKE_PROFIT.value
+        order.closed_at = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        order.close_price = order.take_profit_price
         
         filled_price = Decimal(str(algo_data.get("avgPrice", order.entry_price)))
         profit = (order.take_profit_price - order.entry_price) * order.quantity
@@ -1206,6 +1208,8 @@ class AlgoHandler:
                 logger.info(f"[取消止损单] algoId={order.sl_order_id}")
             except Exception as e:
                 logger.warning(f"[取消止损单] 失败: {e}")
+        
+        self.trader._log_order_closed(order, "止盈")
         
         notify_take_profit(order, profit, self.trader.config)
         
@@ -1221,6 +1225,8 @@ class AlgoHandler:
         
         order.state = "closed"
         order.close_reason = CloseReason.STOP_LOSS.value
+        order.closed_at = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        order.close_price = order.stop_loss_price
         
         profit = (order.stop_loss_price - order.entry_price) * order.quantity
         order.profit = profit
@@ -1232,6 +1238,8 @@ class AlgoHandler:
                 logger.info(f"[取消止盈单] algoId={order.tp_order_id}")
             except Exception as e:
                 logger.warning(f"[取消止盈单] 失败: {e}")
+        
+        self.trader._log_order_closed(order, "止损")
         
         notify_stop_loss(order, profit, self.trader.config)
         
@@ -2692,6 +2700,7 @@ class BinanceLiveTrader:
         
         order.state = "filled"
         order.entry_price = filled_price
+        order.filled_at = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         
         await self._place_exit_orders(order)
         
@@ -2718,6 +2727,43 @@ class BinanceLiveTrader:
         self.chain_state.orders.remove(order)
         
         self._save_state()
+    
+    def _log_order_closed(self, order: Any, reason: str) -> None:
+        """打印订单关闭信息到日志"""
+        logger.info(f"[订单关闭] A{order.level} {reason}")
+        logger.info(f"  入场价格: {order.entry_price:.2f}")
+        logger.info(f"  入场时间: {order.filled_at or '未知'}")
+        logger.info(f"  平仓价格: {order.close_price:.2f}")
+        logger.info(f"  平仓时间: {order.closed_at or '未知'}")
+        logger.info(f"  平仓原因: {order.close_reason}")
+        logger.info(f"  数量: {order.quantity:.6f}")
+        logger.info(f"  金额: {order.stake_amount:.2f} USDT")
+        logger.info(f"  盈亏: {order.profit:.2f} USDT")
+        logger.info(f"  持仓时长: {self._calculate_holding_duration(order)}")
+    
+    def _calculate_holding_duration(self, order: Any) -> str:
+        """计算持仓时长"""
+        if not order.filled_at or not order.closed_at:
+            return "未知"
+        
+        try:
+            filled_time = datetime.strptime(order.filled_at, '%Y-%m-%d %H:%M:%S')
+            closed_time = datetime.strptime(order.closed_at, '%Y-%m-%d %H:%M:%S')
+            duration = closed_time - filled_time
+            
+            total_seconds = int(duration.total_seconds())
+            days = total_seconds // 86400
+            hours = (total_seconds % 86400) // 3600
+            minutes = (total_seconds % 3600) // 60
+            
+            if days > 0:
+                return f"{days}天{hours}小时{minutes}分钟"
+            elif hours > 0:
+                return f"{hours}小时{minutes}分钟"
+            else:
+                return f"{minutes}分钟"
+        except Exception:
+            return "未知"
     
     async def _cancel_algo_orders_for_order(self, order: Any) -> None:
         symbol = self.config.get("symbol", "BTCUSDT")
