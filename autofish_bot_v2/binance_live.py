@@ -2645,7 +2645,17 @@ class BinanceLiveTrader:
         参数:
             data: WebSocket 消息数据
         """
+        # 类型检查：确保 data 是字典
+        if not isinstance(data, dict):
+            logger.warning(f"[WebSocket] 收到非字典消息: {type(data)}, 内容: {data}")
+            return
+        
         event_type = data.get("e")
+        
+        # 如果没有事件类型，可能是其他消息，忽略
+        if not event_type:
+            logger.debug(f"[WebSocket] 收到无事件类型消息: {data}")
+            return
         
         if event_type == "ORDER_TRADE_UPDATE":
             order_data = data.get("o", {})
