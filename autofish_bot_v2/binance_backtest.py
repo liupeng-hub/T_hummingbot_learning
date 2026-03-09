@@ -374,7 +374,7 @@ class BacktestEngine:
         self._process_entry(low_price, close_price)
         self._process_exit(open_price, high_price, low_price, close_price)
     
-    async def fetch_klines(self, symbol: str, interval: str = "1m", limit: int = 1000, days: int = None) -> List[dict]:
+    async def fetch_klines(self, symbol: str, interval: str = "1m", limit: int = 1000, days: int = None, start_time: int = None, end_time: int = None) -> List[dict]:
         """获取历史 K 线数据
         
         参数:
@@ -382,11 +382,23 @@ class BacktestEngine:
             interval: K 线周期
             limit: 单次获取数量（最大 1500）
             days: 回测天数（如果指定，则分批获取足够的数据）
+            start_time: 开始时间戳（毫秒）
+            end_time: 结束时间戳（毫秒）
         """
         url = "https://fapi.binance.com/fapi/v1/klines"
         
         # 计算需要获取的总 K 线数量
-        if days:
+        if start_time and end_time:
+            # 使用时间范围
+            interval_minutes = {
+                "1m": 1, "3m": 3, "5m": 5, "15m": 15, "30m": 30,
+                "1h": 60, "2h": 120, "4h": 240, "6h": 360, "12h": 720,
+                "1d": 1440, "3d": 4320, "1w": 10080
+            }
+            minutes = interval_minutes.get(interval, 1)
+            total_klines = int((end_time - start_time) / (1000 * 60 * minutes))
+            logger.info(f"[获取K线] 需要获取 {total_klines} 条 K 线（时间范围，{interval} 周期）")
+        elif days:
             interval_minutes = {
                 "1m": 1, "3m": 3, "5m": 5, "15m": 15, "30m": 30,
                 "1h": 60, "2h": 120, "4h": 240, "6h": 360, "12h": 720,
@@ -399,7 +411,7 @@ class BacktestEngine:
             total_klines = limit
         
         all_klines = []
-        end_time = None  # 从最新的数据开始获取
+        current_end_time = end_time  # 从指定结束时间开始获取
         batch_size = min(limit, 1500)  # Binance API 限制每次最多 1500 条
         
         proxy = HTTPS_PROXY or HTTP_PROXY or None
@@ -414,8 +426,11 @@ class BacktestEngine:
                     "limit": batch_size,
                 }
                 
-                if end_time:
-                    params["endTime"] = end_time
+                # 时间范围参数
+                if start_time:
+                    params["startTime"] = start_time
+                if current_end_time:
+                    params["endTime"] = current_end_time
                 
                 kwargs = {"params": params}
                 if proxy:
@@ -440,8 +455,13 @@ class BacktestEngine:
                                 "volume": item[5],
                             })
                         
-                        # 更新 endTime 为最早一条 K 线的时间
-                        end_time = data[0][0] - 1
+                        # 更新 current_end_time 为最早一条 K 线的时间 - 1
+                        earliest_time = data[0][0]
+                        if earliest_time <= start_time if start_time else False:
+                            logger.info(f"[获取K线] 已到达开始时间")
+                            break
+                        
+                        current_end_time = earliest_time - 1
                         
                         logger.info(f"[获取K线] 已获取 {len(all_klines)} 条数据，继续获取...")
                         
@@ -463,7 +483,7 @@ class BacktestEngine:
         logger.info(f"[获取K线] 成功获取 {len(all_klines)} 条数据")
         return all_klines
     
-    async def run(self, symbol: str = "BTCUSDT", interval: str = "1m", limit: int = 1000, days: int = None):
+    async def run(self, symbol: str = "BTCUSDT", interval: str = "1m", limit: int = 1000, days: int = None, start_time: int = None, end_time: int = None):
         """运行回测
         
         主要流程：
@@ -477,6 +497,8 @@ class BacktestEngine:
             interval: K线周期
             limit: K线数量
             days: 回测天数（如果指定，则分批获取足够的数据）
+            start_time: 开始时间戳（毫秒）
+            end_time: 结束时间戳（毫秒）
         """
         self.interval = interval
         self.days = days  # 保存回测天数
@@ -491,7 +513,11 @@ class BacktestEngine:
         print(f"\n配置:")
         print(f"  交易对: {symbol}")
         print(f"  K线周期: {interval}")
-        if days:
+        if start_time and end_time:
+            start_dt = datetime.fromtimestamp(start_time / 1000)
+            end_dt = datetime.fromtimestamp(end_time / 1000)
+            print(f"  时间范围: {start_dt.strftime('%Y-%m-%d')} ~ {end_dt.strftime('%Y-%m-%d')}")
+        elif days:
             print(f"  回测天数: {days} 天")
         else:
             print(f"  数据量: {limit}")
@@ -502,7 +528,7 @@ class BacktestEngine:
         print(f"  总资金: {self.config.get('total_amount_quote', 1200)} USDT")
         print(f"  最大层级: {self.config.get('max_entries', 4)}")
         
-        klines = await self.fetch_klines(symbol, interval, limit, days)
+        klines = await self.fetch_klines(symbol, interval, limit, days, start_time, end_time)
         
         if not klines:
             logger.error("获取 K 线数据失败")
@@ -608,7 +634,7 @@ class BacktestEngine:
             "sharpe_ratio": sharpe_ratio,
         }
     
-    def save_report(self, symbol: str, days: int = None):
+    def save_report(self, symbol: str, days: int = None, date_range: str = None):
         """保存回测报告到 Markdown 文件
         
         生成包含以下内容的报告：
@@ -620,13 +646,16 @@ class BacktestEngine:
         参数:
             symbol: 交易对
             days: 回测天数（可选，用于文件名）
+            date_range: 时间范围字符串（可选，用于文件名，格式: yyyymmdd-yyyymmdd）
         """
         import os
         
         output_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "autofish_output")
         os.makedirs(output_dir, exist_ok=True)
         
-        if days:
+        if date_range:
+            filepath = os.path.join(output_dir, f"binance_{symbol}_backtest_report_{date_range}.md")
+        elif days:
             filepath = os.path.join(output_dir, f"binance_{symbol}_backtest_report_{days}d.md")
         else:
             filepath = os.path.join(output_dir, f"binance_{symbol}_backtest_report.md")
@@ -750,7 +779,7 @@ class BacktestEngine:
         logger.info(f"[保存报告] 成功保存到: {filepath}")
         print(f"\n📄 回测报告已保存: {filepath}")
     
-    def save_history(self, symbol: str, days: int = None):
+    def save_history(self, symbol: str, days: int = None, date_range: str = None):
         """保存回测历史记录
         
         追加记录每次回测的关键指标，方便对比不同回测结果
@@ -758,6 +787,7 @@ class BacktestEngine:
         参数:
             symbol: 交易对
             days: 回测天数（可选）
+            date_range: 时间范围字符串（可选，格式: yyyymmdd-yyyymmdd）
         """
         import os
         
@@ -794,11 +824,11 @@ class BacktestEngine:
                 f.write('\n'.join(header) + '\n')
         
         # 追加数据行
-        date_range = f"{self.start_time.strftime('%Y-%m-%d')} ~ {self.end_time.strftime('%Y-%m-%d')}" if self.start_time and self.end_time else "-"
+        date_range_str = f"{self.start_time.strftime('%Y-%m-%d')} ~ {self.end_time.strftime('%Y-%m-%d')}" if self.start_time and self.end_time else "-"
         days_str = str(days) if days else "-"
         
         row = (
-            f"| {datetime.now().strftime('%Y-%m-%d %H:%M')} | {date_range} | {days_str} | "
+            f"| {datetime.now().strftime('%Y-%m-%d %H:%M')} | {date_range_str} | {days_str} | "
             f"{self.results['total_trades']} | {win_rate:.1f}% | {roi:.2f}% | "
             f"{price_change:.2f}% | {excess_return:.2f}% | {plr} | "
             f"{sharpe:.2f} |"
@@ -817,11 +847,32 @@ async def main():
     parser.add_argument("--interval", type=str, default="1m", help="K线周期 (默认: 1m)")
     parser.add_argument("--limit", type=int, default=1500, help="K线数量 (默认: 1500)")
     parser.add_argument("--days", type=int, default=None, help="回测天数 (默认: None，使用 limit 参数)")
+    parser.add_argument("--date-range", type=str, default=None, help="回测时间范围 (格式: yyyymmdd-yyyymmdd，例如: 20260301-20260310)")
     parser.add_argument("--decay-factor", type=float, default=0.5, help="衰减因子 (默认: 0.5，可选: 0.5/1.0)")
     parser.add_argument("--stop-loss", type=float, default=0.08, help="止损比例 (默认: 0.08)")
     parser.add_argument("--total-amount", type=float, default=10000, help="总投入金额 (默认: 10000)")
     
     args = parser.parse_args()
+    
+    # 解析时间范围
+    start_time = None
+    end_time = None
+    date_range_str = None
+    
+    if args.date_range:
+        try:
+            parts = args.date_range.split("-")
+            if len(parts) == 2:
+                start_date = datetime.strptime(parts[0], "%Y%m%d")
+                end_date = datetime.strptime(parts[1], "%Y%m%d")
+                start_time = int(start_date.timestamp() * 1000)
+                end_time = int(end_date.timestamp() * 1000) + 86400000 - 1  # 结束日期的 23:59:59
+                date_range_str = args.date_range
+                logger.info(f"[时间范围] {start_date.strftime('%Y-%m-%d')} ~ {end_date.strftime('%Y-%m-%d')}")
+            else:
+                logger.error(f"[时间范围] 格式错误: {args.date_range}，应为 yyyymmdd-yyyymmdd")
+        except ValueError as e:
+            logger.error(f"[时间范围] 解析失败: {e}")
     
     decay_factor = Decimal(str(args.decay_factor))
     
@@ -866,9 +917,9 @@ async def main():
     logger.info(f"  网格权重: {config.get('weights', [])}")
     
     engine = BacktestEngine(config)
-    await engine.run(symbol=args.symbol, interval=args.interval, limit=args.limit, days=args.days)
-    engine.save_report(args.symbol, args.days)
-    engine.save_history(args.symbol, args.days)
+    await engine.run(symbol=args.symbol, interval=args.interval, limit=args.limit, days=args.days, start_time=start_time, end_time=end_time)
+    engine.save_report(args.symbol, args.days, date_range_str)
+    engine.save_history(args.symbol, args.days, date_range_str)
 
 
 if __name__ == "__main__":
