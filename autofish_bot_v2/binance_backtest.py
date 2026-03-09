@@ -831,7 +831,14 @@ class BacktestEngine:
         
         # 追加数据行
         date_range_str = f"{self.start_time.strftime('%Y-%m-%d')} ~ {self.end_time.strftime('%Y-%m-%d')}" if self.start_time and self.end_time else "-"
-        days_str = str(days) if days else "-"
+        
+        # 计算天数（根据实际回测时间范围）
+        if self.start_time and self.end_time:
+            calculated_days = (self.end_time - self.start_time).days + 1
+        else:
+            calculated_days = days if days else None
+        
+        days_str = str(calculated_days)
         
         row = (
             f"| {datetime.now().strftime('%Y-%m-%d %H:%M')} | {date_range_str} | {days_str} | "
