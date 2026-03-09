@@ -434,50 +434,77 @@ class BacktestEngine:
                 if proxy:
                     kwargs["proxy"] = proxy
                 
-                async with session.get(url, **kwargs) as response:
-                    if response.status == 200:
-                        data = await response.json()
-                        
-                        if not data:
-                            logger.info(f"[获取K线] 没有更多数据")
-                            break
-                        
-                        # 解析 K 线数据
-                        for item in data:
-                            kline_time = item[0]
-                            # 检查是否在时间范围内
-                            if start_time and kline_time < start_time:
-                                continue
-                            if end_time and kline_time > end_time:
-                                continue
-                            all_klines.append({
-                                "timestamp": item[0],
-                                "open": item[1],
-                                "high": item[2],
-                                "low": item[3],
-                                "close": item[4],
-                                "volume": item[5],
-                            })
-                        
-                        # 更新 current_end_time 为最早一条 K 线的时间 - 1
-                        earliest_time = data[0][0]
-                        if start_time and earliest_time <= start_time:
-                            logger.info(f"[获取K线] 已到达开始时间")
-                            print(f"[获取K线] 已到达开始时间，共获取 {len(all_klines)} 条数据")
-                            break
-                        
-                        current_end_time = earliest_time - 1
-                        
-                        logger.info(f"[获取K线] 已获取 {len(all_klines)} 条数据，继续获取...")
-                        print(f"[获取K线] 已获取 {len(all_klines)} 条数据，继续获取...")
-                        
-                        if len(data) < batch_size:
-                            logger.info(f"[获取K线] 数据不足 {batch_size} 条，已获取全部可用数据")
-                            break
-                    else:
-                        text = await response.text()
-                        logger.error(f"[获取K线] 失败: {response.status} - {text}")
-                        break
+                # 添加重试机制
+                max_retries = 3
+                retry_count = 0
+                data = None
+                
+                while retry_count < max_retries:
+                    try:
+                        async with session.get(url, **kwargs, timeout=aiohttp.ClientTimeout(total=30)) as response:
+                            if response.status == 200:
+                                data = await response.json()
+                                break
+                            else:
+                                text = await response.text()
+                                logger.error(f"[获取K线] 失败: {response.status} - {text}")
+                                retry_count += 1
+                                if retry_count < max_retries:
+                                    await asyncio.sleep(2)
+                    except asyncio.TimeoutError:
+                        logger.warning(f"[获取K线] 请求超时，重试 {retry_count + 1}/{max_retries}")
+                        retry_count += 1
+                        if retry_count < max_retries:
+                            await asyncio.sleep(3)
+                    except Exception as e:
+                        logger.error(f"[获取K线] 请求异常: {e}")
+                        retry_count += 1
+                        if retry_count < max_retries:
+                            await asyncio.sleep(2)
+                
+                if data is None:
+                    logger.error(f"[获取K线] 重试 {max_retries} 次后仍失败")
+                    break
+                
+                if not data:
+                    logger.info(f"[获取K线] 没有更多数据")
+                    break
+                
+                # 解析 K 线数据
+                for item in data:
+                    kline_time = item[0]
+                    # 检查是否在时间范围内
+                    if start_time and kline_time < start_time:
+                        continue
+                    if end_time and kline_time > end_time:
+                        continue
+                    all_klines.append({
+                        "timestamp": item[0],
+                        "open": item[1],
+                        "high": item[2],
+                        "low": item[3],
+                        "close": item[4],
+                        "volume": item[5],
+                    })
+                
+                # 更新 current_end_time 为最早一条 K 线的时间 - 1
+                earliest_time = data[0][0]
+                if start_time and earliest_time <= start_time:
+                    logger.info(f"[获取K线] 已到达开始时间")
+                    print(f"[获取K线] 已到达开始时间，共获取 {len(all_klines)} 条数据")
+                    break
+                
+                current_end_time = earliest_time - 1
+                
+                logger.info(f"[获取K线] 已获取 {len(all_klines)} 条数据，继续获取...")
+                print(f"[获取K线] 已获取 {len(all_klines)} 条数据，继续获取...")
+                
+                # 添加请求间隔，避免 API 限制
+                await asyncio.sleep(0.5)
+                
+                if len(data) < batch_size:
+                    logger.info(f"[获取K线] 数据不足 {batch_size} 条，已获取全部可用数据")
+                    break
         
         # 按时间正序排列（从早到晚）
         all_klines.sort(key=lambda x: x["timestamp"])
