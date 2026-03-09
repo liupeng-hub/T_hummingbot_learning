@@ -463,11 +463,13 @@ class BacktestEngine:
                         earliest_time = data[0][0]
                         if start_time and earliest_time <= start_time:
                             logger.info(f"[获取K线] 已到达开始时间")
+                            print(f"[获取K线] 已到达开始时间，共获取 {len(all_klines)} 条数据")
                             break
                         
                         current_end_time = earliest_time - 1
                         
                         logger.info(f"[获取K线] 已获取 {len(all_klines)} 条数据，继续获取...")
+                        print(f"[获取K线] 已获取 {len(all_klines)} 条数据，继续获取...")
                         
                         if len(data) < batch_size:
                             logger.info(f"[获取K线] 数据不足 {batch_size} 条，已获取全部可用数据")
