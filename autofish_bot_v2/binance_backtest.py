@@ -101,6 +101,11 @@ class BacktestEngine:
             "total_loss": Decimal("0"),
             "trades": [],
             "simultaneous_triggers": 0,
+            "first_price": None,      # 第一根 K 线价格
+            "last_price": None,       # 最后一根 K 线价格
+            "trade_returns": [],      # 每笔交易的收益率列表
+            "max_profit": Decimal("0"),   # 最大单笔盈利
+            "max_loss": Decimal("0"),     # 最大单笔亏损
         }
         self.kline_count = 0
         self.start_time = None
@@ -317,6 +322,17 @@ class BacktestEngine:
         order.close_price = close_price
         order.profit = Autofish_OrderCalculator(leverage=leverage).calculate_profit(order, close_price)
         
+        # 计算并记录交易收益率
+        if order.stake_amount and order.stake_amount > 0:
+            trade_return = order.profit / order.stake_amount
+            self.results["trade_returns"].append(trade_return)
+        
+        # 更新最大盈亏
+        if order.profit > self.results["max_profit"]:
+            self.results["max_profit"] = order.profit
+        if order.profit < self.results["max_loss"]:
+            self.results["max_loss"] = order.profit
+        
         if reason == "take_profit":
             self.results["win_trades"] += 1
             self.results["total_profit"] += order.profit
@@ -495,6 +511,10 @@ class BacktestEngine:
         self.start_time = datetime.fromtimestamp(klines[0]["timestamp"] / 1000)
         self.end_time = datetime.fromtimestamp(klines[-1]["timestamp"] / 1000)
         
+        # 记录首尾价格（用于计算标的涨跌幅）
+        self.results["first_price"] = Decimal(klines[0]["open"])
+        self.results["last_price"] = Decimal(klines[-1]["close"])
+        
         print(f"\n📊 回测时间范围:")
         print(f"  开始: {self.start_time.strftime('%Y-%m-%d %H:%M')}")
         print(f"  结束: {self.end_time.strftime('%Y-%m-%d %H:%M')}")
@@ -547,6 +567,46 @@ class BacktestEngine:
         logger.info(f"  总盈利: {self.results['total_profit']:.2f} USDT")
         logger.info(f"  总亏损: {self.results['total_loss']:.2f} USDT")
         logger.info(f"  净收益: {net_profit:.2f} USDT")
+    
+    def calculate_metrics(self) -> Dict[str, Any]:
+        """计算回测指标
+        
+        返回:
+            包含各项指标的字典
+        """
+        # 标的涨跌幅
+        if self.results["first_price"] and self.results["last_price"]:
+            price_change = (self.results["last_price"] - self.results["first_price"]) / self.results["first_price"] * 100
+        else:
+            price_change = Decimal("0")
+        
+        # 盈亏比
+        if self.results["loss_trades"] > 0 and self.results["win_trades"] > 0:
+            avg_profit = self.results["total_profit"] / self.results["win_trades"]
+            avg_loss = self.results["total_loss"] / self.results["loss_trades"]
+            profit_loss_ratio = avg_profit / avg_loss
+        else:
+            profit_loss_ratio = None  # 无亏损或无盈利
+        
+        # 夏普比率
+        if len(self.results["trade_returns"]) >= 2:
+            returns = [float(r) for r in self.results["trade_returns"]]
+            avg_return = sum(returns) / len(returns)
+            variance = sum((r - avg_return) ** 2 for r in returns) / len(returns)
+            std_dev = variance ** 0.5
+            # 当标准差接近 0 时（所有收益相同），夏普比率无意义
+            if std_dev < 1e-10:
+                sharpe_ratio = Decimal("0")
+            else:
+                sharpe_ratio = Decimal(str(avg_return / std_dev))
+        else:
+            sharpe_ratio = Decimal("0")
+        
+        return {
+            "price_change": price_change,
+            "profit_loss_ratio": profit_loss_ratio,
+            "sharpe_ratio": sharpe_ratio,
+        }
     
     def save_report(self, symbol: str, days: int = None):
         """保存回测报告到 Markdown 文件
@@ -639,6 +699,39 @@ class BacktestEngine:
             lines.append(f"| 同时触及止盈止损 | {self.results['simultaneous_triggers']} 次 | K线同时触及止盈止损，根据K线形态判断 |")
         lines.append(f"")
         
+        # 计算指标
+        metrics = self.calculate_metrics()
+        
+        # 对比分析
+        lines.append(f"## 对比分析")
+        lines.append(f"")
+        lines.append(f"| 指标 | 值 | 说明 |")
+        lines.append(f"|------|-----|------|")
+        
+        price_change = float(metrics["price_change"])
+        roi = float(net_profit) / float(self.config.get('total_amount_quote', 1200)) * 100
+        excess_return = roi - price_change
+        
+        lines.append(f"| 标的涨跌幅 | {price_change:.2f}% | 同期 {symbol} 涨跌 |")
+        lines.append(f"| 策略收益率 | {roi:.2f}% | 策略净收益率 |")
+        lines.append(f"| 超额收益 | {excess_return:.2f}% | 策略收益 - 标的涨跌 |")
+        lines.append(f"")
+        
+        # 风险指标
+        lines.append(f"## 风险指标")
+        lines.append(f"")
+        lines.append(f"| 指标 | 值 | 说明 |")
+        lines.append(f"|------|-----|------|")
+        
+        plr = f"{float(metrics['profit_loss_ratio']):.2f}" if metrics['profit_loss_ratio'] else "N/A"
+        sharpe = float(metrics["sharpe_ratio"])
+        
+        lines.append(f"| 盈亏比 | {plr} | 平均盈利 / 平均亏损 |")
+        lines.append(f"| 夏普比率 | {sharpe:.2f} | 风险调整后收益 |")
+        lines.append(f"| 最大单笔盈利 | {float(self.results['max_profit']):.2f} USDT | - |")
+        lines.append(f"| 最大单笔亏损 | {float(self.results['max_loss']):.2f} USDT | - |")
+        lines.append(f"")
+        
         if self.results['trades']:
             lines.append(f"## 交易明细")
             lines.append(f"")
@@ -656,6 +749,65 @@ class BacktestEngine:
         
         logger.info(f"[保存报告] 成功保存到: {filepath}")
         print(f"\n📄 回测报告已保存: {filepath}")
+    
+    def save_history(self, symbol: str, days: int = None):
+        """保存回测历史记录
+        
+        追加记录每次回测的关键指标，方便对比不同回测结果
+        
+        参数:
+            symbol: 交易对
+            days: 回测天数（可选）
+        """
+        import os
+        
+        output_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "autofish_output")
+        os.makedirs(output_dir, exist_ok=True)
+        
+        filepath = os.path.join(output_dir, f"binance_{symbol}_backtest_history.md")
+        
+        # 计算指标
+        metrics = self.calculate_metrics()
+        net_profit = self.results["total_profit"] - self.results["total_loss"]
+        roi = float(net_profit) / float(self.config.get('total_amount_quote', 1200)) * 100
+        win_rate = (self.results["win_trades"] / self.results["total_trades"] * 100 
+                   if self.results["total_trades"] > 0 else 0)
+        
+        # 超额收益
+        price_change = float(metrics["price_change"])
+        excess_return = roi - price_change
+        
+        # 盈亏比显示
+        plr = f"{float(metrics['profit_loss_ratio']):.2f}" if metrics['profit_loss_ratio'] else "N/A"
+        sharpe = float(metrics["sharpe_ratio"])
+        
+        # 检查文件是否存在
+        if not os.path.exists(filepath):
+            # 创建新文件，写入表头
+            header = [
+                f"# {symbol} 回测历史记录",
+                "",
+                "| 回测时间 | 日期范围 | 天数 | 交易次数 | 胜率 | 收益率 | 标的涨跌 | 超额收益 | 盈亏比 | 夏普比率 |",
+                "|----------|----------|------|----------|------|--------|----------|----------|--------|----------|",
+            ]
+            with open(filepath, 'w', encoding='utf-8') as f:
+                f.write('\n'.join(header) + '\n')
+        
+        # 追加数据行
+        date_range = f"{self.start_time.strftime('%Y-%m-%d')} ~ {self.end_time.strftime('%Y-%m-%d')}" if self.start_time and self.end_time else "-"
+        days_str = str(days) if days else "-"
+        
+        row = (
+            f"| {datetime.now().strftime('%Y-%m-%d %H:%M')} | {date_range} | {days_str} | "
+            f"{self.results['total_trades']} | {win_rate:.1f}% | {roi:.2f}% | "
+            f"{price_change:.2f}% | {excess_return:.2f}% | {plr} | "
+            f"{sharpe:.2f} |"
+        )
+        
+        with open(filepath, 'a', encoding='utf-8') as f:
+            f.write(row + '\n')
+        
+        print(f"📊 历史记录已追加: {filepath}")
 
 
 async def main():
@@ -716,6 +868,7 @@ async def main():
     engine = BacktestEngine(config)
     await engine.run(symbol=args.symbol, interval=args.interval, limit=args.limit, days=args.days)
     engine.save_report(args.symbol, args.days)
+    engine.save_history(args.symbol, args.days)
 
 
 if __name__ == "__main__":
