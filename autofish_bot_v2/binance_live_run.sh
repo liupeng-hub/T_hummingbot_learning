@@ -71,11 +71,37 @@ run_with_restart() {
     echo "============================================================"
     
     restart_count=0
+    python_pid=""
+    stopping=false
     
     cleanup() {
         echo "$(date '+%Y-%m-%d %H:%M:%S') 收到退出信号，清理中..."
+        stopping=true
+        
+        # 先停止 Python 子进程
+        if [ -n "$python_pid" ] && ps -p $python_pid > /dev/null 2>&1; then
+            echo "$(date '+%Y-%m-%d %H:%M:%S') 停止 Python 进程 (PID: $python_pid)..."
+            kill -TERM $python_pid 2>/dev/null
+            
+            # 等待 Python 进程退出
+            for i in {1..10}; do
+                if ! ps -p $python_pid > /dev/null 2>&1; then
+                    echo "$(date '+%Y-%m-%d %H:%M:%S') Python 进程已停止"
+                    break
+                fi
+                sleep 1
+            done
+            
+            # 如果还在运行，强制终止
+            if ps -p $python_pid > /dev/null 2>&1; then
+                echo "$(date '+%Y-%m-%d %H:%M:%S') Python 进程未响应，强制终止..."
+                kill -KILL $python_pid 2>/dev/null
+            fi
+        fi
+        
         rm -f "$PID_FILE"
         rm -f "$PARAMS_FILE"
+        echo "$(date '+%Y-%m-%d %H:%M:%S') 清理完成"
         exit 0
     }
     
@@ -86,9 +112,19 @@ run_with_restart() {
     while true; do
         echo "$(date '+%Y-%m-%d %H:%M:%S') 启动程序..."
         
-        python3 binance_live.py --symbol "$SYMBOL" $TESTNET $DECAY_FACTOR 2>> "$ERROR_LOG_FILE"
+        python3 binance_live.py --symbol "$SYMBOL" $TESTNET $DECAY_FACTOR 2>> "$ERROR_LOG_FILE" &
+        python_pid=$!
+        wait $python_pid
         
         EXIT_CODE=$?
+        python_pid=""
+        
+        # 如果正在停止，直接退出
+        if [ "$stopping" = true ]; then
+            echo "$(date '+%Y-%m-%d %H:%M:%S') 正在停止，退出重启循环"
+            break
+        fi
+        
         echo "$(date '+%Y-%m-%d %H:%M:%S') 程序退出，退出码: $EXIT_CODE"
         
         if [ $EXIT_CODE -eq 0 ]; then
@@ -158,9 +194,12 @@ stop_program() {
     
     echo "停止程序 (PID: $pid)..."
     
+    # 发送 SIGTERM 信号，进程组
     kill -TERM $pid 2>/dev/null
     
-    for i in {1..10}; do
+    
+    # 磭待进程退出
+    for i in {1..15}; do
         if ! ps -p $pid > /dev/null 2>&1; then
             echo "程序已停止"
             rm -f "$PID_FILE"
@@ -169,10 +208,12 @@ stop_program() {
         sleep 1
     done
     
+    # 如果进程还在运行，强制终止
     echo "程序未响应，强制终止..."
     kill -KILL $pid 2>/dev/null
     pkill -f "binance_live.py" 2>/dev/null
     pkill -f "binance_live_run.sh" 2>/dev/null
+    
     
     rm -f "$PID_FILE"
     echo "程序已强制终止"
