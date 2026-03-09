@@ -883,9 +883,11 @@ async def main():
             
             start_time = int(start_date.timestamp() * 1000)
             end_time = int(end_date.timestamp() * 1000) + 86400000 - 1  # 结束日期的 23:59:59
-            # 生成文件名用的日期范围字符串，格式: yyyymmdd-yyyymmdd
-            date_range_str = f"{start_date.strftime('%Y%m%d')}-{end_date.strftime('%Y%m%d')}"
-            logger.info(f"[时间范围] {start_date.strftime('%Y-%m-%d')} ~ {end_date.strftime('%Y-%m-%d')}")
+            # 计算天数
+            days = (end_date - start_date).days + 1
+            # 生成文件名用的日期范围字符串，格式: {days}d_yyyymmdd-yyyymmdd
+            date_range_str = f"{days}d_{start_date.strftime('%Y%m%d')}-{end_date.strftime('%Y%m%d')}"
+            logger.info(f"[时间范围] {start_date.strftime('%Y-%m-%d')} ~ {end_date.strftime('%Y-%m-%d')} ({days} 天)")
         except ValueError as e:
             logger.error(f"[时间范围] 解析失败: {e}")
     
