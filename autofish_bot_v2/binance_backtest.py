@@ -357,46 +357,96 @@ class BacktestEngine:
         self._process_entry(low_price, close_price)
         self._process_exit(open_price, high_price, low_price, close_price)
     
-    async def fetch_klines(self, symbol: str, interval: str = "1m", limit: int = 1000) -> List[dict]:
-        """获取历史 K 线数据"""
-        url = f"https://fapi.binance.com/fapi/v1/klines"
-        params = {
-            "symbol": symbol,
-            "interval": interval,
-            "limit": limit,
-        }
+    async def fetch_klines(self, symbol: str, interval: str = "1m", limit: int = 1000, days: int = None) -> List[dict]:
+        """获取历史 K 线数据
+        
+        参数:
+            symbol: 交易对
+            interval: K 线周期
+            limit: 单次获取数量（最大 1500）
+            days: 回测天数（如果指定，则分批获取足够的数据）
+        """
+        url = "https://fapi.binance.com/fapi/v1/klines"
+        
+        # 计算需要获取的总 K 线数量
+        if days:
+            interval_minutes = {
+                "1m": 1, "3m": 3, "5m": 5, "15m": 15, "30m": 30,
+                "1h": 60, "2h": 120, "4h": 240, "6h": 360, "12h": 720,
+                "1d": 1440, "3d": 4320, "1w": 10080
+            }
+            minutes = interval_minutes.get(interval, 1)
+            total_klines = int(days * 24 * 60 / minutes)
+            logger.info(f"[获取K线] 需要获取 {total_klines} 条 K 线（{days} 天，{interval} 周期）")
+        else:
+            total_klines = limit
+        
+        all_klines = []
+        end_time = None  # 从最新的数据开始获取
+        batch_size = min(limit, 1500)  # Binance API 限制每次最多 1500 条
         
         proxy = HTTPS_PROXY or HTTP_PROXY or None
-        
-        logger.info(f"[获取K线] symbol={symbol}, interval={interval}, limit={limit}, proxy={proxy}")
+        logger.info(f"[获取K线] symbol={symbol}, interval={interval}, proxy={proxy}")
         
         connector = aiohttp.TCPConnector(ssl=False)
         async with aiohttp.ClientSession(connector=connector) as session:
-            kwargs = {"params": params}
-            if proxy:
-                kwargs["proxy"] = proxy
-            
-            async with session.get(url, **kwargs) as response:
-                if response.status == 200:
-                    data = await response.json()
-                    klines = []
-                    for item in data:
-                        klines.append({
-                            "timestamp": item[0],
-                            "open": item[1],
-                            "high": item[2],
-                            "low": item[3],
-                            "close": item[4],
-                            "volume": item[5],
-                        })
-                    logger.info(f"[获取K线] 成功获取 {len(klines)} 条数据")
-                    return klines
-                else:
-                    text = await response.text()
-                    logger.error(f"[获取K线] 失败: {response.status} - {text}")
-                    return []
+            while len(all_klines) < total_klines:
+                params = {
+                    "symbol": symbol,
+                    "interval": interval,
+                    "limit": batch_size,
+                }
+                
+                if end_time:
+                    params["endTime"] = end_time
+                
+                kwargs = {"params": params}
+                if proxy:
+                    kwargs["proxy"] = proxy
+                
+                async with session.get(url, **kwargs) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        
+                        if not data:
+                            logger.info(f"[获取K线] 没有更多数据")
+                            break
+                        
+                        # 解析 K 线数据
+                        for item in data:
+                            all_klines.append({
+                                "timestamp": item[0],
+                                "open": item[1],
+                                "high": item[2],
+                                "low": item[3],
+                                "close": item[4],
+                                "volume": item[5],
+                            })
+                        
+                        # 更新 endTime 为最早一条 K 线的时间
+                        end_time = data[0][0] - 1
+                        
+                        logger.info(f"[获取K线] 已获取 {len(all_klines)} 条数据，继续获取...")
+                        
+                        if len(data) < batch_size:
+                            logger.info(f"[获取K线] 数据不足 {batch_size} 条，已获取全部可用数据")
+                            break
+                    else:
+                        text = await response.text()
+                        logger.error(f"[获取K线] 失败: {response.status} - {text}")
+                        break
+        
+        # 按时间正序排列（从早到晚）
+        all_klines.sort(key=lambda x: x["timestamp"])
+        
+        # 截取需要的数量
+        if len(all_klines) > total_klines:
+            all_klines = all_klines[-total_klines:]
+        
+        logger.info(f"[获取K线] 成功获取 {len(all_klines)} 条数据")
+        return all_klines
     
-    async def run(self, symbol: str = "BTCUSDT", interval: str = "1m", limit: int = 1000):
+    async def run(self, symbol: str = "BTCUSDT", interval: str = "1m", limit: int = 1000, days: int = None):
         """运行回测
         
         主要流程：
@@ -409,6 +459,7 @@ class BacktestEngine:
             symbol: 交易对
             interval: K线周期
             limit: K线数量
+            days: 回测天数（如果指定，则分批获取足够的数据）
         """
         self.interval = interval
         logger.info("=" * 60)
@@ -422,7 +473,10 @@ class BacktestEngine:
         print(f"\n配置:")
         print(f"  交易对: {symbol}")
         print(f"  K线周期: {interval}")
-        print(f"  数据量: {limit}")
+        if days:
+            print(f"  回测天数: {days} 天")
+        else:
+            print(f"  数据量: {limit}")
         print(f"  网格间距: {float(self.config.get('grid_spacing', Decimal('0.01')))*100}%")
         print(f"  止盈: {float(self.config.get('exit_profit', Decimal('0.01')))*100}%")
         print(f"  止损: {float(self.config.get('stop_loss', Decimal('0.08')))*100}%")
@@ -430,7 +484,7 @@ class BacktestEngine:
         print(f"  总资金: {self.config.get('total_amount_quote', 1200)} USDT")
         print(f"  最大层级: {self.config.get('max_entries', 4)}")
         
-        klines = await self.fetch_klines(symbol, interval, limit)
+        klines = await self.fetch_klines(symbol, interval, limit, days)
         
         if not klines:
             logger.error("获取 K 线数据失败")
@@ -604,6 +658,7 @@ async def main():
     parser.add_argument("--symbol", type=str, default="BTCUSDT", help="交易对 (默认: BTCUSDT)")
     parser.add_argument("--interval", type=str, default="1m", help="K线周期 (默认: 1m)")
     parser.add_argument("--limit", type=int, default=1500, help="K线数量 (默认: 1500)")
+    parser.add_argument("--days", type=int, default=None, help="回测天数 (默认: None，使用 limit 参数)")
     parser.add_argument("--decay-factor", type=float, default=0.5, help="衰减因子 (默认: 0.5，可选: 0.5/1.0)")
     parser.add_argument("--stop-loss", type=float, default=0.08, help="止损比例 (默认: 0.08)")
     parser.add_argument("--total-amount", type=float, default=10000, help="总投入金额 (默认: 10000)")
@@ -653,7 +708,7 @@ async def main():
     logger.info(f"  网格权重: {config.get('weights', [])}")
     
     engine = BacktestEngine(config)
-    await engine.run(symbol=args.symbol, interval=args.interval, limit=args.limit)
+    await engine.run(symbol=args.symbol, interval=args.interval, limit=args.limit, days=args.days)
     engine.save_report(args.symbol)
 
 

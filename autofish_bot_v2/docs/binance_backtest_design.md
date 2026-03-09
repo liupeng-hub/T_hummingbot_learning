@@ -260,23 +260,23 @@ def calculate_profit(self, order: Order, exit_price: Decimal, exit_type: str) ->
 | 参数 | 默认值 | 说明 |
 |------|--------|------|
 | --symbol | BTCUSDT | 交易对 |
-| --interval | 1h | K线周期 |
-| --limit | 500 | K线数量 |
+| --interval | 1m | K线周期 |
+| --limit | 1500 | K线数量 |
 | --decay-factor | 0.5 | 衰减因子 |
 | --stop-loss | 0.08 | 止损比例 |
-| --total-amount | 2000 | 总投入金额 |
+| --total-amount | 20000 | 总投入金额 |
 
 ### 6.2 使用示例
 
 ```bash
 # 基本用法
-python binance_backtest.py --symbol BTCUSDT --interval 1h --limit 500
+python binance_backtest.py --symbol BTCUSDT --interval 1m --limit 500
 
 # 使用保守策略
-python binance_backtest.py --symbol ETHUSDT --interval 1h --decay-factor 1.0
+python binance_backtest.py --symbol ETHUSDT --interval 1m --decay-factor 1.0
 
 # 自定义参数
-python binance_backtest.py --symbol SOLUSDT --interval 15m --limit 1000 --stop-loss 0.05
+python binance_backtest.py --symbol SOLUSDT --interval 1m --limit 1000 --stop-loss 0.05
 ```
 
 ## 七、输出文件
@@ -299,7 +299,104 @@ binance_BTCUSDT_backtest_report.md
 binance_BTCUSDT_amplitude_config.json
 ```
 
-## 八、相关文档
+## 八、回测精度问题与改进
+
+### 8.1 问题分析
+
+#### K 线数据局限性
+
+K 线只提供 OHLC 四个价格点，无法知道：
+- 价格在 K 线内的具体走势
+- High 和 Low 谁先到达
+- 价格在 K 线内的波动次数
+
+#### 同时触及止盈止损问题
+
+当一个 K 线同时触及止盈价和止损价时，回测无法准确判断触发顺序。
+
+**场景示例**：
+
+```
+假设一个 1 小时 K 线：
+- Open: 67000
+- High: 67500（触及止盈 67200）
+- Low: 66000（触及止损 66100）
+- Close: 66500
+
+问题：无法知道是先涨到 67500 还是先跌到 66000
+```
+
+#### 算法特性
+
+Autofish 是**振幅触发算法**，不是周期触发算法：
+- 订单触发取决于价格是否触及目标价位
+- 与时间周期无关
+- 需要精确的价格序列
+
+### 8.2 改进措施
+
+#### 短期改进：K 线内判断逻辑
+
+当 K 线同时触及止盈止损时，根据 K 线形态判断触发顺序：
+
+| K 线形态 | 假设价格走势 | 判断结果 |
+|----------|--------------|----------|
+| 阳线 (Close > Open) | 先跌后涨 | 止损先触发 |
+| 阴线 (Close < Open) | 先涨后跌 | 止盈先触发 |
+| 十字星 (Close ≈ Open) | 保守估计 | 止损先触发 |
+
+```python
+def _determine_exit_order(self, order, open_price, high_price, low_price, close_price):
+    """判断止盈止损触发顺序"""
+    if close_price > open_price:
+        return "stop_loss"  # 阳线：先跌后涨
+    elif close_price < open_price:
+        return "take_profit"  # 阴线：先涨后跌
+    else:
+        return "stop_loss"  # 十字星：保守估计
+```
+
+#### 中期改进：置信区间
+
+提供乐观/保守/中性三种估计：
+
+| 估计类型 | 假设 | 说明 |
+|----------|------|------|
+| 乐观估计 | 止盈先触发 | 最大化收益 |
+| 保守估计 | 止损先触发 | 最小化收益 |
+| 中性估计 | 根据 K 线形态 | 平衡估计 |
+
+#### 长期改进：Tick 级别回测
+
+使用 Binance aggTrades API 获取逐笔成交数据：
+
+| API 接口 | 说明 | 限制 |
+|----------|------|------|
+| `/api/v3/trades` | 最近成交 | 最多 1000 条 |
+| `/api/v3/historicalTrades` | 历史成交 | 需要 API Key |
+| `/api/v3/aggTrades` | 归集成交 | 时间间隔最多 1 小时 |
+
+### 8.3 K 线周期建议
+
+| 周期 | 精度 | 数据量 | 建议场景 |
+|------|------|--------|----------|
+| 1m | 高 | 大 | 推荐：精确回测 |
+| 5m | 中 | 中 | 可接受 |
+| 15m | 中低 | 中 | 谨慎使用 |
+| 1h | 低 | 小 | 不推荐：偏差较大 |
+
+**建议**：使用 1m K 线进行回测，减小单根 K 线内同时触及止盈止损的概率。
+
+### 8.4 回测报告改进
+
+新增统计指标：
+
+| 指标 | 说明 |
+|------|------|
+| 同时触及止盈止损次数 | K 线同时触及止盈止损的次数 |
+| 同时触及占比 | 同时触及次数 / 总交易次数 |
+
+## 九、相关文档
 
 - [autofish_strategy.md](./autofish_strategy.md) - 策略算法说明
 - [autofish_core_design.md](./autofish_core_design.md) - 核心模块设计

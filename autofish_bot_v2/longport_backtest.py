@@ -533,11 +533,11 @@ async def main():
     """主函数"""
     parser = argparse.ArgumentParser(description="Autofish V2 LongPort 回测")
     parser.add_argument("--symbol", type=str, default="700.HK", help="交易对 (默认: 700.HK)")
-    parser.add_argument("--interval", type=str, default="1d", help="K线周期 (默认: 1d)")
-    parser.add_argument("--count", type=int, default=200, help="K线数量 (默认: 200)")
+    parser.add_argument("--interval", type=str, default="1m", help="K线周期 (默认: 1m)")
+    parser.add_argument("--count", type=int, default=1000, help="K线数量 (默认: 1000)")
     parser.add_argument("--decay-factor", type=float, default=0.5, help="衰减因子 (默认: 0.5，可选: 0.5/1.0)")
     parser.add_argument("--stop-loss", type=float, default=0.08, help="止损比例 (默认: 0.08)")
-    parser.add_argument("--total-amount", type=float, default=1200, help="总投入金额 (默认: 1200)")
+    parser.add_argument("--total-amount", type=float, default=20000, help="总投入金额 (默认: 20000)")
     
     args = parser.parse_args()
     
