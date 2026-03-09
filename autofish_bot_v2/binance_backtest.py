@@ -426,9 +426,7 @@ class BacktestEngine:
                     "limit": batch_size,
                 }
                 
-                # 时间范围参数
-                if start_time:
-                    params["startTime"] = start_time
+                # 只设置 endTime，从后往前获取
                 if current_end_time:
                     params["endTime"] = current_end_time
                 
@@ -446,6 +444,12 @@ class BacktestEngine:
                         
                         # 解析 K 线数据
                         for item in data:
+                            kline_time = item[0]
+                            # 检查是否在时间范围内
+                            if start_time and kline_time < start_time:
+                                continue
+                            if end_time and kline_time > end_time:
+                                continue
                             all_klines.append({
                                 "timestamp": item[0],
                                 "open": item[1],
@@ -457,7 +461,7 @@ class BacktestEngine:
                         
                         # 更新 current_end_time 为最早一条 K 线的时间 - 1
                         earliest_time = data[0][0]
-                        if earliest_time <= start_time if start_time else False:
+                        if start_time and earliest_time <= start_time:
                             logger.info(f"[获取K线] 已到达开始时间")
                             break
                         
@@ -861,16 +865,24 @@ async def main():
     
     if args.date_range:
         try:
-            parts = args.date_range.split("-")
-            if len(parts) == 2:
+            # 支持两种格式: yyyymmdd-yyyymmdd 或 yyyy-mm-dd-yyyy-mm-dd
+            if args.date_range.count("-") == 1:
+                # 格式: yyyymmdd-yyyymmdd
+                parts = args.date_range.split("-")
                 start_date = datetime.strptime(parts[0], "%Y%m%d")
                 end_date = datetime.strptime(parts[1], "%Y%m%d")
-                start_time = int(start_date.timestamp() * 1000)
-                end_time = int(end_date.timestamp() * 1000) + 86400000 - 1  # 结束日期的 23:59:59
-                date_range_str = args.date_range
-                logger.info(f"[时间范围] {start_date.strftime('%Y-%m-%d')} ~ {end_date.strftime('%Y-%m-%d')}")
+            elif args.date_range.count("-") == 4:
+                # 格式: yyyy-mm-dd-yyyy-mm-dd
+                parts = args.date_range.split("-")
+                start_date = datetime.strptime(f"{parts[0]}-{parts[1]}-{parts[2]}", "%Y-%m-%d")
+                end_date = datetime.strptime(f"{parts[3]}-{parts[4]}-{parts[5]}", "%Y-%m-%d")
             else:
-                logger.error(f"[时间范围] 格式错误: {args.date_range}，应为 yyyymmdd-yyyymmdd")
+                raise ValueError(f"不支持的日期格式: {args.date_range}")
+            
+            start_time = int(start_date.timestamp() * 1000)
+            end_time = int(end_date.timestamp() * 1000) + 86400000 - 1  # 结束日期的 23:59:59
+            date_range_str = args.date_range.replace("-", "")
+            logger.info(f"[时间范围] {start_date.strftime('%Y-%m-%d')} ~ {end_date.strftime('%Y-%m-%d')}")
         except ValueError as e:
             logger.error(f"[时间范围] 解析失败: {e}")
     
