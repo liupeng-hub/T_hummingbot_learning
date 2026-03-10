@@ -377,7 +377,9 @@ class BacktestEngine:
     async def fetch_klines(self, symbol: str, interval: str = "1m", limit: int = 1000, days: int = None, start_time: int = None, end_time: int = None, auto_fetch: bool = True) -> List[dict]:
         """获取历史 K 线数据
         
-        优先从本地缓存获取，如果缓存数据不完整则自动补充缺失数据
+        流程：
+        1. 请求 binance_kline_fetcher 准备数据（检查并补齐）
+        2. 从 DB 获取数据
         
         参数:
             symbol: 交易对
@@ -392,66 +394,36 @@ class BacktestEngine:
         
         fetcher = KlineFetcher()
         
-        # 计算时间范围（如果未指定）
-        if not start_time or not end_time:
-            end_time = int(datetime.now().timestamp() * 1000)
-            if days:
-                start_time = end_time - days * 24 * 60 * 60 * 1000
-            else:
-                interval_minutes = {
-                    "1m": 1, "3m": 3, "5m": 5, "15m": 15, "30m": 30,
-                    "1h": 60, "2h": 120, "4h": 240, "6h": 360, "12h": 720,
-                    "1d": 1440, "3d": 4320, "1w": 10080
-                }
-                minutes = interval_minutes.get(interval, 1)
-                start_time = end_time - limit * minutes * 60 * 1000
+        # 1. 请求 binance_kline_fetcher 准备数据
+        success = await fetcher.ensure_klines(
+            symbol=symbol,
+            interval=interval,
+            start_time=start_time,
+            end_time=end_time,
+            days=days,
+            limit=limit,
+            auto_fetch=auto_fetch
+        )
         
-        # 检查缓存覆盖情况
-        missing_ranges = fetcher._find_missing_ranges(symbol, interval, start_time, end_time)
+        if not success:
+            logger.error("数据准备失败")
+            print(f"\n❌ 数据准备失败，请手动运行:")
+            print(f"   python binance_kline_fetcher.py --symbol {symbol} --interval {interval}")
+            return []
         
-        # 如果有缺失且启用自动获取
-        if missing_ranges and auto_fetch:
-            print(f"\n⚠️  缓存数据不完整，缺失 {len(missing_ranges)} 个时间段:")
-            for range_start, range_end in missing_ranges:
-                start_dt = datetime.fromtimestamp(range_start / 1000)
-                end_dt = datetime.fromtimestamp(range_end / 1000)
-                print(f"  - {start_dt.strftime('%Y-%m-%d')} ~ {end_dt.strftime('%Y-%m-%d')}")
-            
-            print(f"\n[自动补充] 正在获取缺失数据...")
-            
-            # 自动获取缺失数据
-            for range_start, range_end in missing_ranges:
-                try:
-                    klines = await fetcher._fetch_from_api(symbol, interval, range_start, range_end)
-                    if klines:
-                        fetcher._save_to_cache(symbol, interval, klines)
-                except Exception as e:
-                    logger.error(f"[自动补充] 获取失败: {e}")
-                    print(f"\n❌ 自动获取失败，请手动运行:")
-                    print(f"   python binance_kline_fetcher.py --symbol {symbol} --interval {interval}")
-                    return []
-            
-            print(f"\n✅ 缓存已更新")
-        
-        # 从缓存读取数据
-        klines = fetcher.query_cache(symbol, interval, start_time, end_time)
+        # 2. 从 DB 获取数据
+        actual_start, actual_end = fetcher.get_time_range()
+        klines = fetcher.query_cache(symbol, interval, actual_start, actual_end)
         
         if klines:
             logger.info(f"[获取K线] 从本地缓存获取 {len(klines)} 条数据")
             print(f"[获取K线] 从本地缓存获取 {len(klines)} 条数据")
-            return klines
-        
-        # 缓存无数据
-        if not auto_fetch:
-            logger.error(f"[获取K线] 本地缓存无数据，自动获取已禁用")
-            print(f"\n❌ 本地缓存无数据，自动获取已禁用，请手动运行:")
-            print(f"   python binance_kline_fetcher.py --symbol {symbol} --interval {interval}")
         else:
             logger.error(f"[获取K线] 本地缓存无数据")
             print(f"\n❌ 本地缓存无数据，请先运行:")
             print(f"   python binance_kline_fetcher.py --symbol {symbol} --interval {interval}")
         
-        return []
+        return klines
     
     async def run(self, symbol: str = "BTCUSDT", interval: str = "1m", limit: int = 1000, days: int = None, start_time: int = None, end_time: int = None, auto_fetch: bool = True):
         """运行回测

@@ -441,6 +441,104 @@ class KlineFetcher:
         
         return self.query_cache(symbol, interval, start_time, end_time)
     
+    def _calculate_time_range(self, interval: str, start_time: int = None, end_time: int = None,
+                               days: int = None, limit: int = None) -> Tuple[int, int]:
+        """计算时间范围
+        
+        优先级：
+        1. start_time/end_time: 直接使用
+        2. days: 从当前时间往前推 N 天
+        3. limit: 从当前时间往前推 N 条数据
+        """
+        if start_time and end_time:
+            return start_time, end_time
+        
+        end_time = int(datetime.now().timestamp() * 1000)
+        
+        if days:
+            start_time = end_time - days * 24 * 60 * 60 * 1000
+        elif limit:
+            interval_minutes = {
+                "1m": 1, "3m": 3, "5m": 5, "15m": 15, "30m": 30,
+                "1h": 60, "2h": 120, "4h": 240, "6h": 360, "12h": 720,
+                "1d": 1440, "3d": 4320, "1w": 10080
+            }
+            minutes = interval_minutes.get(interval, 1)
+            start_time = end_time - limit * minutes * 60 * 1000
+        else:
+            # 默认获取最近 1500 条
+            start_time = end_time - 1500 * 60 * 1000
+        
+        return start_time, end_time
+    
+    async def ensure_klines(self, symbol: str, interval: str,
+                            start_time: int = None, end_time: int = None,
+                            days: int = None, limit: int = None,
+                            auto_fetch: bool = True) -> bool:
+        """确保 K 线数据完整（检查并补齐）
+        
+        这个接口负责：
+        1. 计算时间范围（根据 days/limit/start_time/end_time）
+        2. 检查缓存完整性
+        3. 自动获取缺失数据
+        4. 存储到 DB
+        
+        参数:
+            symbol: 交易对
+            interval: K 线周期
+            start_time: 开始时间戳（毫秒）
+            end_time: 结束时间戳（毫秒）
+            days: 获取最近 N 天数据
+            limit: 获取最近 N 条数据
+            auto_fetch: 是否自动获取缺失数据
+        
+        返回:
+            True: 数据已准备好
+            False: 数据获取失败
+        """
+        # 1. 计算时间范围
+        self._last_start_time, self._last_end_time = self._calculate_time_range(
+            interval, start_time, end_time, days, limit
+        )
+        
+        # 2. 检查缓存
+        if not auto_fetch:
+            return True
+        
+        missing_ranges = self._find_missing_ranges(symbol, interval, self._last_start_time, self._last_end_time)
+        
+        if not missing_ranges:
+            return True
+        
+        # 3. 显示缺失信息
+        print(f"\n⚠️  缓存数据不完整，缺失 {len(missing_ranges)} 个时间段:")
+        for range_start, range_end in missing_ranges:
+            start_dt = datetime.fromtimestamp(range_start / 1000)
+            end_dt = datetime.fromtimestamp(range_end / 1000)
+            print(f"  - {start_dt.strftime('%Y-%m-%d')} ~ {end_dt.strftime('%Y-%m-%d')}")
+        
+        print(f"\n[自动补充] 正在获取缺失数据...")
+        
+        # 4. 自动获取缺失数据
+        for range_start, range_end in missing_ranges:
+            try:
+                klines = await self._fetch_from_api(symbol, interval, range_start, range_end)
+                if klines:
+                    self._save_to_cache(symbol, interval, klines)
+                else:
+                    logger.error(f"[自动补充] 获取失败: {range_start} - {range_end}")
+                    return False
+            except Exception as e:
+                logger.error(f"[自动补充] 获取失败: {e}")
+                return False
+        
+        print(f"\n✅ 缓存已更新")
+        return True
+    
+    def get_time_range(self) -> Tuple[int, int]:
+        """获取最后计算的时间范围"""
+        return getattr(self, '_last_start_time', None), getattr(self, '_last_end_time', None)
+    
     def get_cache_status(self, symbol: str = None, interval: str = None) -> Dict:
         """获取缓存状态"""
         conn = sqlite3.connect(self.db_path)
