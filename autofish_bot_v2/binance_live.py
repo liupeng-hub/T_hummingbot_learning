@@ -2023,7 +2023,16 @@ class BinanceLiveTrader:
         
         quantity = self._adjust_quantity(order.quantity, order.entry_price)
         
+        current_price = await self._get_current_price()
+        logger.info(f"[止盈止损] A{order.level} 当前价={current_price:.2f}, 止盈价={order.take_profit_price:.2f}, 止损价={order.stop_loss_price:.2f}")
+        
         if place_tp:
+            if current_price >= order.take_profit_price:
+                logger.warning(f"[止盈止损] A{order.level} 当前价 {current_price:.2f} 已超过止盈价 {order.take_profit_price:.2f}，市价止盈")
+                print(f"[{datetime.now().strftime('%H:%M:%S')}] ⚠️ A{order.level} 当前价已超过止盈价，市价止盈")
+                await self._market_close_order(order, "take_profit")
+                return
+            
             tp_trigger_price = self._adjust_price(order.take_profit_price)
             tp_result = await self.client.place_algo_order(
                 symbol=symbol,
@@ -2037,6 +2046,12 @@ class BinanceLiveTrader:
                 logger.info(f"[止盈单] A{order.level} algoId={order.tp_order_id}")
         
         if place_sl:
+            if current_price <= order.stop_loss_price:
+                logger.warning(f"[止盈止损] A{order.level} 当前价 {current_price:.2f} 已跌破止损价 {order.stop_loss_price:.2f}，市价止损")
+                print(f"[{datetime.now().strftime('%H:%M:%S')}] ⚠️ A{order.level} 当前价已跌破止损价，市价止损")
+                await self._market_close_order(order, "stop_loss")
+                return
+            
             sl_trigger_price = self._adjust_price(order.stop_loss_price)
             sl_result = await self.client.place_algo_order(
                 symbol=symbol,
