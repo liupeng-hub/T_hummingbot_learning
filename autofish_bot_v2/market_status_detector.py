@@ -549,7 +549,13 @@ class CompositeAlgorithm(StatusAlgorithm):
 
 
 class RealTimeStatusAlgorithm(StatusAlgorithm):
-    """实时市场状态判断算法"""
+    """实时市场状态判断算法
+    
+    改进版本：
+    - 增加状态持续性判断（惯性）
+    - 需要更强的信号才能切换状态
+    - 震荡状态更稳定
+    """
     
     name = "realtime"
     description = "实时市场状态判断算法（价格行为+波动率）"
@@ -563,6 +569,10 @@ class RealTimeStatusAlgorithm(StatusAlgorithm):
             'expansion_threshold': 1.5,
             'contraction_threshold': 0.7,
             'confirm_periods': 2,
+            'min_trend_signals': 4,
+            'status_inertia': True,
+            'min_trend_confidence': 0.8,
+            'min_range_duration': 5,
         }
         
         self.price_detector = PriceActionDetector(self.config)
@@ -570,6 +580,8 @@ class RealTimeStatusAlgorithm(StatusAlgorithm):
         
         self._indicators = {}
         self._status_history = []
+        self._current_status = MarketStatus.UNKNOWN
+        self._status_duration = 0
     
     def calculate(self, klines: List[Dict], config: Dict) -> StatusResult:
         if len(klines) < self.config['lookback_period']:
@@ -587,6 +599,8 @@ class RealTimeStatusAlgorithm(StatusAlgorithm):
             price_result, volatility_result
         )
         
+        status = self._apply_inertia(status, confidence)
+        
         self._status_history.append(status)
         confirmed_status = self._confirm_status()
         
@@ -601,6 +615,45 @@ class RealTimeStatusAlgorithm(StatusAlgorithm):
             indicators=self._indicators,
             reason=reason
         )
+    
+    def _apply_inertia(self, new_status: MarketStatus, confidence: float) -> MarketStatus:
+        """应用状态惯性
+        
+        状态切换需要更强的信号：
+        - 震荡 -> 趋势：需要更高的置信度和持续时间
+        - 趋势 -> 震荡：相对容易（保护资金）
+        - 趋势 -> 反向趋势：需要更强的信号
+        """
+        if not self.config.get('status_inertia', True):
+            return new_status
+        
+        if self._current_status == MarketStatus.UNKNOWN:
+            self._current_status = new_status
+            self._status_duration = 1
+            return new_status
+        
+        if new_status == self._current_status:
+            self._status_duration += 1
+            return new_status
+        
+        is_current_trending = self._current_status in [MarketStatus.TRENDING_UP, MarketStatus.TRENDING_DOWN]
+        is_new_trending = new_status in [MarketStatus.TRENDING_UP, MarketStatus.TRENDING_DOWN]
+        
+        if not is_current_trending and is_new_trending:
+            min_confidence = self.config.get('min_trend_confidence', 0.8)
+            min_duration = self.config.get('min_range_duration', 5)
+            
+            if confidence < min_confidence or self._status_duration < min_duration:
+                return self._current_status
+        
+        if is_current_trending and is_new_trending:
+            if self._current_status != new_status:
+                if confidence < 0.9:
+                    return self._current_status
+        
+        self._current_status = new_status
+        self._status_duration = 1
+        return new_status
     
     def _determine_status(self, price_result: Dict, 
                           volatility_result: Dict) -> Tuple[MarketStatus, float, str]:
@@ -630,7 +683,9 @@ class RealTimeStatusAlgorithm(StatusAlgorithm):
             range_signals += 1
             reasons.append(f"波动率收缩 ATR比率={volatility_result['atr_ratio']:.2f}")
         
-        if trend_signals >= 3:
+        min_trend_signals = self.config.get('min_trend_signals', 4)
+        
+        if trend_signals >= min_trend_signals:
             if price_result['direction'] == 'up':
                 status = MarketStatus.TRENDING_UP
             else:
@@ -653,6 +708,11 @@ class RealTimeStatusAlgorithm(StatusAlgorithm):
         
         if len(set(recent)) == 1:
             return recent[0]
+        
+        if self._current_status in [MarketStatus.TRENDING_UP, MarketStatus.TRENDING_DOWN]:
+            trending_count = sum(1 for s in recent if s in [MarketStatus.TRENDING_UP, MarketStatus.TRENDING_DOWN])
+            if trending_count >= len(recent) * 0.5:
+                return self._current_status
         
         return self._status_history[-1]
     
