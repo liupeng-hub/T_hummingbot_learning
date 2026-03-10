@@ -2652,6 +2652,9 @@ class BinanceLiveTrader:
         
         event_type = data.get("e")
         
+        # 打印收到的消息类型和内容（调试用）
+        logger.debug(f"[WebSocket] 收到消息: event_type={event_type}, data={data}")
+        
         # 如果没有事件类型，可能是其他消息，忽略
         if not event_type:
             logger.debug(f"[WebSocket] 收到无事件类型消息: {data}")
@@ -2659,6 +2662,7 @@ class BinanceLiveTrader:
         
         if event_type == "ORDER_TRADE_UPDATE":
             order_data = data.get("o", {})
+            logger.info(f"[WebSocket] ORDER_TRADE_UPDATE: {order_data}")
             if not isinstance(order_data, dict):
                 logger.warning(f"[WebSocket] ORDER_TRADE_UPDATE order_data 不是字典: {type(order_data)}, 内容: {order_data}")
                 return
@@ -2666,6 +2670,7 @@ class BinanceLiveTrader:
         
         elif event_type == "ALGO_UPDATE":
             algo_data = data.get("o", {})
+            logger.info(f"[WebSocket] ALGO_UPDATE: {algo_data}")
             if not isinstance(algo_data, dict):
                 logger.warning(f"[WebSocket] ALGO_UPDATE algo_data 不是字典: {type(algo_data)}, 内容: {algo_data}")
                 return
@@ -2674,6 +2679,9 @@ class BinanceLiveTrader:
         elif event_type == "listenKeyExpired":
             logger.warning("[WebSocket] listen key 过期")
             self.ws_connected = False
+        
+        else:
+            logger.info(f"[WebSocket] 未处理的事件类型: {event_type}, data={data}")
     
     async def _handle_order_update(self, order_data: Dict[str, Any]) -> None:
         """处理订单状态更新
