@@ -2659,10 +2659,16 @@ class BinanceLiveTrader:
         
         if event_type == "ORDER_TRADE_UPDATE":
             order_data = data.get("o", {})
+            if not isinstance(order_data, dict):
+                logger.warning(f"[WebSocket] ORDER_TRADE_UPDATE order_data 不是字典: {type(order_data)}, 内容: {order_data}")
+                return
             await self._handle_order_update(order_data)
         
         elif event_type == "ALGO_UPDATE":
             algo_data = data.get("o", {})
+            if not isinstance(algo_data, dict):
+                logger.warning(f"[WebSocket] ALGO_UPDATE algo_data 不是字典: {type(algo_data)}, 内容: {algo_data}")
+                return
             await self.algo_handler.handle_algo_update(algo_data)
         
         elif event_type == "listenKeyExpired":
