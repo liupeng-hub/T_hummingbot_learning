@@ -60,6 +60,151 @@ class StatusResult:
     reason: str                    # 判断原因
 
 
+@dataclass
+class MarketInterval:
+    """市场区间"""
+    start_time: int
+    end_time: int
+    status: MarketStatus
+    duration: int
+    price_range: Tuple[float, float]
+    indicators: Dict
+    
+    def to_dict(self) -> Dict:
+        return {
+            'start_time': datetime.fromtimestamp(self.start_time / 1000).strftime('%Y-%m-%d %H:%M'),
+            'end_time': datetime.fromtimestamp(self.end_time / 1000).strftime('%Y-%m-%d %H:%M'),
+            'status': self.status.value,
+            'duration': self.duration,
+            'price_range': self.price_range,
+        }
+
+
+class PriceActionDetector:
+    """价格行为检测器（实时性最高，滞后0-1天）"""
+    
+    def __init__(self, config: Dict = None):
+        self.config = config or {
+            'lookback_period': 20,
+            'breakout_threshold': 0.02,
+            'consecutive_bars': 3,
+        }
+    
+    def detect(self, klines: List[Dict]) -> Dict:
+        if len(klines) < self.config['lookback_period']:
+            return {'breakout': False, 'direction': None}
+        
+        recent = klines[-self.config['lookback_period']:]
+        range_high = max(float(k['high']) for k in recent)
+        range_low = min(float(k['low']) for k in recent)
+        current_price = float(klines[-1]['close'])
+        
+        breakout_up = current_price > range_high * (1 - self.config['breakout_threshold'])
+        breakout_down = current_price < range_low * (1 + self.config['breakout_threshold'])
+        
+        consecutive_up = self._count_consecutive(klines, 'up')
+        consecutive_down = self._count_consecutive(klines, 'down')
+        
+        if breakout_up or consecutive_up >= self.config['consecutive_bars']:
+            return {
+                'breakout': True,
+                'direction': 'up',
+                'consecutive': consecutive_up,
+                'range_high': range_high,
+                'range_low': range_low,
+                'current_price': current_price,
+            }
+        elif breakout_down or consecutive_down >= self.config['consecutive_bars']:
+            return {
+                'breakout': True,
+                'direction': 'down',
+                'consecutive': consecutive_down,
+                'range_high': range_high,
+                'range_low': range_low,
+                'current_price': current_price,
+            }
+        else:
+            return {
+                'breakout': False,
+                'direction': None,
+                'consecutive': max(consecutive_up, consecutive_down),
+                'range_high': range_high,
+                'range_low': range_low,
+                'current_price': current_price,
+            }
+    
+    def _count_consecutive(self, klines: List[Dict], direction: str) -> int:
+        count = 0
+        for k in reversed(klines):
+            if direction == 'up' and float(k['close']) > float(k['open']):
+                count += 1
+            elif direction == 'down' and float(k['close']) < float(k['open']):
+                count += 1
+            else:
+                break
+        return count
+
+
+class VolatilityDetector:
+    """波动率检测器（实时性高，滞后1-2天）"""
+    
+    def __init__(self, config: Dict = None):
+        self.config = config or {
+            'atr_period': 14,
+            'expansion_threshold': 1.5,
+            'contraction_threshold': 0.7,
+        }
+    
+    def detect(self, klines: List[Dict]) -> Dict:
+        if len(klines) < self.config['atr_period'] * 2:
+            return {'volatility_status': 'unknown'}
+        
+        atr = self._calculate_atr(klines, self.config['atr_period'])
+        atr_ma = self._calculate_atr_ma(klines, self.config['atr_period'] * 2)
+        atr_ratio = atr / atr_ma if atr_ma > 0 else 1.0
+        
+        if atr_ratio >= self.config['expansion_threshold']:
+            status = 'expanding'
+        elif atr_ratio <= self.config['contraction_threshold']:
+            status = 'contracting'
+        else:
+            status = 'normal'
+        
+        return {
+            'atr': atr,
+            'atr_ma': atr_ma,
+            'atr_ratio': atr_ratio,
+            'volatility_status': status,
+        }
+    
+    def _calculate_atr(self, klines: List[Dict], period: int) -> float:
+        tr_list = []
+        for i in range(1, len(klines)):
+            high = float(klines[i]['high'])
+            low = float(klines[i]['low'])
+            close_prev = float(klines[i-1]['close'])
+            
+            tr = max(
+                high - low,
+                abs(high - close_prev),
+                abs(low - close_prev)
+            )
+            tr_list.append(tr)
+        
+        if len(tr_list) < period:
+            return sum(tr_list) / len(tr_list) if tr_list else 0
+        
+        return sum(tr_list[-period:]) / period
+    
+    def _calculate_atr_ma(self, klines: List[Dict], period: int) -> float:
+        atr_list = []
+        for i in range(period, len(klines)):
+            atr = self._calculate_atr(klines[:i+1], self.config['atr_period'])
+            atr_list.append(atr)
+        
+        return sum(atr_list[-period:]) / len(atr_list) if atr_list else 0
+
+
 class StatusAlgorithm(ABC):
     """行情判断算法基类"""
     
@@ -403,40 +548,246 @@ class CompositeAlgorithm(StatusAlgorithm):
         return sum(closes) / len(closes)
 
 
+class RealTimeStatusAlgorithm(StatusAlgorithm):
+    """实时市场状态判断算法"""
+    
+    name = "realtime"
+    description = "实时市场状态判断算法（价格行为+波动率）"
+    
+    def __init__(self, config: Dict = None):
+        self.config = config or {
+            'lookback_period': 20,
+            'breakout_threshold': 0.02,
+            'consecutive_bars': 3,
+            'atr_period': 14,
+            'expansion_threshold': 1.5,
+            'contraction_threshold': 0.7,
+            'confirm_periods': 2,
+        }
+        
+        self.price_detector = PriceActionDetector(self.config)
+        self.volatility_detector = VolatilityDetector(self.config)
+        
+        self._indicators = {}
+        self._status_history = []
+    
+    def calculate(self, klines: List[Dict], config: Dict) -> StatusResult:
+        if len(klines) < self.config['lookback_period']:
+            return StatusResult(
+                status=MarketStatus.UNKNOWN,
+                confidence=0.0,
+                indicators={},
+                reason="K线数据不足"
+            )
+        
+        price_result = self.price_detector.detect(klines)
+        volatility_result = self.volatility_detector.detect(klines)
+        
+        status, confidence, reason = self._determine_status(
+            price_result, volatility_result
+        )
+        
+        self._status_history.append(status)
+        confirmed_status = self._confirm_status()
+        
+        self._indicators = {
+            'price_action': price_result,
+            'volatility': volatility_result,
+        }
+        
+        return StatusResult(
+            status=confirmed_status,
+            confidence=confidence,
+            indicators=self._indicators,
+            reason=reason
+        )
+    
+    def _determine_status(self, price_result: Dict, 
+                          volatility_result: Dict) -> Tuple[MarketStatus, float, str]:
+        reasons = []
+        trend_signals = 0
+        range_signals = 0
+        
+        if price_result['breakout']:
+            if price_result['direction'] == 'up':
+                trend_signals += 3
+                reasons.append(f"向上突破区间 {price_result['range_high']:.2f}")
+            else:
+                trend_signals += 3
+                reasons.append(f"向下突破区间 {price_result['range_low']:.2f}")
+        else:
+            range_signals += 2
+            reasons.append("价格在区间内")
+        
+        if price_result['consecutive'] >= self.config['consecutive_bars']:
+            trend_signals += 1
+            reasons.append(f"连续{price_result['consecutive']}根同向K线")
+        
+        if volatility_result['volatility_status'] == 'expanding':
+            trend_signals += 1
+            reasons.append(f"波动率扩张 ATR比率={volatility_result['atr_ratio']:.2f}")
+        elif volatility_result['volatility_status'] == 'contracting':
+            range_signals += 1
+            reasons.append(f"波动率收缩 ATR比率={volatility_result['atr_ratio']:.2f}")
+        
+        if trend_signals >= 3:
+            if price_result['direction'] == 'up':
+                status = MarketStatus.TRENDING_UP
+            else:
+                status = MarketStatus.TRENDING_DOWN
+            confidence = min(1.0, trend_signals / 5)
+        elif range_signals >= 2:
+            status = MarketStatus.RANGING
+            confidence = min(1.0, range_signals / 3)
+        else:
+            status = MarketStatus.TRANSITIONING
+            confidence = 0.5
+        
+        return status, confidence, ", ".join(reasons)
+    
+    def _confirm_status(self) -> MarketStatus:
+        if len(self._status_history) < self.config['confirm_periods']:
+            return self._status_history[-1] if self._status_history else MarketStatus.UNKNOWN
+        
+        recent = self._status_history[-self.config['confirm_periods']:]
+        
+        if len(set(recent)) == 1:
+            return recent[0]
+        
+        return self._status_history[-1]
+    
+    def get_required_periods(self) -> int:
+        return max(
+            self.config['lookback_period'],
+            self.config['atr_period'] * 2
+        )
+    
+    def get_indicators(self) -> Dict:
+        return self._indicators
+
+
+class IntervalAnalyzer:
+    """区间分析器"""
+    
+    def __init__(self):
+        self.intervals: List[MarketInterval] = []
+        self._current_interval = None
+    
+    def update(self, timestamp: int, price: float, status: MarketStatus, indicators: Dict):
+        if self._current_interval is None:
+            self._current_interval = MarketInterval(
+                start_time=timestamp,
+                end_time=timestamp,
+                status=status,
+                duration=1,
+                price_range=(price, price),
+                indicators=indicators,
+            )
+        elif status == self._current_interval.status:
+            self._current_interval.end_time = timestamp
+            self._current_interval.duration += 1
+            low, high = self._current_interval.price_range
+            self._current_interval.price_range = (min(low, price), max(high, price))
+        else:
+            self.intervals.append(self._current_interval)
+            self._current_interval = MarketInterval(
+                start_time=timestamp,
+                end_time=timestamp,
+                status=status,
+                duration=1,
+                price_range=(price, price),
+                indicators=indicators,
+            )
+    
+    def get_intervals(self) -> List[Dict]:
+        result = [i.to_dict() for i in self.intervals]
+        if self._current_interval:
+            result.append(self._current_interval.to_dict())
+        return result
+    
+    def get_current_interval(self) -> Optional[MarketInterval]:
+        return self._current_interval
+
+
+class StrategySwitcher:
+    """策略切换决策器"""
+    
+    def __init__(self, config: Dict = None):
+        self.config = config or {
+            'min_interval_duration': 3,
+            'switch_threshold': 0.6,
+        }
+        
+        self._current_strategy = 'ranging'
+        self._switch_history = []
+    
+    def should_switch(self, status: MarketStatus, confidence: float, 
+                      duration: int) -> Tuple[bool, str]:
+        if duration < self.config['min_interval_duration']:
+            return False, self._current_strategy
+        
+        if confidence < self.config['switch_threshold']:
+            return False, self._current_strategy
+        
+        if status == MarketStatus.RANGING:
+            target_strategy = 'ranging'
+        elif status in [MarketStatus.TRENDING_UP, MarketStatus.TRENDING_DOWN]:
+            target_strategy = 'trending'
+        else:
+            return False, self._current_strategy
+        
+        if target_strategy != self._current_strategy:
+            self._switch_history.append({
+                'from': self._current_strategy,
+                'to': target_strategy,
+                'status': status.value,
+                'confidence': confidence,
+            })
+            self._current_strategy = target_strategy
+            return True, target_strategy
+        
+        return False, self._current_strategy
+    
+    def get_current_strategy(self) -> str:
+        return self._current_strategy
+    
+    def get_switch_history(self) -> List[Dict]:
+        return self._switch_history
+
+
 class MarketStatusDetector:
     """市场行情判断器"""
     
     ALGORITHMS = {
+        'realtime': RealTimeStatusAlgorithm,
         'adx': ADXAlgorithm,
         'composite': CompositeAlgorithm,
     }
     
     def __init__(self, algorithm: StatusAlgorithm = None, config: Dict = None):
-        """
-        初始化
-        
-        参数:
-            algorithm: 行情判断算法（默认使用组合算法）
-            config: 配置参数
-        """
-        self.algorithm = algorithm or CompositeAlgorithm(config)
+        self.algorithm = algorithm or RealTimeStatusAlgorithm(config)
         self.config = config or {}
         
-        # 状态
         self._current_status = MarketStatus.UNKNOWN
         self._history: List[Dict] = []
         self._klines: List[Dict] = []
+        
+        self.interval_analyzer = IntervalAnalyzer()
+        self.strategy_switcher = StrategySwitcher(config)
     
     def set_algorithm(self, algorithm: StatusAlgorithm):
         """设置算法（支持运行时替换）"""
         self.algorithm = algorithm
         self._history = []
+        self.interval_analyzer = IntervalAnalyzer()
+        self.strategy_switcher = StrategySwitcher(self.config)
     
     async def analyze(self, symbol: str, interval: str = "1m",
                       start_time: int = None, end_time: int = None,
                       days: int = None, limit: int = None) -> Dict:
-        """分析指定范围的行情"""
         from binance_kline_fetcher import KlineFetcher
+        
+        self._interval = interval
         
         fetcher = KlineFetcher()
         success = await fetcher.ensure_klines(
@@ -458,15 +809,23 @@ class MarketStatusDetector:
         if not klines:
             raise Exception("K 线数据为空")
         
-        # 分析行情
         results = []
         required_periods = self.algorithm.get_required_periods()
+        
+        self.interval_analyzer = IntervalAnalyzer()
         
         print(f"[分析] K线数量: {len(klines)}, 最小需求: {required_periods}")
         
         for i in range(required_periods, len(klines)):
             window = klines[:i+1]
             result = self.algorithm.calculate(window, self.config)
+            
+            self.interval_analyzer.update(
+                klines[i]['timestamp'],
+                float(klines[i]['close']),
+                result.status,
+                result.indicators
+            )
             
             results.append({
                 'timestamp': klines[i]['timestamp'],
@@ -478,10 +837,8 @@ class MarketStatusDetector:
                 'reason': result.reason,
             })
         
-        # 统计分析
         stats = self._calculate_statistics(results)
         
-        # 保存结果
         self._history = results
         self._klines = klines
         self._start_time = actual_start
@@ -495,37 +852,63 @@ class MarketStatusDetector:
             'total_klines': len(klines),
             'total_results': len(results),
             'statistics': stats,
+            'intervals': self.interval_analyzer.get_intervals(),
             'results': results,
         }
     
-    def update(self, kline: Dict) -> MarketStatus:
-        """实时更新行情判断（用于实盘）"""
+    def update(self, kline: Dict) -> Dict:
         self._klines.append(kline)
         
-        # 保持足够的 K 线数量
         required = self.algorithm.get_required_periods()
         if len(self._klines) > required * 2:
             self._klines = self._klines[-required * 2:]
         
         if len(self._klines) < required:
-            return MarketStatus.UNKNOWN
+            return {'status': MarketStatus.UNKNOWN, 'should_switch': False}
         
         result = self.algorithm.calculate(self._klines, self.config)
         self._current_status = result.status
         
-        return self._current_status
+        self.interval_analyzer.update(
+            kline['timestamp'],
+            float(kline['close']),
+            result.status,
+            result.indicators
+        )
+        
+        current_interval = self.interval_analyzer.get_current_interval()
+        should_switch, target_strategy = self.strategy_switcher.should_switch(
+            result.status,
+            result.confidence,
+            current_interval.duration if current_interval else 0
+        )
+        
+        return {
+            'status': result.status,
+            'confidence': result.confidence,
+            'reason': result.reason,
+            'should_switch': should_switch,
+            'target_strategy': target_strategy,
+            'current_strategy': self.strategy_switcher.get_current_strategy(),
+        }
     
     def get_status(self) -> MarketStatus:
-        """获取当前市场状态"""
         return self._current_status
     
     def should_trade(self) -> bool:
-        """是否应该交易（震荡行情时允许交易）"""
         return self._current_status == MarketStatus.RANGING
     
     def get_indicators(self) -> Dict:
-        """获取当前指标值"""
         return self.algorithm.get_indicators()
+    
+    def get_current_strategy(self) -> str:
+        return self.strategy_switcher.get_current_strategy()
+    
+    def get_intervals(self) -> List[Dict]:
+        return self.interval_analyzer.get_intervals()
+    
+    def get_switch_history(self) -> List[Dict]:
+        return self.strategy_switcher.get_switch_history()
     
     def _calculate_statistics(self, results: List[Dict]) -> Dict:
         """计算统计数据"""
@@ -546,25 +929,31 @@ class MarketStatusDetector:
             'transitioning_pct': statuses.count(MarketStatus.TRANSITIONING) / len(statuses) * 100,
         }
     
-    def save_report(self, symbol: str, days: int = None, date_range_str: str = None):
-        """保存行情分析报告"""
-        # 生成文件名
+    def save_report(self, symbol: str, interval: str = None, days: int = None, date_range_str: str = None):
+        interval = interval or getattr(self, '_interval', '1m')
+        
         if date_range_str:
-            filename = f"binance_{symbol}_market_report_{date_range_str}.md"
+            filename = f"binance_{symbol}_market_report_{interval}_{date_range_str}.md"
         elif days:
-            filename = f"binance_{symbol}_market_report_{days}d.md"
+            filename = f"binance_{symbol}_market_report_{interval}_{days}d.md"
         else:
-            filename = f"binance_{symbol}_market_report.md"
+            filename = f"binance_{symbol}_market_report_{interval}.md"
         
         output_dir = "autofish_output"
         os.makedirs(output_dir, exist_ok=True)
         filepath = os.path.join(output_dir, filename)
         
-        # 生成报告内容
         stats = self._calculate_statistics(self._history)
         
         start_time_str = datetime.fromtimestamp(self._start_time / 1000).strftime('%Y-%m-%d')
         end_time_str = datetime.fromtimestamp(self._end_time / 1000).strftime('%Y-%m-%d')
+        
+        intervals = self.get_intervals()
+        intervals_content = ""
+        if intervals:
+            intervals_content = "\n## 区间划分\n\n| 开始时间 | 结束时间 | 状态 | 持续K线数 |\n|----------|----------|------|----------|\n"
+            for interval_item in intervals:
+                intervals_content += f"| {interval_item['start_time']} | {interval_item['end_time']} | {interval_item['status']} | {interval_item['duration']} |\n"
         
         content = f"""# {symbol} 市场行情分析报告
 
@@ -573,7 +962,8 @@ class MarketStatusDetector:
 | 项目 | 值 |
 |------|-----|
 | 交易对 | {symbol} |
-| 分析周期 | {days}天 / {date_range_str or '-'} |
+| K线周期 | {interval} |
+| 分析天数 | {days or '-'} |
 | 时间范围 | {start_time_str} ~ {end_time_str} |
 | K线数量 | {len(self._klines)} |
 | 分析算法 | {self.algorithm.name} |
@@ -586,25 +976,24 @@ class MarketStatusDetector:
 | 上涨趋势 | {stats.get('trending_up_count', 0)} | {stats.get('trending_up_pct', 0):.2f}% |
 | 下跌趋势 | {stats.get('trending_down_count', 0)} | {stats.get('trending_down_pct', 0):.2f}% |
 | 过渡状态 | {stats.get('transitioning_count', 0)} | {stats.get('transitioning_pct', 0):.2f}% |
-
+{intervals_content}
 ## 行情时间线
 
 """
-        # 添加行情变化时间线
         prev_status = None
         for r in self._history:
             if r['status'] != prev_status:
                 content += f"- {r['time'].strftime('%Y-%m-%d %H:%M')}: {r['status'].value} ({r['reason']})\n"
                 prev_status = r['status']
         
-        # 保存文件
         with open(filepath, 'w', encoding='utf-8') as f:
             f.write(content)
         
         print(f"📄 行情报告已保存: {filepath}")
     
-    def save_history(self, symbol: str, days: int = None, date_range_str: str = None):
-        """追加历史记录"""
+    def save_history(self, symbol: str, interval: str = None, days: int = None, date_range_str: str = None):
+        interval = interval or getattr(self, '_interval', '1m')
+        
         filename = f"binance_{symbol}_market_history.md"
         output_dir = "autofish_output"
         os.makedirs(output_dir, exist_ok=True)
@@ -614,19 +1003,16 @@ class MarketStatusDetector:
         now = datetime.now().strftime('%Y-%m-%d %H:%M')
         time_range = date_range_str or f"{days}d"
         
-        # 检查文件是否存在
         if not os.path.exists(filepath):
-            # 创建新文件
             header = f"""# {symbol} 市场行情分析历史记录
 
-| 分析时间 | 时间范围 | 天数 | 震荡占比 | 上涨占比 | 下跌占比 | 算法 |
-|----------|----------|------|----------|----------|----------|------|
+| 分析时间 | K线周期 | 时间范围 | 天数 | 震荡占比 | 上涨占比 | 下跌占比 | 算法 |
+|----------|---------|----------|------|----------|----------|----------|------|
 """
             with open(filepath, 'w', encoding='utf-8') as f:
                 f.write(header)
         
-        # 追加内容
-        content = f"| {now} | {time_range} | {days or '-'} | {stats.get('ranging_pct', 0):.1f}% | {stats.get('trending_up_pct', 0):.1f}% | {stats.get('trending_down_pct', 0):.1f}% | {self.algorithm.name} |\n"
+        content = f"| {now} | {interval} | {time_range} | {days or '-'} | {stats.get('ranging_pct', 0):.1f}% | {stats.get('trending_up_pct', 0):.1f}% | {stats.get('trending_down_pct', 0):.1f}% | {self.algorithm.name} |\n"
         
         with open(filepath, 'a', encoding='utf-8') as f:
             f.write(content)
@@ -635,28 +1021,26 @@ class MarketStatusDetector:
 
 
 async def main():
-    """主函数"""
     parser = argparse.ArgumentParser(description="市场行情判断器")
     parser.add_argument("--symbol", type=str, default="BTCUSDT", help="交易对 (默认: BTCUSDT)")
     parser.add_argument("--interval", type=str, default="1m", help="K线周期 (默认: 1m)")
     parser.add_argument("--days", type=int, default=None, help="分析天数")
     parser.add_argument("--date-range", type=str, default=None, help="时间范围 (格式: yyyymmdd-yyyymmdd)")
-    parser.add_argument("--algorithm", type=str, default="composite", 
-                        choices=['adx', 'composite'], help="算法 (默认: composite)")
+    parser.add_argument("--algorithm", type=str, default="realtime", 
+                        choices=['realtime', 'adx', 'composite'], help="算法 (默认: realtime)")
     parser.add_argument("--adx-threshold", type=int, default=25, help="ADX 阈值 (默认: 25)")
     
     args = parser.parse_args()
     
-    # 创建算法
-    if args.algorithm == 'adx':
+    if args.algorithm == 'realtime':
+        algorithm = RealTimeStatusAlgorithm()
+    elif args.algorithm == 'adx':
         algorithm = ADXAlgorithm(threshold=args.adx_threshold)
     else:
         algorithm = CompositeAlgorithm()
     
-    # 创建判断器
     detector = MarketStatusDetector(algorithm=algorithm)
     
-    # 解析时间范围
     start_time = None
     end_time = None
     date_range_str = None
@@ -687,7 +1071,6 @@ async def main():
     print(f"  算法: {args.algorithm}")
     print(f"{'='*60}")
     
-    # 分析行情
     try:
         result = await detector.analyze(
             symbol=args.symbol,
@@ -697,7 +1080,6 @@ async def main():
             days=args.days
         )
         
-        # 打印统计
         stats = result['statistics']
         print(f"\n📈 行情统计:")
         print(f"  震荡行情: {stats['ranging_pct']:.1f}% ({stats['ranging_count']} 次)")
@@ -705,13 +1087,45 @@ async def main():
         print(f"  下跌趋势: {stats['trending_down_pct']:.1f}% ({stats['trending_down_count']} 次)")
         print(f"  过渡状态: {stats['transitioning_pct']:.1f}% ({stats['transitioning_count']} 次)")
         
-        # 保存报告
+        intervals = result.get('intervals', [])
+        if intervals:
+            print(f"\n📊 区间划分 ({len(intervals)} 个区间):")
+            for i, interval in enumerate(intervals[:10]):
+                print(f"  {i+1}. {interval['start_time']} ~ {interval['end_time']}: {interval['status']} ({interval['duration']} 根K线)")
+            if len(intervals) > 10:
+                print(f"  ... 还有 {len(intervals) - 10} 个区间")
+        
         detector.save_report(args.symbol, days, date_range_str)
         detector.save_history(args.symbol, days, date_range_str)
         
     except Exception as e:
         logger.error(f"[分析] 失败: {e}")
         raise
+
+
+REALTIME_PRIORITY_CONFIG = {
+    'lookback_period': 15,
+    'breakout_threshold': 0.015,
+    'consecutive_bars': 2,
+    'atr_period': 10,
+    'expansion_threshold': 1.3,
+    'contraction_threshold': 0.8,
+    'confirm_periods': 1,
+    'min_interval_duration': 2,
+    'switch_threshold': 0.5,
+}
+
+RELIABILITY_PRIORITY_CONFIG = {
+    'lookback_period': 20,
+    'breakout_threshold': 0.02,
+    'consecutive_bars': 3,
+    'atr_period': 14,
+    'expansion_threshold': 1.5,
+    'contraction_threshold': 0.7,
+    'confirm_periods': 2,
+    'min_interval_duration': 3,
+    'switch_threshold': 0.6,
+}
 
 
 if __name__ == "__main__":

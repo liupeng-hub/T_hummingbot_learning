@@ -1,97 +1,71 @@
-# 市场状态判断器设计规格
+# 实时市场状态切换算法设计规格
 
 ## 1. 需求分析
 
 ### 1.1 核心需求
 
-| 需求 | 说明 | 优先级 |
-|------|------|--------|
-| **实时性** | 状态切换不能太延后 | ⭐⭐⭐⭐⭐ |
-| **区间划分** | 明确划分震荡区间和趋势区间 | ⭐⭐⭐⭐ |
-| **策略切换** | 根据状态切换震荡算法和趋势算法 | ⭐⭐⭐⭐ |
-| **算法可替换** | 支持不同算法替换，便于后续扩展 | ⭐⭐⭐ |
-| **报告生成** | 生成行情分析报告和历史记录 | ⭐⭐⭐ |
+| 需求 | 说明 |
+|------|------|
+| **实时性** | 状态切换不能太延后 |
+| **区间划分** | 明确划分震荡区间和趋势区间 |
+| **策略切换** | 根据状态切换震荡算法和趋势算法 |
 
-### 1.2 关键问题：EMA均线的滞后性
+### 1.2 关键问题
 
-| EMA周期 | 滞后天数（约） | 对策略切换的影响 |
-|---------|---------------|------------------|
-| EMA7 | 3-4天 | 趋势判断延迟3-4天 |
-| EMA25 | 12-13天 | 趋势判断延迟12-13天 |
-| EMA99 | 50天 | 不可接受 |
-| EMA200 | 100天 | 不可接受 |
+**EMA均线的滞后性问题**：
+- EMA200 滞后约100天
+- EMA99 滞后约50天
+- 即使EMA7也滞后约3-4天
 
-**结论**：EMA均线不适合作为主要判断指标，只能作为辅助确认。
+**对于策略切换来说，这个延迟太大了！**
 
 ## 2. 解决方案
 
 ### 2.1 方案对比
 
-| 方案 | 实时性 | 可靠性 | 适用性 | 推荐 |
-|------|--------|--------|--------|------|
-| **EMA均线** | ⭐⭐ | ⭐⭐⭐⭐ | 不适合（滞后太大） | ❌ |
-| **价格突破** | ⭐⭐⭐⭐⭐ | ⭐⭐⭐ | 适合（实时性好） | ✅ |
-| **波动率变化** | ⭐⭐⭐⭐ | ⭐⭐⭐⭐ | 适合（实时性好） | ✅ |
-| **ADX** | ⭐⭐⭐ | ⭐⭐⭐⭐ | 辅助确认 | ⚠️ |
-| **组合方案** | ⭐⭐⭐⭐ | ⭐⭐⭐⭐ | **推荐** | ✅ |
+| 方案 | 实时性 | 可靠性 | 适用性 |
+|------|--------|--------|--------|
+| **EMA均线** | ⭐⭐ | ⭐⭐⭐⭐ | 不适合（滞后太大） |
+| **价格突破** | ⭐⭐⭐⭐⭐ | ⭐⭐⭐ | 适合（实时性好） |
+| **波动率变化** | ⭐⭐⭐⭐ | ⭐⭐⭐⭐ | 适合（实时性好） |
+| **组合方案** | ⭐⭐⭐⭐ | ⭐⭐⭐⭐ | **推荐** |
 
 ### 2.2 推荐方案：价格行为 + 波动率组合
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                    市场状态判断器                                 │
+│                    实时市场状态判断器                             │
 ├─────────────────────────────────────────────────────────────────┤
 │  ┌─────────────────────────────────────────────────────────┐    │
-│  │ 第一层：价格行为判断（实时性最高，滞后0-1天）               │    │
+│  │ 第一层：价格行为判断（实时性最高）                          │    │
 │  │  - 价格突破近期高低点                                      │    │
 │  │  - 连续阳线/阴线                                          │    │
 │  │  - 价格形态                                               │    │
 │  └─────────────────────────────────────────────────────────┘    │
 │                              ↓                                   │
 │  ┌─────────────────────────────────────────────────────────┐    │
-│  │ 第二层：波动率判断（实时性高，滞后1-2天）                   │    │
+│  │ 第二层：波动率判断（实时性高）                              │    │
 │  │  - ATR 变化率                                             │    │
 │  │  - 价格波动幅度                                            │    │
 │  │  - 波动率扩张/收缩                                         │    │
 │  └─────────────────────────────────────────────────────────┘    │
 │                              ↓                                   │
 │  ┌─────────────────────────────────────────────────────────┐    │
-│  │ 第三层：趋势确认（可靠性高，滞后3-5天）                     │    │
-│  │  - 短期EMA（EMA7、EMA25）仅用于确认                        │    │
-│  │  - ADX（仅用于确认）                                       │    │
+│  │ 第三层：趋势确认（可靠性高）                                │    │
+│  │  - 短期EMA（EMA7、EMA25）                                  │    │
+│  │  - ADX                                                    │    │
 │  │  - 成交量变化                                              │    │
 │  └─────────────────────────────────────────────────────────┘    │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-### 2.3 实时性对比
-
-| 指标 | EMA均线方案 | **推荐方案** |
-|------|-------------|--------------|
-| **价格突破检测** | 滞后3-100天 | **实时（当天）** |
-| **波动率变化** | 滞后14-28天 | **滞后1-2天** |
-| **状态切换延迟** | 5-10天 | **1-3天** |
-| **可靠性** | 高 | 中高 |
-
 ## 3. 核心算法设计
 
-### 3.1 市场状态枚举
-
-```python
-class MarketStatus(Enum):
-    """市场状态"""
-    RANGING = "ranging"              # 震荡行情
-    TRENDING_UP = "trending_up"      # 上涨趋势
-    TRENDING_DOWN = "trending_down"  # 下跌趋势
-    TRANSITIONING = "transitioning"  # 过渡状态
-    UNKNOWN = "unknown"              # 未知状态
-```
-
-### 3.2 价格行为检测器（实时性最高）
+### 3.1 价格行为判断（实时性最高）
 
 ```python
 class PriceActionDetector:
-    """价格行为检测器（实时性最高，滞后0-1天）"""
+    """价格行为检测器（实时性最高）"""
     
     def __init__(self, config: Dict = None):
         self.config = config or {
@@ -121,6 +95,7 @@ class PriceActionDetector:
         recent = klines[-self.config['lookback_period']:]
         range_high = max(float(k['high']) for k in recent)
         range_low = min(float(k['low']) for k in recent)
+        range_size = range_high - range_low
         
         # 2. 当前价格
         current_price = float(klines[-1]['close'])
@@ -175,11 +150,11 @@ class PriceActionDetector:
         return count
 ```
 
-### 3.3 波动率检测器（实时性高）
+### 3.2 波动率判断（实时性高）
 
 ```python
 class VolatilityDetector:
-    """波动率检测器（实时性高，滞后1-2天）"""
+    """波动率检测器"""
     
     def __init__(self, config: Dict = None):
         self.config = config or {
@@ -187,6 +162,8 @@ class VolatilityDetector:
             'expansion_threshold': 1.5,  # ATR扩张阈值
             'contraction_threshold': 0.7, # ATR收缩阈值
         }
+        
+        self._atr_history = []
     
     def detect(self, klines: List[Dict]) -> Dict:
         """
@@ -257,7 +234,7 @@ class VolatilityDetector:
         return sum(atr_list[-period:]) / len(atr_list) if atr_list else 0
 ```
 
-### 3.4 组合判断算法
+### 3.3 组合判断算法
 
 ```python
 class RealTimeStatusAlgorithm(StatusAlgorithm):
@@ -279,14 +256,14 @@ class RealTimeStatusAlgorithm(StatusAlgorithm):
             'contraction_threshold': 0.7,
             
             # 确认参数
-            'confirm_periods': 2,  # 确认周期数（减少延迟）
+            'confirm_periods': 2,  # 确认周期数
         }
         
         self.price_detector = PriceActionDetector(self.config)
         self.volatility_detector = VolatilityDetector(self.config)
         
         self._indicators = {}
-        self._status_history = []
+        self._status_history = []  # 状态历史
     
     def calculate(self, klines: List[Dict], config: Dict) -> StatusResult:
         """计算市场状态"""
@@ -298,7 +275,7 @@ class RealTimeStatusAlgorithm(StatusAlgorithm):
                 reason="K线数据不足"
             )
         
-        # 1. 价格行为判断（权重最高）
+        # 1. 价格行为判断
         price_result = self.price_detector.detect(klines)
         
         # 2. 波动率判断
@@ -309,7 +286,7 @@ class RealTimeStatusAlgorithm(StatusAlgorithm):
             price_result, volatility_result
         )
         
-        # 4. 状态确认（减少确认周期以降低延迟）
+        # 4. 状态确认（需要连续N周期一致）
         self._status_history.append(status)
         confirmed_status = self._confirm_status()
         
@@ -317,6 +294,7 @@ class RealTimeStatusAlgorithm(StatusAlgorithm):
         self._indicators = {
             'price_action': price_result,
             'volatility': volatility_result,
+            'status_history': [s.value for s in self._status_history[-5:]],
         }
         
         return StatusResult(
@@ -333,16 +311,16 @@ class RealTimeStatusAlgorithm(StatusAlgorithm):
         trend_signals = 0
         range_signals = 0
         
-        # 1. 价格突破信号（权重最高）
+        # 1. 价格突破信号
         if price_result['breakout']:
             if price_result['direction'] == 'up':
-                trend_signals += 3  # 提高权重
+                trend_signals += 2
                 reasons.append(f"向上突破区间 {price_result['range_high']:.2f}")
             else:
-                trend_signals += 3
+                trend_signals += 2
                 reasons.append(f"向下突破区间 {price_result['range_low']:.2f}")
         else:
-            range_signals += 2
+            range_signals += 1
             reasons.append("价格在区间内")
         
         # 2. 连续K线信号
@@ -364,7 +342,7 @@ class RealTimeStatusAlgorithm(StatusAlgorithm):
                 status = MarketStatus.TRENDING_UP
             else:
                 status = MarketStatus.TRENDING_DOWN
-            confidence = min(1.0, trend_signals / 5)
+            confidence = min(1.0, trend_signals / 4)
         elif range_signals >= 2:
             status = MarketStatus.RANGING
             confidence = min(1.0, range_signals / 3)
@@ -375,7 +353,7 @@ class RealTimeStatusAlgorithm(StatusAlgorithm):
         return status, confidence, ", ".join(reasons)
     
     def _confirm_status(self) -> MarketStatus:
-        """确认状态（减少确认周期以降低延迟）"""
+        """确认状态（需要连续N周期一致）"""
         if len(self._status_history) < self.config['confirm_periods']:
             return self._status_history[-1] if self._status_history else MarketStatus.UNKNOWN
         
@@ -398,7 +376,7 @@ class RealTimeStatusAlgorithm(StatusAlgorithm):
         return self._indicators
 ```
 
-## 4. 区间划分
+## 4. 区间划分输出
 
 ### 4.1 区间数据结构
 
@@ -420,6 +398,7 @@ class MarketInterval:
             'status': self.status.value,
             'duration': self.duration,
             'price_range': self.price_range,
+            'indicators': self.indicators,
         }
 ```
 
@@ -436,6 +415,7 @@ class IntervalAnalyzer:
     def update(self, timestamp: int, price: float, status: MarketStatus, indicators: Dict):
         """更新区间"""
         if self._current_interval is None:
+            # 开始新区间
             self._current_interval = MarketInterval(
                 start_time=timestamp,
                 end_time=timestamp,
@@ -445,11 +425,13 @@ class IntervalAnalyzer:
                 indicators=indicators,
             )
         elif status == self._current_interval.status:
+            # 继续当前区间
             self._current_interval.end_time = timestamp
             self._current_interval.duration += 1
             low, high = self._current_interval.price_range
             self._current_interval.price_range = (min(low, price), max(high, price))
         else:
+            # 状态变化，保存当前区间，开始新区间
             self.intervals.append(self._current_interval)
             self._current_interval = MarketInterval(
                 start_time=timestamp,
@@ -466,9 +448,39 @@ class IntervalAnalyzer:
         if self._current_interval:
             result.append(self._current_interval.to_dict())
         return result
+    
+    def get_statistics(self) -> Dict:
+        """获取区间统计"""
+        all_intervals = self.intervals + ([self._current_interval] if self._current_interval else [])
+        
+        if not all_intervals:
+            return {}
+        
+        ranging = [i for i in all_intervals if i.status == MarketStatus.RANGING]
+        trending_up = [i for i in all_intervals if i.status == MarketStatus.TRENDING_UP]
+        trending_down = [i for i in all_intervals if i.status == MarketStatus.TRENDING_DOWN]
+        
+        return {
+            'total_intervals': len(all_intervals),
+            'ranging': {
+                'count': len(ranging),
+                'avg_duration': sum(i.duration for i in ranging) / len(ranging) if ranging else 0,
+                'total_duration': sum(i.duration for i in ranging),
+            },
+            'trending_up': {
+                'count': len(trending_up),
+                'avg_duration': sum(i.duration for i in trending_up) / len(trending_up) if trending_up else 0,
+                'total_duration': sum(i.duration for i in trending_up),
+            },
+            'trending_down': {
+                'count': len(trending_down),
+                'avg_duration': sum(i.duration for i in trending_down) / len(trending_down) if trending_down else 0,
+                'total_duration': sum(i.duration for i in trending_down),
+            },
+        }
 ```
 
-## 5. 策略切换
+## 5. 策略切换接口
 
 ### 5.1 切换决策器
 
@@ -478,21 +490,25 @@ class StrategySwitcher:
     
     def __init__(self, config: Dict = None):
         self.config = config or {
-            'min_interval_duration': 3,  # 最小区间持续时间（减少延迟）
-            'switch_threshold': 0.6,     # 切换置信度阈值（降低阈值）
+            'min_interval_duration': 5,  # 最小区间持续时间
+            'switch_threshold': 0.7,     # 切换置信度阈值
         }
         
-        self._current_strategy = 'ranging'
+        self._current_strategy = 'ranging'  # 当前策略
         self._switch_history = []
     
     def should_switch(self, status: MarketStatus, confidence: float, 
                       duration: int) -> Tuple[bool, str]:
-        """判断是否应该切换策略"""
-        # 1. 持续时间检查（减少最小持续时间）
+        """
+        判断是否应该切换策略
+        
+        返回: (是否切换, 目标策略)
+        """
+        # 1. 持续时间检查
         if duration < self.config['min_interval_duration']:
             return False, self._current_strategy
         
-        # 2. 置信度检查（降低阈值）
+        # 2. 置信度检查
         if confidence < self.config['switch_threshold']:
             return False, self._current_strategy
         
@@ -506,6 +522,7 @@ class StrategySwitcher:
         
         # 4. 判断是否需要切换
         if target_strategy != self._current_strategy:
+            # 记录切换
             self._switch_history.append({
                 'from': self._current_strategy,
                 'to': target_strategy,
@@ -518,112 +535,49 @@ class StrategySwitcher:
         return False, self._current_strategy
     
     def get_current_strategy(self) -> str:
+        """获取当前策略"""
         return self._current_strategy
+    
+    def get_switch_history(self) -> List[Dict]:
+        """获取切换历史"""
+        return self._switch_history
 ```
 
-## 6. 完整架构
-
-### 6.1 整体架构
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                      MarketStatusDetector                        │
-├─────────────────────────────────────────────────────────────────┤
-│  ┌─────────────────────────────────────────────────────────┐    │
-│  │ 算法插件系统 (支持替换)                                    │    │
-│  │  - RealTimeStatusAlgorithm: 实时判断算法（默认）           │    │
-│  │  - CompositeAlgorithm: 组合算法（备用）                   │    │
-│  │  - 自定义算法: 用户可扩展                                  │    │
-│  └─────────────────────────────────────────────────────────┘    │
-│                              ↓                                   │
-│  ┌─────────────────────────────────────────────────────────┐    │
-│  │ 区间分析器                                                │    │
-│  │  - 记录震荡/趋势区间                                       │    │
-│  │  - 统计区间持续时间                                        │    │
-│  └─────────────────────────────────────────────────────────┘    │
-│                              ↓                                   │
-│  ┌─────────────────────────────────────────────────────────┐    │
-│  │ 策略切换器                                                │    │
-│  │  - 判断是否需要切换策略                                    │    │
-│  │  - 记录切换历史                                            │    │
-│  └─────────────────────────────────────────────────────────┘    │
-│                              ↓                                   │
-│  ┌─────────────────────────────────────────────────────────┐    │
-│  │ 报告生成模块                                              │    │
-│  │  - 生成行情分析报告                                        │    │
-│  │  - 追加历史记录                                            │    │
-│  └─────────────────────────────────────────────────────────┘    │
-└─────────────────────────────────────────────────────────────────┘
-```
-
-### 6.2 主类设计
+## 6. 完整集成示例
 
 ```python
-class MarketStatusDetector:
-    """市场行情判断器"""
+class RealTimeMarketAnalyzer:
+    """实时市场分析器"""
     
-    ALGORITHMS = {
-        'realtime': RealTimeStatusAlgorithm,    # 默认（实时性高）
-        'composite': CompositeAlgorithm,        # 备用（可靠性高）
-    }
-    
-    def __init__(self, algorithm: StatusAlgorithm = None, config: Dict = None):
-        self.algorithm = algorithm or RealTimeStatusAlgorithm(config)
-        self.config = config or {}
-        
-        self._current_status = MarketStatus.UNKNOWN
-        self._history: List[Dict] = []
-        self._klines: List[Dict] = []
-        
+    def __init__(self, config: Dict = None):
+        self.algorithm = RealTimeStatusAlgorithm(config)
         self.interval_analyzer = IntervalAnalyzer()
         self.strategy_switcher = StrategySwitcher(config)
-    
-    async def analyze(self, symbol: str, interval: str = "1m",
-                      start_time: int = None, end_time: int = None,
-                      days: int = None, limit: int = None) -> Dict:
-        """分析指定范围的行情"""
-        # ... 获取K线数据 ...
         
-        # 分析行情
-        results = []
-        for i in range(required_periods, len(klines)):
-            window = klines[:i+1]
-            result = self.algorithm.calculate(window, self.config)
-            
-            # 更新区间分析
-            self.interval_analyzer.update(
-                klines[i]['timestamp'],
-                float(klines[i]['close']),
-                result.status,
-                result.indicators
-            )
-            
-            results.append({
-                'timestamp': klines[i]['timestamp'],
-                'status': result.status,
-                'confidence': result.confidence,
-                'reason': result.reason,
-            })
-        
-        return {
-            'symbol': symbol,
-            'intervals': self.interval_analyzer.get_intervals(),
-            'results': results,
-        }
+        self._klines = []
     
     def update(self, kline: Dict) -> Dict:
-        """实时更新行情判断（用于实盘）"""
+        """
+        更新市场分析
+        
+        返回:
+        {
+            'status': MarketStatus,
+            'confidence': float,
+            'should_switch': bool,
+            'target_strategy': str,
+            'interval': MarketInterval,
+        }
+        """
         self._klines.append(kline)
         
+        # 保持足够的K线数量
         required = self.algorithm.get_required_periods()
         if len(self._klines) > required * 2:
             self._klines = self._klines[-required * 2:]
         
-        if len(self._klines) < required:
-            return {'status': MarketStatus.UNKNOWN, 'should_switch': False}
-        
         # 1. 计算市场状态
-        result = self.algorithm.calculate(self._klines, self.config)
+        result = self.algorithm.calculate(self._klines, {})
         
         # 2. 更新区间分析
         self.interval_analyzer.update(
@@ -648,126 +602,42 @@ class MarketStatusDetector:
             'should_switch': should_switch,
             'target_strategy': target_strategy,
             'current_strategy': self.strategy_switcher.get_current_strategy(),
+            'interval': current_interval.to_dict() if current_interval else None,
         }
-    
-    def should_trade(self) -> bool:
-        """是否应该交易（震荡行情时允许交易）"""
-        return self._current_status == MarketStatus.RANGING
 ```
 
-## 7. 使用示例
+## 7. 实时性对比
 
-### 7.1 回测使用
-
-```python
-# 创建判断器
-detector = MarketStatusDetector()
-
-# 分析行情
-result = await detector.analyze(
-    symbol="BTCUSDT",
-    interval="1d",
-    days=365
-)
-
-# 查看区间划分
-for interval in result['intervals']:
-    print(f"{interval['status']}: {interval['start_time']} ~ {interval['end_time']}, 持续 {interval['duration']} 根K线")
-```
-
-### 7.2 实盘使用
-
-```python
-# 创建判断器
-detector = MarketStatusDetector()
-
-# 在主循环中
-async def main_loop():
-    while True:
-        # 获取最新K线
-        kline = await get_latest_kline(symbol)
-        
-        # 更新判断
-        result = detector.update(kline)
-        
-        # 判断是否需要切换策略
-        if result['should_switch']:
-            print(f"策略切换: {result['current_strategy']} -> {result['target_strategy']}")
-            if result['target_strategy'] == 'ranging':
-                start_ranging_strategy()
-            else:
-                start_trending_strategy()
-        
-        await asyncio.sleep(60)
-```
+| 指标 | EMA均线方案 | 实时方案 |
+|------|-------------|----------|
+| **价格突破检测** | 滞后3-100天 | 实时（当天） |
+| **波动率变化** | 滞后14-28天 | 滞后1-2天 |
+| **状态切换延迟** | 5-10天 | 1-3天 |
+| **可靠性** | 高 | 中高 |
 
 ## 8. 实施步骤
 
-### 步骤 1：更新 market_status_detector.py
+### 步骤 1：实现核心算法
 
-1. 添加 `PriceActionDetector` 类
-2. 添加 `VolatilityDetector` 类
-3. 添加 `RealTimeStatusAlgorithm` 类
-4. 添加 `IntervalAnalyzer` 类
-5. 添加 `StrategySwitcher` 类
-6. 更新 `MarketStatusDetector` 类
+创建 `realtime_status_detector.py`：
+- `PriceActionDetector` 类
+- `VolatilityDetector` 类
+- `RealTimeStatusAlgorithm` 类
 
-### 步骤 2：测试验证
+### 步骤 2：实现区间分析
 
-1. 测试价格突破检测
-2. 测试波动率检测
-3. 测试区间划分
-4. 测试策略切换
+创建 `interval_analyzer.py`：
+- `MarketInterval` 数据类
+- `IntervalAnalyzer` 类
 
-### 步骤 3：集成到回测和实盘
+### 步骤 3：实现策略切换
 
-1. 集成到 `binance_backtest.py`
-2. 集成到 `autofish_bot.py`
+创建 `strategy_switcher.py`：
+- `StrategySwitcher` 类
+- `RealTimeMarketAnalyzer` 类
 
-## 9. 关键参数配置
+### 步骤 4：集成测试
 
-### 9.1 实时性优先配置
-
-```python
-REALTIME_PRIORITY_CONFIG = {
-    # 价格行为参数
-    'lookback_period': 15,        # 减少回看周期
-    'breakout_threshold': 0.015,  # 降低突破阈值
-    'consecutive_bars': 2,        # 减少连续K线要求
-    
-    # 波动率参数
-    'atr_period': 10,             # 减少ATR周期
-    'expansion_threshold': 1.3,   # 降低扩张阈值
-    'contraction_threshold': 0.8, # 提高收缩阈值
-    
-    # 确认参数
-    'confirm_periods': 1,         # 减少确认周期
-    
-    # 切换参数
-    'min_interval_duration': 2,   # 减少最小持续时间
-    'switch_threshold': 0.5,      # 降低切换阈值
-}
-```
-
-### 9.2 可靠性优先配置
-
-```python
-RELIABILITY_PRIORITY_CONFIG = {
-    # 价格行为参数
-    'lookback_period': 20,
-    'breakout_threshold': 0.02,
-    'consecutive_bars': 3,
-    
-    # 波动率参数
-    'atr_period': 14,
-    'expansion_threshold': 1.5,
-    'contraction_threshold': 0.7,
-    
-    # 确认参数
-    'confirm_periods': 2,
-    
-    # 切换参数
-    'min_interval_duration': 3,
-    'switch_threshold': 0.6,
-}
-```
+1. 回测验证
+2. 实盘模拟
+3. 参数优化
