@@ -1148,13 +1148,27 @@ class AlgoHandler:
         self.trader = trader
     
     async def handle_algo_update(self, algo_data: Dict[str, Any]) -> None:
-        outer_algo_id = algo_data.get("g") or algo_data.get("algoId")
-        outer_status = algo_data.get("X") or algo_data.get("algoStatus")
+        logger.info(f"[Algo事件] 收到消息: {algo_data}")
         
+        # Binance ALGO_UPDATE 消息格式：
+        # - aid: algoId（直接在顶层）
+        # - X: 状态（直接在顶层）
+        # - o: 订单类型（字符串，如 'TAKE_PROFIT_MARKET'）
+        # 有时候 o 是嵌套字典，需要兼容处理
+        
+        algo_id = algo_data.get("aid") or algo_data.get("g") or algo_data.get("algoId")
+        algo_status = algo_data.get("X") or algo_data.get("algoStatus")
+        
+        # 处理 o 字段：可能是字符串（订单类型）或字典（嵌套数据）
         inner_data = algo_data.get("o", {})
-        algo_id = inner_data.get("aid") or outer_algo_id
-        algo_status = inner_data.get("X") or outer_status
-        algo_type = inner_data.get("o") or algo_data.get("orderType")
+        if isinstance(inner_data, dict):
+            # 嵌套格式
+            algo_id = inner_data.get("aid") or algo_id
+            algo_status = inner_data.get("X") or algo_status
+            algo_type = inner_data.get("o") or algo_data.get("orderType")
+        else:
+            # 扁平格式，o 是订单类型字符串
+            algo_type = inner_data or algo_data.get("orderType")
         
         if not algo_id:
             logger.warning(f"[Algo事件] 数据格式异常: {algo_data}")
@@ -1167,7 +1181,13 @@ class AlgoHandler:
         
         logger.info(f"[Algo事件] algoId={algo_id}, status={algo_status}, orderType={algo_type}")
         
-        if algo_status in ["FINISHED", "finished"]:
+        if algo_status in ["TRIGGERING", "triggering"]:
+            # 止盈/止损触发中
+            if algo_type == "TAKE_PROFIT_MARKET":
+                await self._handle_take_profit(order, algo_data)
+            elif algo_type == "STOP_MARKET":
+                await self._handle_stop_loss(order, algo_data)
+        elif algo_status in ["FINISHED", "finished"]:
             await self._handle_finished(order, algo_data, algo_id, algo_type)
         elif algo_status in ["CANCELED", "canceled"]:
             await self._handle_canceled(order, algo_id, algo_type)
