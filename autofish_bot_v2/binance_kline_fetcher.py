@@ -295,11 +295,11 @@ class KlineFetcher:
             "1d": 1440, "3d": 4320, "1w": 10080
         }
         minutes = interval_minutes.get(interval, 1)
-        total_klines = int((end_time - start_time) / (1000 * 60 * minutes))
+        total_klines = max(1, int((end_time - start_time) / (1000 * 60 * minutes)))
         
         # 计算预计 API 请求次数
         batch_size = 1500
-        estimated_requests = (total_klines + batch_size - 1) // batch_size
+        estimated_requests = max(1, (total_klines + batch_size - 1) // batch_size)
         
         logger.info(f"[获取K线] {symbol} {interval}: 需要 {total_klines} 条，预计 {estimated_requests} 次 API 请求")
         print(f"[获取K线] {symbol} {interval}: 需要 {total_klines} 条，预计 {estimated_requests} 次 API 请求")
@@ -312,7 +312,7 @@ class KlineFetcher:
         
         connector = aiohttp.TCPConnector(ssl=False)
         async with aiohttp.ClientSession(connector=connector) as session:
-            while len(all_klines) < total_klines:
+            while True:  # 改为无限循环，通过 break 条件退出
                 request_count += 1
                 
                 params = {
@@ -367,6 +367,7 @@ class KlineFetcher:
                     logger.info(f"[获取K线] 没有更多数据")
                     break
                 
+                # 先添加数据到 all_klines
                 for item in data:
                     kline_time = item[0]
                     if kline_time < start_time:
@@ -384,13 +385,13 @@ class KlineFetcher:
                 
                 earliest_time = data[0][0]
                 if earliest_time <= start_time:
-                    logger.info(f"[获取K线] 已到达开始时间")
+                    logger.info(f"[获取K线] 已到达开始时间，共获取 {len(all_klines)} 条数据")
                     break
                 
                 current_end_time = earliest_time - 1
                 
                 # 显示进度
-                progress = min(100, int(len(all_klines) / total_klines * 100))
+                progress = min(100, int(len(all_klines) / max(1, total_klines) * 100)) if total_klines > 0 else 100
                 remaining_requests = estimated_requests - request_count
                 logger.info(f"[获取K线] 已获取 {len(all_klines)} 条 ({progress}%)，剩余 {remaining_requests} 次请求")
                 print(f"[获取K线] 进度: {progress}% | 已获取 {len(all_klines)} 条 | 剩余 {remaining_requests} 次请求")
@@ -523,11 +524,15 @@ class KlineFetcher:
         for range_start, range_end in missing_ranges:
             try:
                 klines = await self._fetch_from_api(symbol, interval, range_start, range_end)
+                # 即使获取到 0 条数据也保存（可能数据已存在于缓存中）
                 if klines:
                     self._save_to_cache(symbol, interval, klines)
+                    logger.info(f"[自动补充] 获取成功: {len(klines)} 条")
                 else:
-                    logger.error(f"[自动补充] 获取失败: {range_start} - {range_end}")
-                    return False
+                    # 获取到 0 条数据，检查缓存中是否已有该时间段的数据
+                    cached = self.query_cache(symbol, interval, range_start, range_end)
+                    if not cached:
+                        logger.warning(f"[自动补充] 未获取到数据，且缓存中也没有: {range_start} - {range_end}")
             except Exception as e:
                 logger.error(f"[自动补充] 获取失败: {e}")
                 return False
