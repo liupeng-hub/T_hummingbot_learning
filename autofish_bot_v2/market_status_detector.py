@@ -548,6 +548,27 @@ class CompositeAlgorithm(StatusAlgorithm):
         return sum(closes) / len(closes)
 
 
+class AlwaysRangingAlgorithm(StatusAlgorithm):
+    """始终返回震荡行情的算法
+    
+    用于与原 binance_backtest 的测试结果对比
+    """
+    
+    name = "always_ranging"
+    description = "始终返回震荡行情（用于对比测试）"
+    
+    def calculate(self, klines: List[Dict], config: Dict) -> StatusResult:
+        return StatusResult(
+            status=MarketStatus.RANGING,
+            confidence=1.0,
+            indicators={},
+            reason="始终震荡模式（对比测试）"
+        )
+    
+    def get_required_periods(self) -> int:
+        return 1
+
+
 class RealTimeStatusAlgorithm(StatusAlgorithm):
     """实时市场状态判断算法
     
@@ -822,6 +843,7 @@ class MarketStatusDetector:
         'realtime': RealTimeStatusAlgorithm,
         'adx': ADXAlgorithm,
         'composite': CompositeAlgorithm,
+        'always_ranging': AlwaysRangingAlgorithm,
     }
     
     def __init__(self, algorithm: StatusAlgorithm = None, config: Dict = None):
@@ -1087,7 +1109,7 @@ async def main():
     parser.add_argument("--days", type=int, default=None, help="分析天数")
     parser.add_argument("--date-range", type=str, default=None, help="时间范围 (格式: yyyymmdd-yyyymmdd)")
     parser.add_argument("--algorithm", type=str, default="realtime", 
-                        choices=['realtime', 'adx', 'composite'], help="算法 (默认: realtime)")
+                        choices=['realtime', 'adx', 'composite', 'always_ranging'], help="算法 (默认: realtime)")
     parser.add_argument("--adx-threshold", type=int, default=25, help="ADX 阈值 (默认: 25)")
     
     args = parser.parse_args()
@@ -1096,6 +1118,8 @@ async def main():
         algorithm = RealTimeStatusAlgorithm()
     elif args.algorithm == 'adx':
         algorithm = ADXAlgorithm(threshold=args.adx_threshold)
+    elif args.algorithm == 'always_ranging':
+        algorithm = AlwaysRangingAlgorithm()
     else:
         algorithm = CompositeAlgorithm()
     

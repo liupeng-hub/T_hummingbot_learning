@@ -24,6 +24,7 @@ from market_status_detector import (
     MarketStatus,
     MarketStatusDetector,
     RealTimeStatusAlgorithm,
+    AlwaysRangingAlgorithm,
     StatusAlgorithm,
 )
 from autofish_core import Autofish_Order
@@ -149,6 +150,8 @@ class MarketAwareBacktestEngine(BacktestEngine):
                 'contraction_threshold': 0.7,
                 'confirm_periods': self.market_config.get('confirm_periods', 2),
             })
+        elif algo_name == 'always_ranging':
+            return AlwaysRangingAlgorithm()
         else:
             from market_status_detector import ADXAlgorithm, CompositeAlgorithm
             if algo_name == 'adx':
@@ -702,8 +705,8 @@ class MarketAwareBacktestEngine(BacktestEngine):
             header = [
                 f"# {symbol} 行情感知回测历史记录",
                 "",
-                "| 回测时间 | 日期范围 | 天数 | 交易次数 | 胜率 | 收益率 | 标的涨跌 | 超额收益 | 交易时间占比 |",
-                "|----------|----------|------|----------|------|--------|----------|----------|--------------|",
+                "| 回测时间 | 日期范围 | 天数 | 交易次数 | 胜率 | 收益率 | 标的涨跌 | 超额收益 | 交易时间占比 | 行情策略 |",
+                "|----------|----------|------|----------|------|--------|----------|----------|--------------|----------|",
             ]
             with open(filepath, 'w', encoding='utf-8') as f:
                 f.write('\n'.join(header) + '\n')
@@ -717,10 +720,12 @@ class MarketAwareBacktestEngine(BacktestEngine):
         
         days_str = str(calculated_days) if calculated_days else "-"
         
+        algorithm = self.market_config.get('algorithm', 'realtime')
+        
         row = (
             f"| {datetime.now().strftime('%Y-%m-%d %H:%M')} | {date_range_str} | {days_str} | "
             f"{self.results['total_trades']} | {win_rate:.1f}% | {roi:.2f}% | "
-            f"{price_change:.2f}% | {excess_return:.2f}% | {market_stats.get('trading_pct', 0):.1f}% |"
+            f"{price_change:.2f}% | {excess_return:.2f}% | {market_stats.get('trading_pct', 0):.1f}% | {algorithm} |"
         )
         
         with open(filepath, 'a', encoding='utf-8') as f:
@@ -742,7 +747,8 @@ async def main():
     parser.add_argument("--total-amount", type=float, default=10000, help="总投入金额")
     parser.add_argument("--market-aware", action="store_true", help="启用行情感知")
     parser.add_argument("--market-interval", type=str, default="1d", help="行情判断周期")
-    parser.add_argument("--market-algorithm", type=str, default="realtime", help="行情判断算法")
+    parser.add_argument("--market-algorithm", type=str, default="realtime", 
+                        help="行情判断算法 (realtime/adx/composite/always_ranging)")
     parser.add_argument("--no-auto-fetch", action="store_true", help="禁用自动获取")
     
     args = parser.parse_args()
