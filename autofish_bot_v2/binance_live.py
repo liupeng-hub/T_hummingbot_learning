@@ -2469,10 +2469,29 @@ class BinanceLiveTrader:
                 quantity=float(quantity)
             )
             
+            filled_price = Decimal(str(result.get("avgPrice", order.entry_price)))
             order.state = "closed"
             order.close_reason = reason
-            logger.info(f"[市价平仓] A{order.level} 成功: orderId={result.get('orderId')}")
-            print(f"[{datetime.now().strftime('%H:%M:%S')}] 📤 A{order.level} 市价平仓成功")
+            order.closed_at = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            order.close_price = filled_price
+            
+            if reason == "take_profit":
+                profit = (filled_price - order.entry_price) * order.quantity
+            else:
+                profit = (filled_price - order.entry_price) * order.quantity
+            order.profit = profit
+            
+            logger.info(f"[市价平仓] A{order.level} 成功: orderId={result.get('orderId')}, 成交价={filled_price:.2f}, 盈亏={profit:.2f}")
+            print(f"[{datetime.now().strftime('%H:%M:%S')}] 📤 A{order.level} 市价平仓成功, 成交价={filled_price:.2f}")
+            
+            if reason == "take_profit":
+                notify_take_profit(order, profit, self.config)
+            else:
+                notify_stop_loss(order, profit, self.config)
+            
+            await self._cancel_next_level_and_restart(order)
+            
+            self._adjust_order_levels()
             
             self._save_state()
             
@@ -2545,26 +2564,59 @@ class BinanceLiveTrader:
                     
                     current_price = await self._get_current_price()
                     
-                    # 发送启动通知
                     notify_startup(self.config, current_price)
                     
-                    # 预检查资金是否充足
                     if not await self._check_fund_sufficiency():
                         await self.client.close()
                         return
                     
-                    need_new_order = await self._restore_orders(current_price)
+                    listen_key = await self.client.create_listen_key()
+                    ws_url = f"{self.client.ws_url}/{listen_key}"
                     
-                    # 处理入场单补充
-                    await self._handle_entry_supplement(current_price, need_new_order)
+                    session = await self.client._get_session()
                     
-                    self.consecutive_errors = 0
+                    ws_kwargs = {}
+                    if self.client.proxy:
+                        ws_kwargs["proxy"] = self.client.proxy
                     
-                    await self._ws_loop()
-                    
-                    if not self.running:
-                        await self._handle_exit("用户停止")
-                        break
+                    async with session.ws_connect(ws_url, **ws_kwargs) as ws:
+                        self.ws = ws
+                        self.ws_connected = True
+                        
+                        logger.info("[WebSocket] 连接成功")
+                        print(f"[{datetime.now().strftime('%H:%M:%S')}] 🔗 WebSocket 连接成功")
+                        
+                        need_new_order = await self._restore_orders(current_price)
+                        
+                        await self._handle_entry_supplement(current_price, need_new_order)
+                        
+                        self.consecutive_errors = 0
+                        
+                        keepalive_task = asyncio.create_task(self._keepalive_loop())
+                        
+                        try:
+                            while self.running:
+                                try:
+                                    msg = await asyncio.wait_for(ws.receive(), timeout=1.0)
+                                    
+                                    if msg.type == aiohttp.WSMsgType.TEXT:
+                                        data = json.loads(msg.data)
+                                        await self._handle_ws_message(data)
+                                    elif msg.type == aiohttp.WSMsgType.ERROR:
+                                        logger.error(f"[WebSocket] 错误: {ws.exception()}")
+                                        break
+                                    elif msg.type in [aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.CLOSING]:
+                                        logger.info("[WebSocket] 连接关闭")
+                                        break
+                                except asyncio.TimeoutError:
+                                    continue
+                        finally:
+                            keepalive_task.cancel()
+                            self.ws_connected = False
+                        
+                        if not self.running:
+                            await self._handle_exit("用户停止")
+                            break
                         
                 except KeyboardInterrupt:
                     logger.info("[运行] 收到 KeyboardInterrupt")
@@ -2704,12 +2756,8 @@ class BinanceLiveTrader:
             await self._handle_order_update(order_data)
         
         elif event_type == "ALGO_UPDATE":
-            algo_data = data.get("o", {})
-            logger.info(f"[WebSocket] ALGO_UPDATE: {algo_data}")
-            if not isinstance(algo_data, dict):
-                logger.warning(f"[WebSocket] ALGO_UPDATE algo_data 不是字典: {type(algo_data)}, 内容: {algo_data}")
-                return
-            await self.algo_handler.handle_algo_update(algo_data)
+            logger.info(f"[WebSocket] ALGO_UPDATE: {data}")
+            await self.algo_handler.handle_algo_update(data)
         
         elif event_type == "listenKeyExpired":
             logger.warning("[WebSocket] listen key 过期")
@@ -2753,6 +2801,10 @@ class BinanceLiveTrader:
             filled_price: 成交价格
             is_recovery: 是否为状态恢复时的处理
         """
+        if order.state == "closed":
+            logger.info(f"[状态恢复] A{order.level} 已是 closed 状态，跳过处理")
+            return
+        
         if is_recovery:
             logger.info(f"[状态恢复] A{order.level} 检测到成交，执行后续处理")
             print(f"   ⚡ A{order.level} 检测到成交，执行后续处理")
