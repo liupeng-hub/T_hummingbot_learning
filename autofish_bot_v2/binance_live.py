@@ -2556,6 +2556,7 @@ class BinanceLiveTrader:
         
         self.consecutive_errors = 0
         self.max_consecutive_errors = 5
+        self._startup_notified = False
         
         try:
             while self.running:
@@ -2564,7 +2565,9 @@ class BinanceLiveTrader:
                     
                     current_price = await self._get_current_price()
                     
-                    notify_startup(self.config, current_price)
+                    if not self._startup_notified:
+                        notify_startup(self.config, current_price)
+                        self._startup_notified = True
                     
                     if not await self._check_fund_sufficiency():
                         await self.client.close()
