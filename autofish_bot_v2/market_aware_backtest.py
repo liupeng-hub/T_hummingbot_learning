@@ -25,6 +25,7 @@ from market_status_detector import (
     MarketStatusDetector,
     RealTimeStatusAlgorithm,
     AlwaysRangingAlgorithm,
+    ImprovedStatusAlgorithm,
     StatusAlgorithm,
 )
 from autofish_core import Autofish_Order
@@ -138,7 +139,7 @@ class MarketAwareBacktestEngine(BacktestEngine):
         
     def _create_algorithm(self) -> StatusAlgorithm:
         """创建行情判断算法"""
-        algo_name = self.market_config.get('algorithm', 'realtime')
+        algo_name = self.market_config.get('algorithm', 'always_ranging')
         
         if algo_name == 'realtime':
             return RealTimeStatusAlgorithm({
@@ -152,6 +153,23 @@ class MarketAwareBacktestEngine(BacktestEngine):
             })
         elif algo_name == 'always_ranging':
             return AlwaysRangingAlgorithm()
+        elif algo_name == 'improved':
+            return ImprovedStatusAlgorithm({
+                'lookback_period': self.market_config.get('lookback_period', 60),
+                'min_range_duration': self.market_config.get('min_range_duration', 10),
+                'max_range_pct': self.market_config.get('max_range_pct', 0.15),
+                'breakout_threshold': self.market_config.get('breakout_threshold', 0.03),
+                'swing_window': self.market_config.get('swing_window', 5),
+                'merge_threshold': self.market_config.get('merge_threshold', 0.03),
+                'min_touches': self.market_config.get('min_touches', 3),
+            })
+        elif algo_name == 'dual_thrust':
+            from market_status_detector import DualThrustAlgorithm
+            return DualThrustAlgorithm({
+                'n_days': self.market_config.get('n_days', 4),
+                'k1': self.market_config.get('k1', 0.4),
+                'k2': self.market_config.get('k2', 0.4),
+            })
         else:
             from market_status_detector import ADXAlgorithm, CompositeAlgorithm
             if algo_name == 'adx':
@@ -473,9 +491,12 @@ class MarketAwareBacktestEngine(BacktestEngine):
         
         self.klines_history = klines_1m[:30] if len(klines_1m) >= 30 else klines_1m
         
-        if len(klines_1d) >= self.market_config.get('min_market_klines', 20):
+        required_periods = self.market_detector.algorithm.get_required_periods()
+        min_klines = max(required_periods, self.market_config.get('min_market_klines', 20))
+        
+        if len(klines_1d) >= min_klines:
             initial_result = self.market_detector.algorithm.calculate(
-                klines_1d[:self.market_config.get('min_market_klines', 20)],
+                klines_1d[:min_klines],
                 self.market_config
             )
             self.current_market_status = initial_result.status
@@ -493,7 +514,7 @@ class MarketAwareBacktestEngine(BacktestEngine):
             first_order = self._create_order(1, first_price, self.klines_history)
             self.chain_state.orders.append(first_order)
             print(f"\n📋 创建首个订单: A1 入场价={first_order.entry_price:.2f}")
-            self._start_trading_period(self.start_time, MarketStatus.UNKNOWN)
+            self._start_trading_period(self.start_time, MarketStatus.RANGING)
         
         print(f"\n⏳ 开始回测...")
         
@@ -747,9 +768,15 @@ async def main():
     parser.add_argument("--total-amount", type=float, default=10000, help="总投入金额")
     parser.add_argument("--market-aware", action="store_true", help="启用行情感知")
     parser.add_argument("--market-interval", type=str, default="1d", help="行情判断周期")
-    parser.add_argument("--market-algorithm", type=str, default="realtime", 
-                        help="行情判断算法 (realtime/adx/composite/always_ranging)")
+    parser.add_argument("--market-algorithm", type=str, default="always_ranging", 
+                        help="行情判断算法 (realtime/adx/composite/always_ranging/improved/dual_thrust)")
     parser.add_argument("--no-auto-fetch", action="store_true", help="禁用自动获取")
+    parser.add_argument("--n-days", type=int, default=4, help="Dual Thrust 参数: 回看天数")
+    parser.add_argument("--k1", type=float, default=0.4, help="Dual Thrust 参数: 上轨系数")
+    parser.add_argument("--k2", type=float, default=0.4, help="Dual Thrust 参数: 下轨系数")
+    parser.add_argument("--k2-down-factor", type=float, default=0.8, help="Dual Thrust 增强参数: 下跌敏感系数")
+    parser.add_argument("--down-confirm-days", type=int, default=2, help="Dual Thrust 增强参数: 下跌确认天数")
+    parser.add_argument("--cooldown-days", type=int, default=1, help="Dual Thrust 增强参数: 状态切换冷却期")
     
     args = parser.parse_args()
     
@@ -824,6 +851,12 @@ async def main():
         'min_market_klines': 20,
         'confirm_periods': 2,
         'close_on_trending': True,
+        'n_days': args.n_days,
+        'k1': args.k1,
+        'k2': args.k2,
+        'k2_down_factor': args.k2_down_factor,
+        'down_confirm_days': args.down_confirm_days,
+        'cooldown_days': args.cooldown_days,
     }
     
     if date_ranges:

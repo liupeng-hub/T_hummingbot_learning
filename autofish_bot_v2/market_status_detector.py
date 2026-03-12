@@ -205,6 +205,153 @@ class VolatilityDetector:
         return sum(atr_list[-period:]) / len(atr_list) if atr_list else 0
 
 
+class SupportResistanceDetector:
+    """支撑阻力位检测器
+    
+    通过识别局部高低点并聚类，找出关键支撑阻力位
+    """
+    
+    def __init__(self, config: Dict = None):
+        self.config = config or {
+            'lookback_period': 60,
+            'swing_window': 5,
+            'merge_threshold': 0.03,
+            'min_touches': 3,
+        }
+    
+    def detect(self, klines: List[Dict]) -> Dict:
+        if len(klines) < self.config['lookback_period']:
+            return {'support': [], 'resistance': [], 'is_ranging': False}
+        
+        recent = klines[-self.config['lookback_period']:]
+        
+        swing_highs = self._find_swing_highs(recent, self.config['swing_window'])
+        swing_lows = self._find_swing_lows(recent, self.config['swing_window'])
+        
+        resistance_levels = self._cluster_levels(swing_highs)
+        support_levels = self._cluster_levels(swing_lows)
+        
+        if resistance_levels and support_levels:
+            range_width = (resistance_levels[0] - support_levels[0]) / support_levels[0]
+            is_ranging = range_width < 0.20
+        else:
+            range_width = None
+            is_ranging = False
+        
+        return {
+            'resistance': resistance_levels,
+            'support': support_levels,
+            'range_width': range_width,
+            'is_ranging': is_ranging,
+        }
+    
+    def _find_swing_highs(self, klines: List[Dict], window: int) -> List[float]:
+        highs = []
+        for i in range(window, len(klines) - window):
+            is_high = True
+            for j in range(i - window, i + window + 1):
+                if float(klines[j]['high']) > float(klines[i]['high']):
+                    is_high = False
+                    break
+            if is_high:
+                highs.append(float(klines[i]['high']))
+        return highs
+    
+    def _find_swing_lows(self, klines: List[Dict], window: int) -> List[float]:
+        lows = []
+        for i in range(window, len(klines) - window):
+            is_low = True
+            for j in range(i - window, i + window + 1):
+                if float(klines[j]['low']) < float(klines[i]['low']):
+                    is_low = False
+                    break
+            if is_low:
+                lows.append(float(klines[i]['low']))
+        return lows
+    
+    def _cluster_levels(self, prices: List[float]) -> List[float]:
+        if not prices:
+            return []
+        
+        prices = sorted(prices)
+        clusters = [[prices[0]]]
+        
+        for price in prices[1:]:
+            if abs(price - clusters[-1][-1]) / clusters[-1][-1] < self.config['merge_threshold']:
+                clusters[-1].append(price)
+            else:
+                clusters.append([price])
+        
+        levels = []
+        for cluster in clusters:
+            if len(cluster) >= self.config['min_touches']:
+                levels.append(sum(cluster) / len(cluster))
+        
+        return sorted(levels, reverse=True)
+
+
+class BoxRangeDetector:
+    """箱体震荡检测器
+    
+    识别价格在固定区间内反复波动的形态
+    """
+    
+    def __init__(self, config: Dict = None):
+        self.config = config or {
+            'min_duration': 10,
+            'max_range_pct': 0.15,
+            'min_touches': 4,
+            'lookback_period': 90,
+        }
+    
+    def detect(self, klines: List[Dict]) -> Dict:
+        if len(klines) < self.config['min_duration']:
+            return {'is_box': False, 'reason': '数据不足'}
+        
+        lookback = min(self.config['lookback_period'], len(klines))
+        recent = klines[-lookback:]
+        
+        highs = [float(k['high']) for k in recent]
+        lows = [float(k['low']) for k in recent]
+        
+        box_high = max(highs)
+        box_low = min(lows)
+        box_mid = (box_high + box_low) / 2
+        range_pct = (box_high - box_low) / box_mid if box_mid > 0 else 1
+        
+        if range_pct > self.config['max_range_pct']:
+            return {
+                'is_box': False,
+                'range_pct': range_pct,
+                'reason': f'区间宽度 {range_pct:.1%} 超过阈值 {self.config["max_range_pct"]:.1%}'
+            }
+        
+        upper_touches = sum(1 for h in highs if h >= box_high * (1 - 0.01))
+        lower_touches = sum(1 for l in lows if l <= box_low * (1 + 0.01))
+        
+        if upper_touches < 2 or lower_touches < 2:
+            return {
+                'is_box': False,
+                'upper_touches': upper_touches,
+                'lower_touches': lower_touches,
+                'reason': f'触及次数不足: 上{upper_touches}次, 下{lower_touches}次'
+            }
+        
+        duration = len(recent)
+        
+        return {
+            'is_box': True,
+            'box_high': box_high,
+            'box_low': box_low,
+            'box_mid': box_mid,
+            'range_pct': range_pct,
+            'upper_touches': upper_touches,
+            'lower_touches': lower_touches,
+            'duration': duration,
+            'reason': f'箱体震荡: {box_low:.2f} - {box_high:.2f}, 持续{duration}天'
+        }
+
+
 class StatusAlgorithm(ABC):
     """行情判断算法基类"""
     
@@ -569,6 +716,404 @@ class AlwaysRangingAlgorithm(StatusAlgorithm):
         return 1
 
 
+class DualThrustAlgorithm(StatusAlgorithm):
+    """Dual Thrust 状态过滤器算法（增强版）
+    
+    基于 Dual Thrust 策略原理，利用历史波动幅度构建突破区间：
+    - 价格在轨道内：震荡行情，Autofish 正常运行
+    - 价格突破上轨：上涨趋势，Autofish 暂停开新单
+    - 价格跌破下轨：下跌趋势，Autofish 暂停开新单
+    
+    针对下跌行情的特殊处理:
+    1. 下跌阈值更敏感 (k2_down_factor < 1.0)
+    2. 下跌趋势确认需要连续多天
+    3. 切换冷却期避免频繁切换
+    
+    公式：
+    Range = max(HH - LC, HC - LL)
+    Upper = Open + K1 * Range
+    Lower = Open - K2 * Range * K2_Down_Factor (下跌时更敏感)
+    """
+    
+    name = "dual_thrust"
+    description = "Dual Thrust 状态过滤器（增强版）"
+    
+    def __init__(self, config: Dict = None):
+        self.config = config or {
+            'n_days': 4,
+            'k1': 0.4,
+            'k2': 0.4,
+            'k2_down_factor': 0.8,  # 下跌时更敏感，系数 < 1
+            'down_confirm_days': 2,  # 下跌确认需要连续天数
+            'cooldown_days': 1,  # 状态切换冷却期
+        }
+        self._current_status = MarketStatus.UNKNOWN
+        self._upper_band = None
+        self._lower_band = None
+        self._lower_band_down = None
+        self._range = None
+        self._last_status_change_day = None
+        self._consecutive_down_days = 0
+        self._daily_klines_cache = []
+    
+    def calculate(self, klines: List[Dict], config: Dict) -> StatusResult:
+        merged_config = {**self.config, **config}
+        n_days = merged_config.get('n_days', 4)
+        k1 = merged_config.get('k1', 0.4)
+        k2 = merged_config.get('k2', 0.4)
+        k2_down_factor = merged_config.get('k2_down_factor', 0.8)
+        down_confirm_days = merged_config.get('down_confirm_days', 2)
+        cooldown_days = merged_config.get('cooldown_days', 1)
+        
+        if len(klines) < n_days + 1:
+            return StatusResult(
+                status=MarketStatus.RANGING,
+                confidence=0.5,
+                indicators={},
+                reason=f"数据不足，需要至少 {n_days + 1} 根K线"
+            )
+        
+        daily_klines = self._aggregate_to_daily(klines)
+        self._daily_klines_cache = daily_klines
+        
+        if len(daily_klines) < n_days:
+            return StatusResult(
+                status=MarketStatus.RANGING,
+                confidence=0.5,
+                indicators={},
+                reason=f"日线数据不足，需要至少 {n_days} 天"
+            )
+        
+        prev_days = daily_klines[-(n_days + 1):-1]
+        
+        hh = max(d['high'] for d in prev_days)
+        ll = min(d['low'] for d in prev_days)
+        hc = max(d['close'] for d in prev_days)
+        lc = min(d['close'] for d in prev_days)
+        
+        range1 = hh - lc
+        range2 = hc - ll
+        range_value = max(range1, range2)
+        
+        today_open = daily_klines[-1]['open']
+        current_price = klines[-1]['close']
+        
+        upper_band = today_open + k1 * range_value
+        lower_band_ranging = today_open - k2 * range_value
+        lower_band_down = today_open - k2 * range_value * k2_down_factor
+        
+        self._upper_band = upper_band
+        self._range = range_value
+        self._lower_band_down = lower_band_down
+        
+        current_date = daily_klines[-1].get('date', '') if daily_klines else ''
+        
+        # 冷却期内使用宽松的下轨，冷却期后使用敏感的下轨
+        if self._last_status_change_day:
+            days_since_change = self._get_days_between(self._last_status_change_day, current_date)
+            if days_since_change < cooldown_days:
+                lower_band = lower_band_ranging
+            else:
+                lower_band = lower_band_down
+        else:
+            lower_band = lower_band_down
+        
+        self._lower_band = lower_band
+        
+        is_down_breakthrough = current_price < lower_band
+        is_up_breakthrough = current_price > upper_band
+        
+        # 统计连续下跌天数
+        if is_down_breakthrough:
+            self._consecutive_down_days += 1
+        else:
+            self._consecutive_down_days = 0
+        
+        # 下跌需要连续确认，上涨立即生效
+        if is_down_breakthrough and self._consecutive_down_days >= down_confirm_days:
+            new_status = MarketStatus.TRENDING_DOWN
+            confidence = min(0.95, 0.75 + (lower_band - current_price) / range_value * 0.2)
+            reason = f"确认下跌趋势: 跌破下轨 {lower_band:.2f}，连续 {self._consecutive_down_days} 天，当前价格 {current_price:.2f}"
+        elif is_up_breakthrough:
+            new_status = MarketStatus.TRENDING_UP
+            confidence = min(0.85, 0.7 + (current_price - upper_band) / range_value * 0.15)
+            reason = f"突破上轨 {upper_band:.2f}，当前价格 {current_price:.2f}"
+        else:
+            new_status = MarketStatus.RANGING
+            range_pct = (upper_band - lower_band) / today_open * 100
+            confidence = 0.8
+            reason = f"价格在轨道内 [{lower_band:.2f}, {upper_band:.2f}]，区间宽度 {range_pct:.1f}%"
+        
+        if new_status != self._current_status:
+            self._last_status_change_day = current_date
+        
+        self._current_status = new_status
+        
+        indicators = {
+            'upper_band': upper_band,
+            'lower_band': lower_band,
+            'lower_band_down': lower_band_down,
+            'range': range_value,
+            'today_open': today_open,
+            'hh': hh,
+            'll': ll,
+            'current_price': current_price,
+            'consecutive_down_days': self._consecutive_down_days,
+        }
+        
+        return StatusResult(
+            status=self._current_status,
+            confidence=confidence,
+            indicators=indicators,
+            reason=reason
+        )
+    
+    def _get_days_between(self, date1: str, date2: str) -> int:
+        """计算两个日期之间的天数"""
+        try:
+            d1 = datetime.strptime(date1, '%Y-%m-%d')
+            d2 = datetime.strptime(date2, '%Y-%m-%d')
+            return (d2 - d1).days
+        except:
+            return 999
+    
+    def _aggregate_to_daily(self, klines: List[Dict]) -> List[Dict]:
+        """将分钟K线聚合为日线"""
+        if not klines:
+            return []
+        
+        daily_data = {}
+        for k in klines:
+            ts = k.get('timestamp', k.get('open_time', 0))
+            dt = datetime.fromtimestamp(ts / 1000)
+            date_key = dt.strftime('%Y-%m-%d')
+            
+            if date_key not in daily_data:
+                daily_data[date_key] = {
+                    'open': k['open'],
+                    'high': k['high'],
+                    'low': k['low'],
+                    'close': k['close'],
+                    'volume': k.get('volume', 0),
+                }
+            else:
+                daily_data[date_key]['high'] = max(daily_data[date_key]['high'], k['high'])
+                daily_data[date_key]['low'] = min(daily_data[date_key]['low'], k['low'])
+                daily_data[date_key]['close'] = k['close']
+                daily_data[date_key]['volume'] += k.get('volume', 0)
+        
+        sorted_dates = sorted(daily_data.keys())
+        return [daily_data[d] for d in sorted_dates]
+    
+    def get_required_periods(self) -> int:
+        return self.config.get('n_days', 4) + 1
+    
+    def get_bands(self) -> Tuple[Optional[float], Optional[float]]:
+        """获取当前的上下轨"""
+        return self._upper_band, self._lower_band
+
+
+class ImprovedStatusAlgorithm(StatusAlgorithm):
+    """改进的行情判断算法
+    
+    核心改进：
+    1. 更长的回看周期（60-90天）
+    2. 支撑阻力位识别
+    3. 箱体震荡识别
+    4. 更严格的趋势确认
+    """
+    
+    name = "improved"
+    description = "改进的行情判断算法（支撑阻力+箱体震荡）"
+    
+    def __init__(self, config: Dict = None):
+        self.config = config or {
+            'lookback_period': 60,
+            'min_range_duration': 10,
+            'max_range_pct': 0.15,
+            'breakout_threshold': 0.03,
+            'breakout_confirm_days': 3,
+            'swing_window': 5,
+            'merge_threshold': 0.03,
+            'min_touches': 3,
+        }
+        
+        self.sr_detector = SupportResistanceDetector({
+            'lookback_period': self.config.get('lookback_period', 60),
+            'swing_window': self.config.get('swing_window', 5),
+            'merge_threshold': self.config.get('merge_threshold', 0.03),
+            'min_touches': self.config.get('min_touches', 3),
+        })
+        
+        self.box_detector = BoxRangeDetector({
+            'min_duration': self.config.get('min_range_duration', 10),
+            'max_range_pct': self.config.get('max_range_pct', 0.15),
+            'lookback_period': self.config.get('lookback_period', 60),
+        })
+        
+        self._indicators = {}
+        self._current_status = MarketStatus.UNKNOWN
+        self._status_duration = 0
+        self._range_high = None
+        self._range_low = None
+    
+    def calculate(self, klines: List[Dict], config: Dict) -> StatusResult:
+        if len(klines) < self.config['lookback_period']:
+            return StatusResult(
+                status=MarketStatus.UNKNOWN,
+                confidence=0.0,
+                indicators={},
+                reason="K线数据不足"
+            )
+        
+        sr_result = self.sr_detector.detect(klines)
+        box_result = self.box_detector.detect(klines)
+        breakout_result = self._detect_breakout(klines, sr_result)
+        
+        status, confidence, reason = self._determine_status(
+            sr_result, box_result, breakout_result, klines
+        )
+        
+        status = self._apply_inertia(status, confidence)
+        
+        self._indicators = {
+            'support_resistance': sr_result,
+            'box': box_result,
+            'breakout': breakout_result,
+        }
+        
+        return StatusResult(
+            status=status,
+            confidence=confidence,
+            indicators=self._indicators,
+            reason=reason
+        )
+    
+    def _detect_breakout(self, klines: List[Dict], sr_result: Dict) -> Dict:
+        if not sr_result.get('resistance') or not sr_result.get('support'):
+            return {'breakout': False}
+        
+        current_price = float(klines[-1]['close'])
+        resistance = sr_result['resistance'][0]
+        support = sr_result['support'][0]
+        
+        if current_price > resistance * (1 + self.config['breakout_threshold']):
+            return {
+                'breakout': True,
+                'direction': 'up',
+                'level': resistance,
+                'price': current_price,
+            }
+        
+        if current_price < support * (1 - self.config['breakout_threshold']):
+            return {
+                'breakout': True,
+                'direction': 'down',
+                'level': support,
+                'price': current_price,
+            }
+        
+        return {'breakout': False}
+    
+    def _determine_status(self, sr_result, box_result, breakout_result, klines):
+        if breakout_result.get('breakout'):
+            direction = breakout_result['direction']
+            if direction == 'up':
+                return MarketStatus.TRENDING_UP, 0.9, f"向上突破 {breakout_result['level']:.2f}"
+            else:
+                return MarketStatus.TRENDING_DOWN, 0.9, f"向下突破 {breakout_result['level']:.2f}"
+        
+        if box_result.get('is_box'):
+            return (
+                MarketStatus.RANGING,
+                0.9,
+                f"箱体震荡 {box_result['box_low']:.2f} - {box_result['box_high']:.2f}, 持续 {box_result['duration']} 天"
+            )
+        
+        if sr_result.get('is_ranging'):
+            support = sr_result['support'][0] if sr_result['support'] else 0
+            resistance = sr_result['resistance'][0] if sr_result['resistance'] else 0
+            return (
+                MarketStatus.RANGING,
+                0.7,
+                f"震荡区间 {support:.2f} - {resistance:.2f}"
+            )
+        
+        trend_result = self._detect_trend_by_ma(klines)
+        if trend_result.get('is_trending'):
+            return trend_result['status'], trend_result['confidence'], trend_result['reason']
+        
+        return MarketStatus.RANGING, 0.6, "默认震荡（无明显趋势信号）"
+    
+    def _detect_trend_by_ma(self, klines: List[Dict]) -> Dict:
+        """基于均线斜率检测趋势（备用方法）
+        
+        当支撑阻力位无法形成时（如持续上涨/下跌），使用均线斜率判断趋势
+        """
+        if len(klines) < 30:
+            return {'is_trending': False}
+        
+        closes = [float(k['close']) for k in klines]
+        
+        ma7 = sum(closes[-7:]) / 7
+        ma30 = sum(closes[-30:]) / 30
+        ma60 = sum(closes[-60:]) / 60 if len(closes) >= 60 else ma30
+        
+        price = closes[-1]
+        
+        ma7_slope = (ma7 - sum(closes[-14:-7]) / 7) / ma7 if len(closes) >= 14 else 0
+        ma30_slope = (ma30 - sum(closes[-60:-30]) / 30) / ma30 if len(closes) >= 60 else 0
+        
+        if ma7 > ma30 > ma60 and ma7_slope > 0.02 and ma30_slope > 0.01:
+            return {
+                'is_trending': True,
+                'status': MarketStatus.TRENDING_UP,
+                'confidence': 0.75,
+                'reason': f"均线多头排列，MA7斜率={ma7_slope:.2%}，MA30斜率={ma30_slope:.2%}"
+            }
+        
+        if ma7 < ma30 < ma60 and ma7_slope < -0.02 and ma30_slope < -0.01:
+            return {
+                'is_trending': True,
+                'status': MarketStatus.TRENDING_DOWN,
+                'confidence': 0.75,
+                'reason': f"均线空头排列，MA7斜率={ma7_slope:.2%}，MA30斜率={ma30_slope:.2%}"
+            }
+        
+        return {'is_trending': False}
+    
+    def _apply_inertia(self, new_status: MarketStatus, confidence: float) -> MarketStatus:
+        if self._current_status == MarketStatus.UNKNOWN:
+            self._current_status = new_status
+            self._status_duration = 1
+            return new_status
+        
+        if new_status == self._current_status:
+            self._status_duration += 1
+            return new_status
+        
+        is_current_trending = self._current_status in [MarketStatus.TRENDING_UP, MarketStatus.TRENDING_DOWN]
+        is_new_trending = new_status in [MarketStatus.TRENDING_UP, MarketStatus.TRENDING_DOWN]
+        
+        if not is_current_trending and is_new_trending:
+            if confidence < 0.70:
+                return self._current_status
+        
+        if is_current_trending and is_new_trending:
+            if self._current_status != new_status and confidence < 0.9:
+                return self._current_status
+        
+        self._current_status = new_status
+        self._status_duration = 1
+        return new_status
+    
+    def get_required_periods(self) -> int:
+        return self.config['lookback_period']
+    
+    def get_indicators(self) -> Dict:
+        return self._indicators
+
+
 class RealTimeStatusAlgorithm(StatusAlgorithm):
     """实时市场状态判断算法
     
@@ -844,6 +1389,8 @@ class MarketStatusDetector:
         'adx': ADXAlgorithm,
         'composite': CompositeAlgorithm,
         'always_ranging': AlwaysRangingAlgorithm,
+        'improved': ImprovedStatusAlgorithm,
+        'dual_thrust': DualThrustAlgorithm,
     }
     
     def __init__(self, algorithm: StatusAlgorithm = None, config: Dict = None):
@@ -1108,8 +1655,8 @@ async def main():
     parser.add_argument("--interval", type=str, default="1m", help="K线周期 (默认: 1m)")
     parser.add_argument("--days", type=int, default=None, help="分析天数")
     parser.add_argument("--date-range", type=str, default=None, help="时间范围 (格式: yyyymmdd-yyyymmdd)")
-    parser.add_argument("--algorithm", type=str, default="realtime", 
-                        choices=['realtime', 'adx', 'composite', 'always_ranging'], help="算法 (默认: realtime)")
+    parser.add_argument("--algorithm", type=str, default="improved", 
+                        choices=['realtime', 'adx', 'composite', 'always_ranging', 'improved'], help="算法 (默认: improved)")
     parser.add_argument("--adx-threshold", type=int, default=25, help="ADX 阈值 (默认: 25)")
     
     args = parser.parse_args()
@@ -1120,6 +1667,8 @@ async def main():
         algorithm = ADXAlgorithm(threshold=args.adx_threshold)
     elif args.algorithm == 'always_ranging':
         algorithm = AlwaysRangingAlgorithm()
+    elif args.algorithm == 'improved':
+        algorithm = ImprovedStatusAlgorithm()
     else:
         algorithm = CompositeAlgorithm()
     
