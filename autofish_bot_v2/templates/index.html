@@ -1,0 +1,1174 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>行情可视化分析系统</title>
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <script src="https://unpkg.com/axios/dist/axios.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; background: #f5f5f5; }
+        
+        .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 16px 24px; display: flex; justify-content: space-between; align-items: center; }
+        .header h1 { font-size: 24px; }
+        .header-actions { display: flex; gap: 12px; }
+        .btn { padding: 10px 20px; border: none; border-radius: 8px; cursor: pointer; font-size: 14px; font-weight: 500; transition: all 0.2s; }
+        .btn-primary { background: white; color: #667eea; }
+        .btn-primary:hover { background: #f0f0f0; }
+        .btn-secondary { background: rgba(255,255,255,0.2); color: white; }
+        .btn-secondary:hover { background: rgba(255,255,255,0.3); }
+        .btn-danger { background: #ef4444; color: white; }
+        .btn-danger:hover { background: #dc2626; }
+        .btn-success { background: #22c55e; color: white; }
+        .btn-success:hover { background: #16a34a; }
+        .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+        
+        .main-container { display: flex; height: calc(100vh - 68px); min-width: 1200px; }
+        
+        .sidebar { width: 320px; min-width: 280px; max-width: 380px; background: white; border-right: 1px solid #e0e0e0; display: flex; flex-direction: column; }
+        .sidebar-header { padding: 16px; border-bottom: 1px solid #e0e0e0; }
+        .filter-group { margin-bottom: 12px; }
+        .filter-group label { display: block; font-size: 12px; color: #666; margin-bottom: 4px; }
+        .filter-group select, .filter-group input { width: 100%; padding: 8px 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 14px; }
+        
+        .sidebar-content { flex: 1; overflow-y: auto; padding: 8px; }
+        .test-item { padding: 12px; border: 1px solid #e0e0e0; border-radius: 8px; margin-bottom: 8px; cursor: pointer; transition: all 0.2s; }
+        .test-item:hover { background: #f8f9fa; }
+        .test-item.selected { border-color: #667eea; background: #f0f4ff; }
+        .test-item-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+        .test-item-name { font-weight: 600; color: #333; }
+        .test-item-status { padding: 2px 8px; border-radius: 12px; font-size: 12px; }
+        .status-pending { background: #fef3c7; color: #92400e; }
+        .status-running { background: #dbeafe; color: #1e40af; }
+        .status-completed { background: #dcfce7; color: #166534; }
+        .status-failed { background: #fee2e2; color: #991b1b; }
+        .test-item-info { font-size: 12px; color: #666; display: flex; gap: 12px; flex-wrap: wrap; }
+        
+        .sidebar-footer { padding: 12px 16px; border-top: 1px solid #e0e0e0; display: flex; gap: 8px; }
+        .sidebar-footer .btn { flex: 1; }
+        
+        .content-area { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+        
+        .chart-section { flex: 1; padding: 16px; display: flex; flex-direction: column; overflow: hidden; }
+        .chart-container { flex: 1; display: flex; flex-direction: column; background: white; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); overflow: hidden; }
+        .chart-header { padding: 16px; border-bottom: 1px solid #e0e0e0; display: flex; justify-content: space-between; align-items: center; flex-shrink: 0; }
+        .chart-title { font-size: 16px; font-weight: 600; color: #333; }
+        .chart-info { font-size: 14px; color: #666; }
+        #chart { flex: 1; width: 100%; min-height: 300px; }
+        
+        .stats-row { display: flex; gap: 16px; padding: 16px; background: #f8f9fa; flex-shrink: 0; }
+        .stat-card { flex: 1; background: white; padding: 16px; border-radius: 8px; text-align: center; }
+        .stat-card h3 { font-size: 12px; color: #666; margin-bottom: 8px; }
+        .stat-card .value { font-size: 24px; font-weight: bold; }
+        .stat-card.ranging .value { color: #f59e0b; }
+        .stat-card.up .value { color: #ef4444; }
+        .stat-card.down .value { color: #22c55e; }
+        
+        .table-section { background: white; border-top: 1px solid #e0e0e0; flex-shrink: 0; max-height: 200px; display: flex; flex-direction: column; }
+        .table-header { padding: 16px; border-bottom: 1px solid #e0e0e0; }
+        .table-header h2 { font-size: 16px; color: #333; }
+        .table-container { flex: 1; overflow-y: auto; }
+        table { width: 100%; border-collapse: collapse; font-size: 14px; }
+        th, td { padding: 12px 16px; text-align: left; border-bottom: 1px solid #eee; }
+        th { background: #f8f9fa; font-weight: 600; position: sticky; top: 0; }
+        tr:hover { background: #f8f9fa; }
+        .status-badge { padding: 4px 12px; border-radius: 12px; font-size: 12px; font-weight: 500; }
+        .badge-ranging { background: #dcfce7; color: #166534; }
+        .badge-up { background: #fee2e2; color: #991b1b; }
+        .badge-down { background: #dbeafe; color: #1e40af; }
+        
+        .modal-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 1000; }
+        .modal { background: white; border-radius: 12px; width: 500px; max-width: 90%; max-height: 90vh; overflow-y: auto; }
+        .modal-header { padding: 20px; border-bottom: 1px solid #e0e0e0; display: flex; justify-content: space-between; align-items: center; }
+        .modal-header h2 { font-size: 18px; }
+        .modal-close { background: none; border: none; font-size: 24px; cursor: pointer; color: #666; }
+        .modal-body { padding: 20px; }
+        .form-group { margin-bottom: 16px; }
+        .form-group label { display: block; font-size: 14px; color: #333; margin-bottom: 6px; font-weight: 500; }
+        .form-group input, .form-group select, .form-group textarea { width: 100%; padding: 10px 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 14px; }
+        .form-group textarea { resize: vertical; min-height: 80px; }
+        .form-row { display: flex; gap: 12px; }
+        .form-row .form-group { flex: 1; }
+        .param-group { background: #f8f9fa; padding: 12px; border-radius: 6px; margin-bottom: 12px; }
+        .param-item { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; }
+        .param-item:last-child { margin-bottom: 0; }
+        .param-item label { min-width: 120px; font-size: 13px; color: #666; }
+        .param-item input { flex: 1; padding: 6px 10px; }
+        .modal-footer { padding: 16px 20px; border-top: 1px solid #e0e0e0; display: flex; justify-content: flex-end; gap: 12px; }
+        
+        .compare-container { display: flex; flex-direction: column; gap: 16px; padding: 16px; height: 100%; overflow-y: auto; }
+        .compare-item { width: 100%; border: 1px solid #e0e0e0; border-radius: 8px; overflow: hidden; }
+        .compare-item-header { background: #f5f5f5; padding: 12px 16px; border-bottom: 1px solid #e0e0e0; display: flex; justify-content: space-between; align-items: center; }
+        .compare-item-title { font-weight: 600; color: #333; }
+        .compare-item-stats { display: flex; gap: 24px; font-size: 14px; color: #666; }
+        .compare-item-chart { height: 350px; width: 100%; }
+        
+        .empty-state { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; color: #999; }
+        .empty-state svg { width: 64px; height: 64px; margin-bottom: 16px; }
+        .empty-state p { font-size: 16px; }
+        
+        .checkbox-wrapper { display: flex; align-items: center; gap: 8px; }
+        .checkbox-wrapper input[type="checkbox"] { width: 18px; height: 18px; cursor: pointer; }
+        
+        .legend { display: flex; gap: 20px; justify-content: center; padding: 12px; background: white; border-radius: 8px; margin-bottom: 16px; }
+        .legend-item { display: flex; align-items: center; gap: 8px; font-size: 14px; }
+        .legend-color { width: 24px; height: 24px; border-radius: 4px; }
+        .legend-ranging { background: rgba(245, 158, 11, 0.3); }
+        .legend-up { background: rgba(239, 68, 68, 0.3); }
+        .legend-down { background: rgba(34, 197, 94, 0.3); }
+        
+        @media (min-width: 2560px) {
+            .sidebar { width: 380px; }
+            #chart { height: 700px; }
+            .compare-item-chart { height: 380px; }
+        }
+    </style>
+</head>
+<body>
+    <div id="app">
+        <header class="header">
+            <h1>📊 行情可视化分析系统</h1>
+            <div class="header-actions">
+                <button class="btn btn-primary" @click="showNewTestModal = true">新建测试</button>
+                <button class="btn btn-secondary" @click="toggleCompareMode">
+                    {{ compareMode ? '退出对比' : '对比模式' }}
+                </button>
+                <button class="btn btn-secondary" @click="loadTestCases">刷新</button>
+            </div>
+        </header>
+        
+        <div class="main-container">
+            <aside class="sidebar">
+                <div class="sidebar-header">
+                    <div class="filter-group">
+                        <label>交易对</label>
+                        <select v-model="filters.symbol" @change="loadTestCases">
+                            <option value="">全部</option>
+                            <option v-for="s in symbols" :key="s" :value="s">{{ s }}</option>
+                        </select>
+                    </div>
+                    <div class="filter-group">
+                        <label>算法</label>
+                        <select v-model="filters.algorithm" @change="loadTestCases">
+                            <option value="">全部</option>
+                            <option v-for="(info, name) in algorithms" :key="name" :value="name">{{ info.name }}</option>
+                        </select>
+                    </div>
+                    <div class="filter-group">
+                        <label>状态</label>
+                        <select v-model="filters.status" @change="loadTestCases">
+                            <option value="">全部</option>
+                            <option value="pending">等待中</option>
+                            <option value="running">执行中</option>
+                            <option value="completed">已完成</option>
+                            <option value="failed">失败</option>
+                        </select>
+                    </div>
+                </div>
+                
+                <div class="sidebar-content">
+                    <div v-if="compareMode" style="padding: 8px; background: #f0f4ff; border-radius: 6px; margin-bottom: 8px; font-size: 13px; color: #666;">
+                        已选择: {{ selectedCases.length }}/4 个测试
+                    </div>
+                    
+                    <div v-for="tc in testCases" :key="tc.id" 
+                         class="test-item"
+                         :class="{ selected: compareMode ? selectedCases.includes(tc.id) : selectedCase?.id === tc.id }"
+                         @click="onTestCaseClick(tc)">
+                        
+                        <div v-if="compareMode" class="checkbox-wrapper" style="margin-bottom: 8px;">
+                            <input type="checkbox" :checked="selectedCases.includes(tc.id)" @click.stop>
+                            <span class="test-item-name">{{ tc.name }}</span>
+                        </div>
+                        
+                        <div class="test-item-header">
+                            <span v-if="!compareMode" class="test-item-name">{{ tc.name }}</span>
+                            <span class="test-item-status" :class="'status-' + tc.status">{{ getStatusText(tc.status) }}</span>
+                        </div>
+                        <div class="test-item-info">
+                            <span>{{ tc.symbol }}</span>
+                            <span>{{ tc.algorithm }}</span>
+                            <span>{{ tc.start_date }} ~ {{ tc.end_date }}</span>
+                        </div>
+                    </div>
+                    
+                    <div v-if="testCases.length === 0" style="padding: 40px; text-align: center; color: #999;">
+                        暂无测试用例
+                    </div>
+                </div>
+                
+                <div class="sidebar-footer">
+                    <template v-if="compareMode">
+                        <button class="btn btn-secondary" @click="cancelCompare">取消</button>
+                        <button class="btn btn-primary" @click="startCompare" :disabled="selectedCases.length < 2">对比</button>
+                    </template>
+                    <template v-else>
+                        <button class="btn btn-danger" @click="deleteSelected" :disabled="!selectedCase">删除</button>
+                        <button class="btn btn-secondary" @click="reRunTest" :disabled="!selectedCase">重跑</button>
+                    </template>
+                </div>
+            </aside>
+            
+            <main class="content-area">
+                <template v-if="compareResults.length > 0">
+                    <div class="chart-section">
+                        <div class="legend">
+                            <div class="legend-item"><div class="legend-color legend-ranging"></div><span>震荡区间</span></div>
+                            <div class="legend-item"><div class="legend-color legend-up"></div><span>上涨趋势</span></div>
+                            <div class="legend-item"><div class="legend-color legend-down"></div><span>下跌趋势</span></div>
+                        </div>
+                        
+                        <div class="compare-container" :class="'count-' + compareResults.length">
+                            <div v-for="(result, index) in compareResults" :key="result.test_case.id" class="compare-item">
+                                <div class="compare-item-header">
+                                    <span class="compare-item-title">
+                                        测试 #{{ index + 1 }}: {{ result.test_case.symbol }} {{ result.test_case.algorithm }}
+                                    </span>
+                                    <div class="compare-item-stats">
+                                        <span>震荡: {{ result.statistics?.ranging_days || 0 }}天</span>
+                                        <span>上涨: {{ result.statistics?.trending_up_days || 0 }}天</span>
+                                        <span>下跌: {{ result.statistics?.trending_down_days || 0 }}天</span>
+                                    </div>
+                                </div>
+                                <div :id="'compare-chart-' + index" class="compare-item-chart"></div>
+                            </div>
+                        </div>
+                        
+                        <div class="table-section">
+                            <div class="table-header"><h2>对比统计表</h2></div>
+                            <div class="table-container">
+                                <table>
+                                    <thead>
+                                        <tr>
+                                            <th>测试名称</th>
+                                            <th>算法</th>
+                                            <th>震荡天</th>
+                                            <th>上涨天</th>
+                                            <th>下跌天</th>
+                                            <th>区间数</th>
+                                            <th>执行时间</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <tr v-for="result in compareResults" :key="result.test_case.id">
+                                            <td>{{ result.test_case.name }}</td>
+                                            <td>{{ result.test_case.algorithm }}</td>
+                                            <td>{{ result.statistics?.ranging_days || 0 }}</td>
+                                            <td>{{ result.statistics?.trending_up_days || 0 }}</td>
+                                            <td>{{ result.statistics?.trending_down_days || 0 }}</td>
+                                            <td>{{ result.result?.ranging_count + result.result?.trending_up_count + result.result?.trending_down_count || 0 }}</td>
+                                            <td>{{ result.statistics?.duration_ms || 0 }}ms</td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </template>
+                
+                <template v-else-if="selectedCase && selectedCase.status === 'completed'">
+                    <div class="chart-section">
+                        <div class="chart-container">
+                            <div class="chart-header">
+                                <span class="chart-title">{{ selectedCase.name }}</span>
+                                <span class="chart-info">{{ selectedCase.symbol }} | {{ selectedCase.start_date }} ~ {{ selectedCase.end_date }} | {{ algorithms[selectedCase.algorithm]?.name }}</span>
+                            </div>
+                            <div class="legend">
+                                <div class="legend-item"><div class="legend-color legend-ranging"></div><span>震荡区间</span></div>
+                                <div class="legend-item"><div class="legend-color legend-up"></div><span>上涨趋势</span></div>
+                                <div class="legend-item"><div class="legend-color legend-down"></div><span>下跌趋势</span></div>
+                                <div style="margin-left: auto; display: flex; align-items: center; gap: 8px;">
+                                    <span style="font-size: 13px; color: #666;">渲染方式:</span>
+                                    <select v-model="renderMode" style="padding: 4px 8px; border: 1px solid #ddd; border-radius: 4px;">
+                                        <option value="top">顶部色带</option>
+                                        <option value="overlay">K线上方色带</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div id="chart"></div>
+                        </div>
+                        
+                        <div class="stats-row">
+                            <div class="stat-card">
+                                <h3>总天数</h3>
+                                <div class="value">{{ statistics.total_days || 0 }}</div>
+                            </div>
+                            <div class="stat-card ranging">
+                                <h3>震荡天数</h3>
+                                <div class="value">{{ statistics.ranging_days || 0 }} ({{ statistics.ranging_percent || 0 }}%)</div>
+                            </div>
+                            <div class="stat-card up">
+                                <h3>上涨天数</h3>
+                                <div class="value">{{ statistics.trending_up_days || 0 }} ({{ statistics.trending_up_percent || 0 }}%)</div>
+                            </div>
+                            <div class="stat-card down">
+                                <h3>下跌天数</h3>
+                                <div class="value">{{ statistics.trending_down_days || 0 }} ({{ statistics.trending_down_percent || 0 }}%)</div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="table-section" style="border-top: 1px solid #e0e0e0;">
+                        <div class="table-header" style="cursor: pointer;" @click="showTable = !showTable">
+                            <h2 style="display: flex; align-items: center; gap: 8px;">
+                                <span>{{ showTable ? '▼' : '▶' }}</span>
+                                <span>区间行情状态</span>
+                                <span style="font-size: 12px; color: #999; font-weight: normal;">({{ statusRanges.length }} 条)</span>
+                            </h2>
+                        </div>
+                        <div v-show="showTable" class="table-container">
+                            <table>
+                                <thead>
+                                    <tr>
+                                        <th>序号</th>
+                                        <th>开始日期</th>
+                                        <th>结束日期</th>
+                                        <th>状态</th>
+                                        <th>持续天数</th>
+                                        <th>起始价</th>
+                                        <th>结束价</th>
+                                        <th>涨跌幅</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr v-for="(range, index) in statusRanges" :key="index">
+                                        <td>{{ index + 1 }}</td>
+                                        <td>{{ range.start_date }}</td>
+                                        <td>{{ range.end_date }}</td>
+                                        <td>
+                                            <span class="status-badge" :class="'badge-' + getStatusClass(range.status)">
+                                                {{ getStatusText(range.status) }}
+                                            </span>
+                                        </td>
+                                        <td>{{ range.duration }}</td>
+                                        <td>{{ range.start_price?.toFixed(2) }}</td>
+                                        <td>{{ range.end_price?.toFixed(2) }}</td>
+                                        <td :style="{ color: range.price_change >= 0 ? '#ef4444' : '#22c55e' }">
+                                            {{ range.price_change >= 0 ? '+' : '' }}{{ range.price_change?.toFixed(2) }}%
+                                        </td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </template>
+                
+                <template v-else-if="selectedCase && selectedCase.status === 'running'">
+                    <div class="empty-state">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <circle cx="12" cy="12" r="10"></circle>
+                            <path d="M12 6v6l4 2"></path>
+                        </svg>
+                        <p>测试执行中，请稍候...</p>
+                    </div>
+                </template>
+                
+                <template v-else>
+                    <div class="empty-state">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+                            <line x1="3" y1="9" x2="21" y2="9"></line>
+                            <line x1="9" y1="21" x2="9" y2="9"></line>
+                        </svg>
+                        <p>请选择一个测试用例查看结果</p>
+                    </div>
+                </template>
+            </main>
+        </div>
+        
+        <div v-if="showNewTestModal" class="modal-overlay" @click.self="showNewTestModal = false">
+            <div class="modal">
+                <div class="modal-header">
+                    <h2>新建行情测试</h2>
+                    <button class="modal-close" @click="showNewTestModal = false">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <div class="form-group">
+                        <label>测试名称</label>
+                        <input v-model="newTest.name" placeholder="请输入测试名称">
+                    </div>
+                    
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>交易对</label>
+                            <select v-model="newTest.symbol">
+                                <option v-for="s in symbols" :key="s" :value="s">{{ s }}</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>K线周期</label>
+                            <select v-model="newTest.interval">
+                                <option value="1d">1天</option>
+                                <option value="4h">4小时</option>
+                                <option value="1h">1小时</option>
+                            </select>
+                        </div>
+                    </div>
+                    
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>开始日期</label>
+                            <input type="date" v-model="newTest.start_date">
+                        </div>
+                        <div class="form-group">
+                            <label>结束日期</label>
+                            <input type="date" v-model="newTest.end_date">
+                        </div>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label>算法选择</label>
+                        <select v-model="newTest.algorithm" @change="onAlgorithmChange">
+                            <option v-for="(info, name) in algorithms" :key="name" :value="name">{{ info.name }}</option>
+                        </select>
+                    </div>
+                    
+                    <div v-if="currentAlgorithmParams" class="param-group">
+                        <label style="font-size: 14px; font-weight: 500; margin-bottom: 8px; display: block;">算法参数</label>
+                        <div v-for="(param, key) in currentAlgorithmParams" :key="key" class="param-item">
+                            <label>{{ param.description }}</label>
+                            <input :type="param.type === 'int' ? 'number' : 'number'" 
+                                   :step="param.type === 'int' ? 1 : 0.01"
+                                   v-model.number="newTest.algorithm_config[key]"
+                                   :placeholder="'默认: ' + param.default">
+                        </div>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label>描述</label>
+                        <textarea v-model="newTest.description" placeholder="可选的描述信息"></textarea>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label>文件生成选项</label>
+                        <div style="display: flex; gap: 16px; margin-top: 8px;">
+                            <label style="display: flex; align-items: center; gap: 6px; cursor: pointer;">
+                                <input type="checkbox" v-model="newTest.generate_md">
+                                <span>生成MD报告</span>
+                            </label>
+                            <label style="display: flex; align-items: center; gap: 6px; cursor: pointer;">
+                                <input type="checkbox" v-model="newTest.generate_png">
+                                <span>生成PNG图表</span>
+                            </label>
+                            <label style="display: flex; align-items: center; gap: 6px; cursor: pointer;">
+                                <input type="checkbox" v-model="newTest.generate_html">
+                                <span>生成HTML可视化</span>
+                            </label>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary" @click="showNewTestModal = false">取消</button>
+                    <button class="btn btn-primary" @click="createTest" :disabled="!canCreateTest">执行测试</button>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        const { createApp, ref, reactive, computed, watch, onMounted, nextTick } = Vue;
+        
+        createApp({
+            setup() {
+                const testCases = ref([]);
+                const selectedCase = ref(null);
+                const selectedCases = ref([]);
+                const compareMode = ref(false);
+                const compareResults = ref([]);
+                const showNewTestModal = ref(false);
+                const symbols = ref(['BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'SOLUSDT', 'XRPUSDT', 'DOGEUSDT']);
+                const algorithms = ref({});
+                const filters = reactive({ symbol: '', algorithm: '', status: '' });
+                const statistics = ref({});
+                const statusRanges = ref([]);
+                const dailyStatuses = ref([]);
+                const renderMode = ref('top');
+                let chart = null;
+                let charts = [];
+                let syncManager = null;
+                
+                const newTest = reactive({
+                    name: '',
+                    symbol: 'BTCUSDT',
+                    interval: '1d',
+                    start_date: '',
+                    end_date: '',
+                    algorithm: 'dual_thrust',
+                    algorithm_config: {},
+                    description: '',
+                    generate_md: false,
+                    generate_png: false,
+                    generate_html: false,
+                });
+                
+                const currentAlgorithmParams = computed(() => {
+                    const algo = algorithms.value[newTest.algorithm];
+                    return algo?.params || null;
+                });
+                
+                const canCreateTest = computed(() => {
+                    return newTest.name && newTest.symbol && newTest.start_date && newTest.end_date && newTest.algorithm;
+                });
+                
+                const loadTestCases = async () => {
+                    try {
+                        const params = new URLSearchParams();
+                        if (filters.symbol) params.append('symbol', filters.symbol);
+                        if (filters.algorithm) params.append('algorithm', filters.algorithm);
+                        if (filters.status) params.append('status', filters.status);
+                        
+                        const res = await axios.get('/api/test-cases?' + params.toString());
+                        testCases.value = res.data.data.items;
+                    } catch (e) {
+                        console.error('加载测试用例失败:', e);
+                    }
+                };
+                
+                const loadAlgorithms = async () => {
+                    try {
+                        const res = await axios.get('/api/algorithms');
+                        algorithms.value = res.data.data;
+                    } catch (e) {
+                        console.error('加载算法列表失败:', e);
+                    }
+                };
+                
+                const onTestCaseClick = (tc) => {
+                    if (compareMode.value) {
+                        const idx = selectedCases.value.indexOf(tc.id);
+                        if (idx >= 0) {
+                            selectedCases.value.splice(idx, 1);
+                        } else if (selectedCases.value.length < 4) {
+                            selectedCases.value.push(tc.id);
+                        }
+                    } else {
+                        selectedCase.value = tc;
+                        if (tc.status === 'completed') {
+                            loadTestCaseData(tc.id);
+                        }
+                    }
+                };
+                
+                const loadTestCaseData = async (testCaseId) => {
+                    try {
+                        const res = await axios.get(`/api/test-cases/${testCaseId}`);
+                        const data = res.data.data;
+                        
+                        if (data.result) {
+                            statusRanges.value = data.result.status_ranges || [];
+                            
+                            const statsRes = await axios.get(`/api/statistics/${data.result.id}`);
+                            statistics.value = statsRes.data.data;
+                            
+                            const dailyRes = await axios.get(`/api/daily-statuses/${data.result.id}`);
+                            dailyStatuses.value = dailyRes.data.data;
+                            
+                            await nextTick();
+                            renderChart();
+                        }
+                    } catch (e) {
+                        console.error('加载测试数据失败:', e);
+                    }
+                };
+                
+                const renderChart = () => {
+                    const container = document.getElementById('chart');
+                    if (!container || dailyStatuses.value.length === 0) return;
+                    
+                    if (chart) {
+                        chart.dispose();
+                    }
+                    
+                    chart = echarts.init(container);
+                    
+                    const dates = dailyStatuses.value.map(d => d.date);
+                    const ohlc = dailyStatuses.value.map(d => [d.open_price, d.close_price, d.low_price, d.high_price]);
+                    const statusColors = dailyStatuses.value.map(d => getStatusColor(d.status));
+                    
+                    let option;
+                    
+                    if (renderMode.value === 'top') {
+                        option = {
+                            title: {
+                                text: selectedCase.value?.name || 'K线图',
+                                left: 'center',
+                                top: 10,
+                            },
+                            tooltip: {
+                                trigger: 'axis',
+                                axisPointer: { type: 'cross' },
+                                backgroundColor: 'rgba(255, 255, 255, 0.9)',
+                                borderColor: '#ccc',
+                                borderWidth: 1,
+                                textStyle: { color: '#333' },
+                                formatter: function(params) {
+                                    if (!params || params.length === 0) return '';
+                                    const dataIndex = params[0].dataIndex;
+                                    const d = dailyStatuses.value[dataIndex];
+                                    if (!d) return '';
+                                    const statusText = getStatusText(d.status);
+                                    const color = getStatusColor(d.status);
+                                    return `<div style="padding: 4px;">
+                                        <div style="font-weight: bold; margin-bottom: 4px;">${d.date}</div>
+                                        <div style="margin-bottom: 2px;"><span style="color: ${color};">●</span> 状态: ${statusText} (${(d.confidence * 100).toFixed(0)}%)</div>
+                                        <div style="margin-bottom: 2px;">振幅: ${d.amplitude}%</div>
+                                        <div style="color: #ef4444;">开: ${d.open_price} 高: ${d.high_price}</div>
+                                        <div style="color: #22c55e;">收: ${d.close_price} 低: ${d.low_price}</div>
+                                    </div>`;
+                                }
+                            },
+                            legend: {
+                                data: ['K线'],
+                                top: 40,
+                            },
+                            grid: [
+                                { left: '10%', right: '8%', top: 60, height: 15 },
+                                { left: '10%', right: '8%', top: 85, height: '58%' },
+                            ],
+                            xAxis: [
+                                {
+                                    type: 'category',
+                                    gridIndex: 0,
+                                    data: dates,
+                                    boundaryGap: true,
+                                    axisLine: { show: false },
+                                    axisTick: { show: false },
+                                    axisLabel: { show: false },
+                                    splitLine: { show: false },
+                                },
+                                {
+                                    type: 'category',
+                                    gridIndex: 1,
+                                    data: dates,
+                                    boundaryGap: true,
+                                    axisLine: { onZero: false },
+                                    splitLine: { show: false },
+                                    min: 'dataMin',
+                                    max: 'dataMax',
+                                },
+                            ],
+                            yAxis: [
+                                {
+                                    type: 'value',
+                                    gridIndex: 0,
+                                    min: 0,
+                                    max: 1,
+                                    axisLine: { show: false },
+                                    axisTick: { show: false },
+                                    axisLabel: { show: false },
+                                    splitLine: { show: false },
+                                },
+                                {
+                                    type: 'value',
+                                    gridIndex: 1,
+                                    scale: true,
+                                    splitArea: { show: true },
+                                },
+                            ],
+                            dataZoom: [
+                                { type: 'inside', xAxisIndex: [0, 1], start: 0, end: 100 },
+                                { show: true, type: 'slider', xAxisIndex: [0, 1], bottom: 10, start: 0, end: 100 },
+                            ],
+                            series: [
+                                {
+                                    name: '状态',
+                                    type: 'bar',
+                                    xAxisIndex: 0,
+                                    yAxisIndex: 0,
+                                    data: statusColors.map(color => ({
+                                        value: 1,
+                                        itemStyle: { color: color.replace(')', ', 0.6)') },
+                                    })),
+                                    barWidth: '100%',
+                                    z: 1,
+                                },
+                                {
+                                    name: 'K线',
+                                    type: 'candlestick',
+                                    xAxisIndex: 1,
+                                    yAxisIndex: 1,
+                                    data: ohlc,
+                                    itemStyle: {
+                                        color: '#ef4444',
+                                        color0: '#22c55e',
+                                        borderColor: '#ef4444',
+                                        borderColor0: '#22c55e',
+                                    },
+                                    z: 2,
+                                },
+                            ],
+                        };
+                    } else {
+                        const priceMax = Math.max(...dailyStatuses.value.map(d => d.high_price));
+                        const priceMin = Math.min(...dailyStatuses.value.map(d => d.low_price));
+                        const priceRange = priceMax - priceMin;
+                        const barHeight = priceRange * 0.012;
+                        const gapRatio = 0.03;
+                        
+                        const statusGroups = [];
+                        let currentGroup = null;
+                        dailyStatuses.value.forEach((d, i) => {
+                            if (currentGroup === null || currentGroup.status !== d.status) {
+                                if (currentGroup !== null) {
+                                    statusGroups.push(currentGroup);
+                                }
+                                currentGroup = {
+                                    status: d.status,
+                                    startIndex: i,
+                                    endIndex: i,
+                                    highPrice: d.high_price,
+                                };
+                            } else {
+                                currentGroup.endIndex = i;
+                                currentGroup.highPrice = Math.max(currentGroup.highPrice, d.high_price);
+                            }
+                        });
+                        if (currentGroup !== null) {
+                            statusGroups.push(currentGroup);
+                        }
+                        
+                        const markAreaData = [];
+                        statusGroups.forEach((group) => {
+                            const gap = priceRange * gapRatio;
+                            const barY = group.highPrice + gap;
+                            const color = getStatusColor(group.status);
+                            
+                            markAreaData.push([
+                                {
+                                    xAxis: group.startIndex,
+                                    yAxis: barY,
+                                    name: getStatusText(group.status),
+                                    itemStyle: {
+                                        color: color.replace(')', ', 0.8)'),
+                                    },
+                                },
+                                {
+                                    xAxis: group.endIndex + 1,
+                                    yAxis: barY + barHeight,
+                                }
+                            ]);
+                        });
+                        
+                        option = {
+                            title: {
+                                text: selectedCase.value?.name || 'K线图',
+                                left: 'center',
+                                top: 10,
+                            },
+                            tooltip: {
+                                trigger: 'axis',
+                                axisPointer: { type: 'cross' },
+                                backgroundColor: 'rgba(255, 255, 255, 0.9)',
+                                borderColor: '#ccc',
+                                borderWidth: 1,
+                                textStyle: { color: '#333' },
+                                formatter: function(params) {
+                                    if (!params || params.length === 0) return '';
+                                    const dataIndex = params[0].dataIndex;
+                                    const d = dailyStatuses.value[dataIndex];
+                                    if (!d) return '';
+                                    const statusText = getStatusText(d.status);
+                                    const color = getStatusColor(d.status);
+                                    return `<div style="padding: 4px;">
+                                        <div style="font-weight: bold; margin-bottom: 4px;">${d.date}</div>
+                                        <div style="margin-bottom: 2px;"><span style="color: ${color};">●</span> 状态: ${statusText} (${(d.confidence * 100).toFixed(0)}%)</div>
+                                        <div style="margin-bottom: 2px;">振幅: ${d.amplitude}%</div>
+                                        <div style="color: #ef4444;">开: ${d.open_price} 高: ${d.high_price}</div>
+                                        <div style="color: #22c55e;">收: ${d.close_price} 低: ${d.low_price}</div>
+                                    </div>`;
+                                }
+                            },
+                            legend: {
+                                data: ['K线'],
+                                top: 40,
+                            },
+                            grid: [
+                                { left: '10%', right: '8%', top: 80, height: '60%' },
+                            ],
+                            xAxis: {
+                                type: 'category',
+                                data: dates,
+                                boundaryGap: true,
+                                axisLine: { onZero: false },
+                                splitLine: { show: false },
+                                min: 'dataMin',
+                                max: 'dataMax',
+                            },
+                            yAxis: {
+                                scale: true,
+                                splitArea: { show: true },
+                            },
+                            dataZoom: [
+                                { type: 'inside', start: 0, end: 100 },
+                                { show: true, type: 'slider', bottom: 10, start: 0, end: 100 },
+                            ],
+                            series: [
+                                {
+                                    name: 'K线',
+                                    type: 'candlestick',
+                                    data: ohlc,
+                                    itemStyle: {
+                                        color: '#ef4444',
+                                        color0: '#22c55e',
+                                        borderColor: '#ef4444',
+                                        borderColor0: '#22c55e',
+                                    },
+                                    markArea: {
+                                        silent: true,
+                                        data: markAreaData,
+                                    },
+                                    z: 2,
+                                },
+                            ],
+                        };
+                    }
+                    
+                    chart.setOption(option);
+                    
+                    const resizeObserver = new ResizeObserver(() => {
+                        chart.resize();
+                    });
+                    resizeObserver.observe(container);
+                    
+                    window.addEventListener('resize', () => {
+                        chart.resize();
+                    });
+                };
+                
+                const getStatusColor = (status) => {
+                    const colors = {
+                        'ranging': '#f59e0b',
+                        'trending_up': '#ef4444',
+                        'trending_down': '#22c55e',
+                    };
+                    return colors[status] || '#666';
+                };
+                
+                const getStatusText = (status) => {
+                    const texts = {
+                        'pending': '等待中',
+                        'running': '执行中',
+                        'completed': '已完成',
+                        'failed': '失败',
+                        'ranging': '震',
+                        'trending_up': '涨',
+                        'trending_down': '跌',
+                    };
+                    return texts[status] || status;
+                };
+                
+                const getStatusClass = (status) => {
+                    const classes = {
+                        'ranging': 'ranging',
+                        'trending_up': 'up',
+                        'trending_down': 'down',
+                    };
+                    return classes[status] || '';
+                };
+                
+                const toggleCompareMode = () => {
+                    compareMode.value = !compareMode.value;
+                    if (!compareMode.value) {
+                        selectedCases.value = [];
+                        compareResults.value = [];
+                    }
+                };
+                
+                const cancelCompare = () => {
+                    compareMode.value = false;
+                    selectedCases.value = [];
+                    compareResults.value = [];
+                };
+                
+                const startCompare = async () => {
+                    if (selectedCases.value.length < 2) return;
+                    
+                    try {
+                        const res = await axios.post('/api/compare', {
+                            test_case_ids: selectedCases.value
+                        });
+                        compareResults.value = res.data.data;
+                        
+                        await nextTick();
+                        renderCompareCharts();
+                    } catch (e) {
+                        console.error('对比失败:', e);
+                    }
+                };
+                
+                const renderCompareCharts = () => {
+                    charts.forEach(c => {
+                        if (c && c.dispose) c.dispose();
+                    });
+                    charts = [];
+                    
+                    if (compareResults.value.length === 0) return;
+                    
+                    const allDates = new Set();
+                    compareResults.value.forEach(result => {
+                        const dailyStatuses = result.daily_statuses || [];
+                        dailyStatuses.forEach(d => allDates.add(d.date));
+                    });
+                    const sortedDates = Array.from(allDates).sort();
+                    
+                    compareResults.value.forEach((result, index) => {
+                        const container = document.getElementById(`compare-chart-${index}`);
+                        if (!container) return;
+                        
+                        const dailyStatuses = result.daily_statuses || [];
+                        if (dailyStatuses.length === 0) return;
+                        
+                        const chartInstance = echarts.init(container);
+                        
+                        const dateMap = {};
+                        dailyStatuses.forEach(d => {
+                            dateMap[d.date] = d;
+                        });
+                        
+                        const validDates = sortedDates.filter(date => dateMap[date]);
+                        
+                        const ohlc = validDates.map(date => {
+                            const d = dateMap[date];
+                            return [d.open_price, d.close_price, d.low_price, d.high_price];
+                        });
+                        
+                        const statusColors = validDates.map(date => {
+                            const d = dateMap[date];
+                            return getStatusColor(d.status);
+                        });
+                        
+                        const option = {
+                            title: {
+                                text: `${result.test_case.symbol} | ${result.test_case.algorithm} | 震${result.statistics?.ranging_days || 0} 涨${result.statistics?.trending_up_days || 0} 跌${result.statistics?.trending_down_days || 0}`,
+                                left: 'center',
+                                top: 5,
+                                textStyle: { fontSize: 12 },
+                            },
+                            tooltip: {
+                                trigger: 'axis',
+                                axisPointer: { type: 'cross' },
+                            },
+                            grid: [
+                                { left: '8%', right: '4%', top: 30, height: 20 },
+                                { left: '8%', right: '4%', top: 55, height: '70%' },
+                            ],
+                            xAxis: [
+                                {
+                                    type: 'category',
+                                    gridIndex: 0,
+                                    data: validDates,
+                                    axisLine: { show: false },
+                                    axisTick: { show: false },
+                                    axisLabel: { show: false },
+                                },
+                                {
+                                    type: 'category',
+                                    gridIndex: 1,
+                                    data: validDates,
+                                    axisLine: { onZero: false },
+                                    axisLabel: { show: false },
+                                    min: 'dataMin',
+                                    max: 'dataMax',
+                                },
+                            ],
+                            yAxis: [
+                                {
+                                    type: 'value',
+                                    gridIndex: 0,
+                                    min: 0,
+                                    max: 1,
+                                    axisLine: { show: false },
+                                    axisTick: { show: false },
+                                    axisLabel: { show: false },
+                                    splitLine: { show: false },
+                                },
+                                {
+                                    type: 'value',
+                                    gridIndex: 1,
+                                    scale: true,
+                                    splitLine: { show: true, lineStyle: { color: '#eee' } },
+                                },
+                            ],
+                            dataZoom: [
+                                { type: 'inside', xAxisIndex: [0, 1], start: 0, end: 100 },
+                            ],
+                            series: [
+                                {
+                                    name: '状态',
+                                    type: 'bar',
+                                    xAxisIndex: 0,
+                                    yAxisIndex: 0,
+                                    data: statusColors.map(color => ({
+                                        value: 1,
+                                        itemStyle: { color: color.replace(')', ', 0.6)') },
+                                    })),
+                                    barWidth: '100%',
+                                },
+                                {
+                                    name: 'K线',
+                                    type: 'candlestick',
+                                    xAxisIndex: 1,
+                                    yAxisIndex: 1,
+                                    data: ohlc,
+                                    itemStyle: {
+                                        color: '#ef4444',
+                                        color0: '#22c55e',
+                                        borderColor: '#ef4444',
+                                        borderColor0: '#22c55e',
+                                    },
+                                },
+                            ],
+                        };
+                        
+                        chartInstance.setOption(option);
+                        charts.push(chartInstance);
+                    });
+                    
+                    if (charts.length > 1) {
+                        echarts.connect(charts);
+                    }
+                };
+                
+                const setupChartSync = () => {
+                    if (charts.length < 2) return;
+                    
+                    let isSyncing = false;
+                    
+                    charts.forEach((sourceChart, index) => {
+                        sourceChart.timeScale().subscribeVisibleTimeRangeChange((range) => {
+                            if (isSyncing) return;
+                            isSyncing = true;
+                            
+                            charts.forEach((targetChart, targetIndex) => {
+                                if (targetIndex !== index) {
+                                    targetChart.timeScale().setVisibleRange(range);
+                                }
+                            });
+                            
+                            isSyncing = false;
+                        });
+                    });
+                };
+                
+                const createTest = async () => {
+                    if (!canCreateTest.value) return;
+                    
+                    try {
+                        await axios.post('/api/test-cases', newTest);
+                        showNewTestModal.value = false;
+                        loadTestCases();
+                        
+                        newTest.name = '';
+                        newTest.description = '';
+                        newTest.generate_md = false;
+                        newTest.generate_png = false;
+                        newTest.generate_html = false;
+                    } catch (e) {
+                        console.error('创建测试失败:', e);
+                        alert('创建测试失败: ' + (e.response?.data?.error || e.message));
+                    }
+                };
+                
+                const onAlgorithmChange = () => {
+                    const params = currentAlgorithmParams.value;
+                    if (params) {
+                        Object.keys(params).forEach(key => {
+                            if (newTest.algorithm_config[key] === undefined) {
+                                newTest.algorithm_config[key] = params[key].default;
+                            }
+                        });
+                    }
+                };
+                
+                const deleteSelected = async () => {
+                    if (!selectedCase.value) return;
+                    if (!confirm('确定要删除这个测试用例吗？')) return;
+                    
+                    try {
+                        await axios.delete(`/api/test-cases/${selectedCase.value.id}`);
+                        selectedCase.value = null;
+                        loadTestCases();
+                    } catch (e) {
+                        console.error('删除失败:', e);
+                    }
+                };
+                
+                const reRunTest = async () => {
+                    if (!selectedCase.value) return;
+                    
+                    try {
+                        await axios.post(`/api/test-cases/${selectedCase.value.id}/re-run`);
+                        loadTestCases();
+                    } catch (e) {
+                        console.error('重跑失败:', e);
+                    }
+                };
+                
+                onMounted(() => {
+                    loadAlgorithms();
+                    loadTestCases();
+                    
+                    const today = new Date();
+                    const threeMonthsAgo = new Date(today.getFullYear(), today.getMonth() - 3, 1);
+                    newTest.end_date = today.toISOString().split('T')[0];
+                    newTest.start_date = threeMonthsAgo.toISOString().split('T')[0];
+                });
+                
+                watch(selectedCase, (val) => {
+                    if (val && val.status === 'running') {
+                        const checkStatus = setInterval(async () => {
+                            const res = await axios.get(`/api/test-cases/${val.id}`);
+                            if (res.data.data.status !== 'running') {
+                                clearInterval(checkStatus);
+                                loadTestCases();
+                                selectedCase.value = res.data.data;
+                                if (res.data.data.status === 'completed') {
+                                    loadTestCaseData(val.id);
+                                }
+                            }
+                        }, 2000);
+                    }
+                });
+                
+                watch(renderMode, () => {
+                    if (dailyStatuses.value.length > 0) {
+                        renderChart();
+                    }
+                });
+                
+                return {
+                    testCases,
+                    selectedCase,
+                    selectedCases,
+                    compareMode,
+                    compareResults,
+                    showNewTestModal,
+                    symbols,
+                    algorithms,
+                    filters,
+                    statistics,
+                    statusRanges,
+                    dailyStatuses,
+                    renderMode,
+                    newTest,
+                    currentAlgorithmParams,
+                    canCreateTest,
+                    loadTestCases,
+                    onTestCaseClick,
+                    toggleCompareMode,
+                    cancelCompare,
+                    startCompare,
+                    createTest,
+                    onAlgorithmChange,
+                    deleteSelected,
+                    reRunTest,
+                    getStatusText,
+                    getStatusClass,
+                };
+            }
+        }).mount('#app');
+    </script>
+</body>
+</html>
