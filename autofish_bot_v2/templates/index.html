@@ -1099,6 +1099,7 @@
                             ohlc: ohlc,
                             validDates: validDates,
                             statusGroups: statusGroups,
+                            dateMap: dateMap,
                         };
                     });
                     
@@ -1109,43 +1110,40 @@
                         (r.daily_statuses || []).map(d => d.low_price)
                     ));
                     const priceRange = priceMax - priceMin;
-                    const barHeight = priceRange * 0.008;
-                    const gapRatio = 0.02;
                     
-                    const colors = ['#ef4444', '#3b82f6', '#22c55e', '#f59e0b', '#8b5cf6'];
+                    const statusColors = {};
+                    sortedDates.forEach(date => {
+                        datasets.forEach(ds => {
+                            if (ds.dateMap[date]) {
+                                const d = ds.dateMap[date];
+                                if (!statusColors[date]) {
+                                    statusColors[date] = getStatusColor(d.status);
+                                }
+                            }
+                        });
+                    });
                     
                     const series = [];
-                    const markAreas = [];
+                    
+                    series.push({
+                        name: '状态色带',
+                        type: 'bar',
+                        xAxisIndex: 0,
+                        yAxisIndex: 0,
+                        data: sortedDates.map(date => ({
+                            value: 1,
+                            itemStyle: { color: (statusColors[date] || '#666').replace(')', ', 0.5)') },
+                        })),
+                        barWidth: '100%',
+                        z: 1,
+                    });
                     
                     datasets.forEach((ds, dsIdx) => {
-                        const baseGap = priceRange * gapRatio * dsIdx * 3;
-                        
-                        const dsMarkAreas = ds.statusGroups.map(group => {
-                            const gap = priceRange * gapRatio;
-                            const barY = group.highPrice + baseGap + gap;
-                            const color = getStatusColor(group.status);
-                            
-                            return [
-                                {
-                                    xAxis: ds.validDates[group.startIndex],
-                                    yAxis: barY,
-                                    name: getStatusText(group.status),
-                                    itemStyle: {
-                                        color: color.replace(')', ', 0.6)'),
-                                    },
-                                },
-                                {
-                                    xAxis: ds.validDates[group.endIndex],
-                                    yAxis: barY + barHeight,
-                                }
-                            ];
-                        });
-                        
-                        markAreas.push(...dsMarkAreas);
-                        
                         series.push({
                             name: ds.name,
                             type: 'candlestick',
+                            xAxisIndex: 1,
+                            yAxisIndex: 1,
                             data: ds.ohlc,
                             itemStyle: {
                                 color: '#ef4444',
@@ -1153,7 +1151,7 @@
                                 borderColor: '#ef4444',
                                 borderColor0: '#22c55e',
                             },
-                            z: dsIdx + 1,
+                            z: dsIdx + 2,
                         });
                     });
                     
@@ -1173,25 +1171,51 @@
                             top: 40,
                         },
                         grid: [
-                            { left: '5%', right: '5%', top: 70, bottom: 50 },
+                            { left: '5%', right: '5%', top: 70, height: 25 },
+                            { left: '5%', right: '5%', top: 100, bottom: 50 },
                         ],
-                        xAxis: {
-                            type: 'category',
-                            data: sortedDates,
-                            boundaryGap: true,
-                            axisLine: { onZero: false },
-                            splitLine: { show: false },
-                            axisLabel: { show: false },
-                            min: 'dataMin',
-                            max: 'dataMax',
-                        },
-                        yAxis: {
-                            scale: true,
-                            splitArea: { show: true },
-                        },
+                        xAxis: [
+                            {
+                                type: 'category',
+                                gridIndex: 0,
+                                data: sortedDates,
+                                axisLine: { show: false },
+                                axisTick: { show: false },
+                                axisLabel: { show: false },
+                            },
+                            {
+                                type: 'category',
+                                gridIndex: 1,
+                                data: sortedDates,
+                                boundaryGap: true,
+                                axisLine: { onZero: false },
+                                splitLine: { show: false },
+                                axisLabel: { show: false },
+                                min: 'dataMin',
+                                max: 'dataMax',
+                            },
+                        ],
+                        yAxis: [
+                            {
+                                type: 'value',
+                                gridIndex: 0,
+                                min: 0,
+                                max: 1,
+                                axisLine: { show: false },
+                                axisTick: { show: false },
+                                axisLabel: { show: false },
+                                splitLine: { show: false },
+                            },
+                            {
+                                type: 'value',
+                                gridIndex: 1,
+                                scale: true,
+                                splitArea: { show: true },
+                            },
+                        ],
                         dataZoom: [
-                            { type: 'inside', start: 0, end: 100 },
-                            { show: true, type: 'slider', bottom: 10, start: 0, end: 100, height: 20 },
+                            { type: 'inside', xAxisIndex: [0, 1], start: 0, end: 100 },
+                            { show: true, type: 'slider', xAxisIndex: [0, 1], bottom: 10, start: 0, end: 100, height: 20 },
                         ],
                         series: series,
                     };
