@@ -2355,7 +2355,10 @@ class BinanceLiveTrader:
                 
                 if self.chain_state.orders:
                     pnl_info = await self._get_pnl_info()
-                    notify_orders_recovered(self.chain_state.orders, self.config, current_price, pnl_info or {})
+                    current_time = time.time()
+                    if current_time - self._last_sync_notify_time >= 600:
+                        notify_orders_recovered(self.chain_state.orders, self.config, current_price, pnl_info or {})
+                        self._last_sync_notify_time = current_time
                 
                 has_active_order = any(o.state in ["pending", "filled"] for o in self.chain_state.orders)
                 if has_active_order:
@@ -2557,6 +2560,7 @@ class BinanceLiveTrader:
         self.consecutive_errors = 0
         self.max_consecutive_errors = 5
         self._startup_notified = False
+        self._last_sync_notify_time = 0
         
         try:
             while self.running:
