@@ -2353,12 +2353,10 @@ class BinanceLiveTrader:
                 for order, filled_price in orders_need_process:
                     await self._process_order_filled(order, filled_price, is_recovery=True)
                 
-                if self.chain_state.orders:
+                if self.chain_state.orders and self._is_first_connection:
                     pnl_info = await self._get_pnl_info()
-                    current_time = time.time()
-                    if current_time - self._last_sync_notify_time >= 600:
-                        notify_orders_recovered(self.chain_state.orders, self.config, current_price, pnl_info or {})
-                        self._last_sync_notify_time = current_time
+                    notify_orders_recovered(self.chain_state.orders, self.config, current_price, pnl_info or {})
+                    self._is_first_connection = False
                 
                 has_active_order = any(o.state in ["pending", "filled"] for o in self.chain_state.orders)
                 if has_active_order:
@@ -2560,7 +2558,7 @@ class BinanceLiveTrader:
         self.consecutive_errors = 0
         self.max_consecutive_errors = 5
         self._startup_notified = False
-        self._last_sync_notify_time = 0
+        self._is_first_connection = True
         
         try:
             while self.running:
