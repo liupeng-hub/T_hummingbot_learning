@@ -2558,7 +2558,7 @@ class BinanceLiveTrader:
         self.consecutive_errors = 0
         self.max_consecutive_errors = 5
         self._startup_notified = False
-        self._is_first_connection = True
+        self._is_first_connection = True  # 区分首次启动和重连，避免重连时重复发送订单同步通知
         
         try:
             while self.running:
