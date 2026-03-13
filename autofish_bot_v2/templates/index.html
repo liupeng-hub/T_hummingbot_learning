@@ -1290,8 +1290,9 @@
                     }
                 });
                 
-                watch(compareViewMode, () => {
+                watch(compareViewMode, async () => {
                     if (compareResults.value.length > 0) {
+                        await nextTick();
                         renderCompareCharts();
                     }
                 });
