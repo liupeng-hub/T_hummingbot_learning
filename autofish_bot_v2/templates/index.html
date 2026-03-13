@@ -129,16 +129,16 @@
         .compare-item-stats { display: flex; gap: 16px; font-size: 12px; color: #666; }
         .compare-item-chart { height: 300px; width: 100%; }
         
-        .compare-table-section { background: white; border-top: 1px solid #e0e0e0; flex-shrink: 0; }
-        .compare-table-header { padding: 12px 16px; border-bottom: 1px solid #e0e0e0; }
-        .compare-table-header h2 { font-size: 14px; color: #333; }
-        
         .empty-state { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; color: #999; }
         .empty-state svg { width: 64px; height: 64px; margin-bottom: 16px; }
         .empty-state p { font-size: 16px; }
         
         .checkbox-wrapper { display: flex; align-items: center; gap: 8px; }
         .checkbox-wrapper input[type="checkbox"] { width: 16px; height: 16px; cursor: pointer; }
+        
+        .compare-mode-tabs { display: flex; gap: 8px; padding: 12px; background: white; border-bottom: 1px solid #e0e0e0; }
+        .compare-mode-tab { padding: 8px 16px; border: none; border-radius: 6px; cursor: pointer; font-size: 13px; background: #f0f0f0; color: #666; }
+        .compare-mode-tab.active { background: #667eea; color: white; }
     </style>
 </head>
 <body>
@@ -233,52 +233,39 @@
             
             <main class="content-area">
                 <template v-if="compareResults.length > 0">
+                    <div class="compare-mode-tabs">
+                        <button class="compare-mode-tab" :class="{ active: compareViewMode === 'separate' }" @click="compareViewMode = 'separate'">
+                            分屏对比
+                        </button>
+                        <button class="compare-mode-tab" :class="{ active: compareViewMode === 'merged' }" @click="compareViewMode = 'merged'">
+                            合并对比
+                        </button>
+                    </div>
+                    
                     <div class="compare-section">
-                        <div class="compare-scroll">
-                            <div v-for="(result, index) in compareResults" :key="result.test_case.id" class="compare-item">
-                                <div class="compare-item-header">
-                                    <span class="compare-item-title">
-                                        测试 #{{ index + 1 }}: {{ result.test_case.symbol }} {{ result.test_case.algorithm }}
-                                    </span>
-                                    <div class="compare-item-stats">
-                                        <span>震荡: {{ result.statistics?.ranging_days || 0 }}天</span>
-                                        <span>上涨: {{ result.statistics?.trending_up_days || 0 }}天</span>
-                                        <span>下跌: {{ result.statistics?.trending_down_days || 0 }}天</span>
+                        <template v-if="compareViewMode === 'separate'">
+                            <div class="compare-scroll">
+                                <div v-for="(result, index) in compareResults" :key="result.test_case.id" class="compare-item">
+                                    <div class="compare-item-header">
+                                        <span class="compare-item-title">
+                                            测试 #{{ index + 1 }}: {{ result.test_case.symbol }} {{ result.test_case.algorithm }}
+                                        </span>
+                                        <div class="compare-item-stats">
+                                            <span>震荡: {{ result.statistics?.ranging_days || 0 }}天</span>
+                                            <span>上涨: {{ result.statistics?.trending_up_days || 0 }}天</span>
+                                            <span>下跌: {{ result.statistics?.trending_down_days || 0 }}天</span>
+                                        </div>
                                     </div>
+                                    <div :id="'compare-chart-' + index" class="compare-item-chart"></div>
                                 </div>
-                                <div :id="'compare-chart-' + index" class="compare-item-chart"></div>
                             </div>
-                        </div>
+                        </template>
                         
-                        <div class="compare-table-section">
-                            <div class="compare-table-header"><h2>对比统计表</h2></div>
-                            <div class="table-container" style="max-height: 150px;">
-                                <table>
-                                    <thead>
-                                        <tr>
-                                            <th>测试名称</th>
-                                            <th>算法</th>
-                                            <th>震荡天</th>
-                                            <th>上涨天</th>
-                                            <th>下跌天</th>
-                                            <th>区间数</th>
-                                            <th>执行时间</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        <tr v-for="result in compareResults" :key="result.test_case.id">
-                                            <td>{{ result.test_case.name }}</td>
-                                            <td>{{ result.test_case.algorithm }}</td>
-                                            <td>{{ result.statistics?.ranging_days || 0 }}</td>
-                                            <td>{{ result.statistics?.trending_up_days || 0 }}</td>
-                                            <td>{{ result.statistics?.trending_down_days || 0 }}</td>
-                                            <td>{{ result.result?.ranging_count + result.result?.trending_up_count + result.result?.trending_down_count || 0 }}</td>
-                                            <td>{{ result.statistics?.duration_ms || 0 }}ms</td>
-                                        </tr>
-                                    </tbody>
-                                </table>
+                        <template v-else>
+                            <div class="compare-scroll">
+                                <div id="merged-chart" style="height: 500px; width: 100%; background: white; border-radius: 8px;"></div>
                             </div>
-                        </div>
+                        </template>
                     </div>
                 </template>
                 
@@ -498,6 +485,7 @@
                 const selectedCase = ref(null);
                 const selectedCases = ref([]);
                 const compareMode = ref(false);
+                const compareViewMode = ref('separate');
                 const compareResults = ref([]);
                 const showNewTestModal = ref(false);
                 const showTable = ref(true);
@@ -510,6 +498,7 @@
                 const renderMode = ref('top');
                 let chart = null;
                 let charts = [];
+                let mergedChart = null;
                 
                 const newTest = reactive({
                     name: '',
@@ -881,6 +870,7 @@
                     if (!compareMode.value) {
                         selectedCases.value = [];
                         compareResults.value = [];
+                        compareViewMode.value = 'separate';
                     }
                 };
                 
@@ -888,6 +878,7 @@
                     compareMode.value = false;
                     selectedCases.value = [];
                     compareResults.value = [];
+                    compareViewMode.value = 'separate';
                 };
                 
                 const startCompare = async () => {
@@ -912,8 +903,21 @@
                     });
                     charts = [];
                     
+                    if (mergedChart) {
+                        mergedChart.dispose();
+                        mergedChart = null;
+                    }
+                    
                     if (compareResults.value.length === 0) return;
                     
+                    if (compareViewMode.value === 'separate') {
+                        renderSeparateCompare();
+                    } else {
+                        renderMergedCompare();
+                    }
+                };
+                
+                const renderSeparateCompare = () => {
                     const allDates = new Set();
                     compareResults.value.forEach(result => {
                         const dailyStatuses = result.daily_statuses || [];
@@ -1040,6 +1044,166 @@
                     }
                 };
                 
+                const renderMergedCompare = () => {
+                    const container = document.getElementById('merged-chart');
+                    if (!container) return;
+                    
+                    mergedChart = echarts.init(container);
+                    
+                    const allDates = new Set();
+                    compareResults.value.forEach(result => {
+                        const dailyStatuses = result.daily_statuses || [];
+                        dailyStatuses.forEach(d => allDates.add(d.date));
+                    });
+                    const sortedDates = Array.from(allDates).sort();
+                    
+                    const datasets = compareResults.value.map((result, idx) => {
+                        const dailyStatuses = result.daily_statuses || [];
+                        const dateMap = {};
+                        dailyStatuses.forEach(d => {
+                            dateMap[d.date] = d;
+                        });
+                        
+                        const validDates = sortedDates.filter(date => dateMap[date]);
+                        
+                        const ohlc = validDates.map(date => {
+                            const d = dateMap[date];
+                            return [d.open_price, d.close_price, d.low_price, d.high_price];
+                        });
+                        
+                        const statusGroups = [];
+                        let currentGroup = null;
+                        validDates.forEach((date, i) => {
+                            const d = dateMap[date];
+                            if (currentGroup === null || currentGroup.status !== d.status) {
+                                if (currentGroup !== null) {
+                                    statusGroups.push(currentGroup);
+                                }
+                                currentGroup = {
+                                    status: d.status,
+                                    startIndex: i,
+                                    endIndex: i,
+                                    highPrice: d.high_price,
+                                };
+                            } else {
+                                currentGroup.endIndex = i;
+                                currentGroup.highPrice = Math.max(currentGroup.highPrice, d.high_price);
+                            }
+                        });
+                        if (currentGroup !== null) {
+                            statusGroups.push(currentGroup);
+                        }
+                        
+                        return {
+                            name: `${result.test_case.algorithm}`,
+                            ohlc: ohlc,
+                            validDates: validDates,
+                            statusGroups: statusGroups,
+                        };
+                    });
+                    
+                    const priceMax = Math.max(...compareResults.value.flatMap(r => 
+                        (r.daily_statuses || []).map(d => d.high_price)
+                    ));
+                    const priceMin = Math.min(...compareResults.value.flatMap(r => 
+                        (r.daily_statuses || []).map(d => d.low_price)
+                    ));
+                    const priceRange = priceMax - priceMin;
+                    const barHeight = priceRange * 0.008;
+                    const gapRatio = 0.02;
+                    
+                    const colors = ['#ef4444', '#3b82f6', '#22c55e', '#f59e0b', '#8b5cf6'];
+                    
+                    const series = [];
+                    const markAreas = [];
+                    
+                    datasets.forEach((ds, dsIdx) => {
+                        const baseGap = priceRange * gapRatio * dsIdx * 3;
+                        
+                        const dsMarkAreas = ds.statusGroups.map(group => {
+                            const gap = priceRange * gapRatio;
+                            const barY = group.highPrice + baseGap + gap;
+                            const color = getStatusColor(group.status);
+                            
+                            return [
+                                {
+                                    xAxis: ds.validDates[group.startIndex],
+                                    yAxis: barY,
+                                    name: getStatusText(group.status),
+                                    itemStyle: {
+                                        color: color.replace(')', ', 0.6)'),
+                                    },
+                                },
+                                {
+                                    xAxis: ds.validDates[group.endIndex],
+                                    yAxis: barY + barHeight,
+                                }
+                            ];
+                        });
+                        
+                        markAreas.push(...dsMarkAreas);
+                        
+                        series.push({
+                            name: ds.name,
+                            type: 'candlestick',
+                            data: ds.ohlc,
+                            itemStyle: {
+                                color: '#ef4444',
+                                color0: '#22c55e',
+                                borderColor: '#ef4444',
+                                borderColor0: '#22c55e',
+                            },
+                            z: dsIdx + 1,
+                        });
+                    });
+                    
+                    const option = {
+                        animation: false,
+                        title: {
+                            text: `${compareResults.value[0].test_case.symbol} | 多算法对比 (${sortedDates[0]} ~ ${sortedDates[sortedDates.length - 1]})`,
+                            left: 'center',
+                            top: 10,
+                        },
+                        tooltip: {
+                            trigger: 'axis',
+                            axisPointer: { type: 'cross' },
+                        },
+                        legend: {
+                            data: datasets.map(ds => ds.name),
+                            top: 40,
+                        },
+                        grid: [
+                            { left: '5%', right: '5%', top: 70, bottom: 50 },
+                        ],
+                        xAxis: {
+                            type: 'category',
+                            data: sortedDates,
+                            boundaryGap: true,
+                            axisLine: { onZero: false },
+                            splitLine: { show: false },
+                            axisLabel: { show: false },
+                            min: 'dataMin',
+                            max: 'dataMax',
+                        },
+                        yAxis: {
+                            scale: true,
+                            splitArea: { show: true },
+                        },
+                        dataZoom: [
+                            { type: 'inside', start: 0, end: 100 },
+                            { show: true, type: 'slider', bottom: 10, start: 0, end: 100, height: 20 },
+                        ],
+                        series: series,
+                    };
+                    
+                    mergedChart.setOption(option);
+                    
+                    const resizeObserver = new ResizeObserver(() => {
+                        mergedChart.resize();
+                    });
+                    resizeObserver.observe(container);
+                };
+                
                 const createTest = async () => {
                     if (!canCreateTest.value) return;
                     
@@ -1126,11 +1290,18 @@
                     }
                 });
                 
+                watch(compareViewMode, () => {
+                    if (compareResults.value.length > 0) {
+                        renderCompareCharts();
+                    }
+                });
+                
                 return {
                     testCases,
                     selectedCase,
                     selectedCases,
                     compareMode,
+                    compareViewMode,
                     compareResults,
                     showNewTestModal,
                     showTable,
