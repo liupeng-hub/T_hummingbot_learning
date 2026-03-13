@@ -3,9 +3,6 @@
 *.sqlite
 *.sqlite3
 
-# Market visualizer output
-market_visualizer_out/
-
 # Python
 __pycache__/
 *.py[cod]

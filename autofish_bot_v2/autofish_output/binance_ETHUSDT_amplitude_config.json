@@ -1,10 +1,10 @@
 {
   "d_0.5":{
     "symbol":"ETHUSDT",
-    "total_amount_quote":1200,
+    "total_amount_quote":5000,
     "leverage":10,
     "decay_factor":0.5,
-    "max_entries":4,
+    "max_entries":5,
     "valid_amplitudes":[1, 2, 3, 4, 5, 6, 7, 8, 9],
     "weights":[0.0147, 0.0949, 0.2585, 0.2772, 0.141, 0.1113, 0.0558, 0.0293, 0.0173],
     "grid_spacing":0.01,
@@ -14,10 +14,10 @@
   },
   "d_1.0":{
     "symbol":"ETHUSDT",
-    "total_amount_quote":1200,
+    "total_amount_quote":5000,
     "leverage":10,
     "decay_factor":1.0,
-    "max_entries":4,
+    "max_entries":5,
     "valid_amplitudes":[1, 2, 3, 4, 5, 6, 7, 8, 9],
     "weights":[0.0214, 0.0771, 0.1558, 0.1863, 0.1486, 0.1446, 0.1106, 0.0857, 0.0699],
     "grid_spacing":0.01,
