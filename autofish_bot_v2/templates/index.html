@@ -1229,39 +1229,104 @@
                     let option;
                     
                     if (compareRenderMode.value === 'top') {
-                        const statusColors = {};
-                        sortedDates.forEach(date => {
-                            datasets.forEach(ds => {
-                                if (ds.dateMap[date]) {
-                                    const d = ds.dateMap[date];
-                                    if (!statusColors[date]) {
-                                        statusColors[date] = getStatusColor(d.status);
-                                    }
-                                }
-                            });
-                        });
+                        const numDatasets = datasets.length;
+                        const colorBarHeight = 18;
+                        const colorBarGap = 4;
+                        const totalColorBarHeight = numDatasets * colorBarHeight + (numDatasets - 1) * colorBarGap;
                         
+                        const grids = [];
+                        const xAxes = [];
+                        const yAxes = [];
                         const series = [];
                         
-                        series.push({
-                            name: '状态色带',
-                            type: 'bar',
-                            xAxisIndex: 0,
-                            yAxisIndex: 0,
-                            data: sortedDates.map(date => ({
-                                value: 1,
-                                itemStyle: { color: (statusColors[date] || '#666').replace(')', ', 0.5)') },
-                            })),
-                            barWidth: '100%',
-                            z: 1,
+                        for (let i = 0; i < numDatasets; i++) {
+                            const topOffset = 70 + i * (colorBarHeight + colorBarGap);
+                            grids.push({
+                                left: '5%',
+                                right: '5%',
+                                top: topOffset,
+                                height: colorBarHeight,
+                            });
+                            
+                            xAxes.push({
+                                type: 'category',
+                                gridIndex: i,
+                                data: sortedDates,
+                                axisLine: { show: false },
+                                axisTick: { show: false },
+                                axisLabel: { show: false },
+                                splitLine: { show: false },
+                            });
+                            
+                            yAxes.push({
+                                type: 'value',
+                                gridIndex: i,
+                                min: 0,
+                                max: 1,
+                                axisLine: { show: false },
+                                axisTick: { show: false },
+                                axisLabel: { show: false },
+                                splitLine: { show: false },
+                            });
+                            
+                            const ds = datasets[i];
+                            const statusColors = sortedDates.map(date => {
+                                const d = ds.dateMap[date];
+                                if (d) {
+                                    return getStatusColor(d.status);
+                                }
+                                return '#666';
+                            });
+                            
+                            series.push({
+                                name: ds.name + ' 状态',
+                                type: 'bar',
+                                xAxisIndex: i,
+                                yAxisIndex: i,
+                                data: statusColors.map(color => ({
+                                    value: 1,
+                                    itemStyle: { color: color.replace(')', ', 0.6)') },
+                                })),
+                                barWidth: '100%',
+                                z: 1,
+                            });
+                        }
+                        
+                        const klineGridIndex = numDatasets;
+                        const klineTop = 70 + totalColorBarHeight + 10;
+                        
+                        grids.push({
+                            left: '5%',
+                            right: '5%',
+                            top: klineTop,
+                            bottom: 50,
+                        });
+                        
+                        xAxes.push({
+                            type: 'category',
+                            gridIndex: klineGridIndex,
+                            data: sortedDates,
+                            boundaryGap: true,
+                            axisLine: { onZero: false },
+                            splitLine: { show: false },
+                            axisLabel: { show: false },
+                            min: 'dataMin',
+                            max: 'dataMax',
+                        });
+                        
+                        yAxes.push({
+                            type: 'value',
+                            gridIndex: klineGridIndex,
+                            scale: true,
+                            splitArea: { show: true },
                         });
                         
                         datasets.forEach((ds, dsIdx) => {
                             series.push({
                                 name: ds.name,
                                 type: 'candlestick',
-                                xAxisIndex: 1,
-                                yAxisIndex: 1,
+                                xAxisIndex: klineGridIndex,
+                                yAxisIndex: klineGridIndex,
                                 data: ds.ohlc,
                                 itemStyle: {
                                     color: '#ef4444',
@@ -1272,6 +1337,8 @@
                                 z: dsIdx + 2,
                             });
                         });
+                        
+                        const xAxisIndices = Array.from({ length: numDatasets + 1 }, (_, i) => i);
                         
                         option = {
                             animation: false,
@@ -1288,59 +1355,19 @@
                                 data: datasets.map(ds => ds.name),
                                 top: 40,
                             },
-                            grid: [
-                                { left: '5%', right: '5%', top: 70, height: 25 },
-                                { left: '5%', right: '5%', top: 100, bottom: 50 },
-                            ],
-                            xAxis: [
-                                {
-                                    type: 'category',
-                                    gridIndex: 0,
-                                    data: sortedDates,
-                                    axisLine: { show: false },
-                                    axisTick: { show: false },
-                                    axisLabel: { show: false },
-                                },
-                                {
-                                    type: 'category',
-                                    gridIndex: 1,
-                                    data: sortedDates,
-                                    boundaryGap: true,
-                                    axisLine: { onZero: false },
-                                    splitLine: { show: false },
-                                    axisLabel: { show: false },
-                                    min: 'dataMin',
-                                    max: 'dataMax',
-                                },
-                            ],
-                            yAxis: [
-                                {
-                                    type: 'value',
-                                    gridIndex: 0,
-                                    min: 0,
-                                    max: 1,
-                                    axisLine: { show: false },
-                                    axisTick: { show: false },
-                                    axisLabel: { show: false },
-                                    splitLine: { show: false },
-                                },
-                                {
-                                    type: 'value',
-                                    gridIndex: 1,
-                                    scale: true,
-                                    splitArea: { show: true },
-                                },
-                            ],
+                            grid: grids,
+                            xAxis: xAxes,
+                            yAxis: yAxes,
                             dataZoom: [
-                                { type: 'inside', xAxisIndex: [0, 1], start: 0, end: 100 },
-                                { show: true, type: 'slider', xAxisIndex: [0, 1], bottom: 10, start: 0, end: 100, height: 20 },
+                                { type: 'inside', xAxisIndex: xAxisIndices, start: 0, end: 100 },
+                                { show: true, type: 'slider', xAxisIndex: xAxisIndices, bottom: 10, start: 0, end: 100, height: 20 },
                             ],
                             series: series,
                         };
                     } else {
                         const barHeight = priceRange * 0.008;
-                        const gapRatio = 0.02;
-                        const layerGap = priceRange * 0.04;
+                        const gapRatio = 0.03;
+                        const layerGap = priceRange * 0.08;
                         
                         const series = [];
                         
@@ -1354,7 +1381,7 @@
                                 
                                 return [
                                     {
-                                        xAxis: ds.validDates[group.startIndex],
+                                        xAxis: group.startIndex,
                                         yAxis: barY,
                                         name: getStatusText(group.status),
                                         itemStyle: {
@@ -1362,7 +1389,7 @@
                                         },
                                     },
                                     {
-                                        xAxis: ds.validDates[group.endIndex],
+                                        xAxis: group.endIndex + 1,
                                         yAxis: barY + barHeight,
                                     }
                                 ];

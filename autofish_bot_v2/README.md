@@ -1,6 +1,21 @@
 # Autofish V2 - 链式挂单策略
 
-基于价格波动幅度概率分布的链式挂单交易策略。
+基于价格波动幅度概率分布的链式挂单交易策略，集成行情状态检测、可视化分析和行情感知回测功能。
+
+## 核心模块
+
+| 模块 | 文件 | 说明 |
+|------|------|------|
+| 核心算法 | `autofish_core.py` | 订单、权重计算、振幅分析 |
+| 行情检测 | `market_status_detector.py` | 市场状态识别（震荡/趋势） |
+| 行情可视化 | `market_status_visualizer.py` | K线图可视化、Web界面 |
+| 行情感知回测 | `market_aware_backtest.py` | 结合行情状态的策略回测 |
+| Binance回测 | `binance_backtest.py` | Binance历史数据回测 |
+| Binance实盘 | `binance_live.py` | Binance实盘交易 |
+| LongPort回测 | `longport_backtest.py` | 港股/美股/A股回测 |
+| LongPort实盘 | `longport_live.py` | 港股/美股/A股实盘 |
+
+详细模块架构请参考 [市场模块架构说明](docs/market_module_architecture.md)
 
 ## 目录结构
 
@@ -8,11 +23,15 @@
 autofish_bot_v2/
 ├── __init__.py                     # 模块入口
 ├── autofish_core.py                # 核心算法模块（订单、权重计算、振幅分析）
-├── binance_backtest.py             # Binance 回测模块（使用历史 K 线数据）
-├── binance_live.py                 # Binance 实盘模块（使用 Binance API）
+├── market_status_detector.py       # 行情状态检测器
+├── market_status_visualizer.py     # 行情可视化系统
+├── market_aware_backtest.py        # 行情感知回测引擎
+├── binance_backtest.py             # Binance 回测模块
+├── binance_live.py                 # Binance 实盘模块
 ├── binance_live_run.sh             # Binance 实盘启动/停止/状态脚本
 ├── longport_backtest.py            # LongPort 回测模块（港股/美股/A股）
 ├── longport_live.py                # LongPort 实盘模块（港股/美股/A股）
+├── binance_kline_fetcher.py        # Binance K线数据获取
 ├── requirements.txt                # Python 依赖
 ├── venv/                           # Python 虚拟环境
 ├── logs/                           # 日志目录
@@ -24,6 +43,12 @@ autofish_bot_v2/
 │   ├── {source}_{symbol}_amplitude_config.json  # 振幅配置
 │   ├── {source}_{symbol}_amplitude_report.md    # 振幅分析报告
 │   └── {source}_{symbol}_backtest_report.md     # 回测报告
+├── market_visualizer_out/          # 行情可视化输出目录
+│   ├── market_visualizer.db        # SQLite 数据库
+│   └── *.md, *.png, *.html         # 可视化输出文件
+├── templates/                      # Web 界面模板
+│   └── index.html                  # 行情可视化 Web 界面
+├── docs/                           # 文档目录
 └── README.md                       # 说明文档
 ```
 
@@ -92,7 +117,95 @@ python autofish_core.py --help
 | `autofish_output/{source}_{symbol}_amplitude_report.md` | 分析报告（包含完整数据和说明） |
 | `logs/amplitude_analyzer.log` | 振幅分析日志 |
 
-### 2. Binance 回测
+### 2. 行情状态检测
+
+识别市场状态（震荡/趋势），支持多种算法：
+
+```bash
+# 分析最近30天行情（使用改进算法）
+python market_status_detector.py --symbol BTCUSDT --days 30 --algorithm improved
+
+# 分析指定日期范围
+python market_status_detector.py --symbol BTCUSDT --date-range 20200101-20260310 --algorithm improved
+
+# 使用不同算法
+python market_status_detector.py --symbol ETHUSDT --days 30 --algorithm adx
+```
+
+**算法选项**：
+
+| 算法 | 说明 |
+|------|------|
+| improved | 改进算法（推荐），结合支撑阻力、箱体震荡、突破识别 |
+| dual_thrust | Dual Thrust 算法，基于价格突破区间判断 |
+| adx | ADX 趋势强度算法 |
+| composite | 综合算法，结合多种指标 |
+| realtime | 实时算法，基于价格行为和波动率 |
+
+**输出文件**：
+
+| 文件 | 说明 |
+|------|------|
+| `autofish_output/binance_{symbol}_market_report_{interval}_{days}d.md` | 详细分析报告 |
+| `autofish_output/binance_{symbol}_market_history.md` | 历史记录汇总 |
+
+### 3. 行情可视化
+
+K线图可视化，以色带形式展示行情状态区间：
+
+```bash
+# 命令行模式 - 生成可视化文件
+python market_status_visualizer.py \
+    --symbol BTCUSDT \
+    --date-range 20200101-20260310 \
+    --algorithm improved \
+    --generate-all
+
+# Web服务器模式 - 交互式界面
+python market_status_visualizer.py --server --port 5001
+# 访问 http://localhost:5001
+```
+
+**输出文件**：
+
+| 文件 | 说明 |
+|------|------|
+| `market_visualizer_out/market_visualizer_{symbol}_{interval}_{date_range}_{algorithm}_{seq}.md` | MD 分析报告 |
+| `market_visualizer_out/market_visualizer_{symbol}_{interval}_{date_range}_{algorithm}_{seq}.png` | PNG 图表 |
+| `market_visualizer_out/market_visualizer_{symbol}_{interval}_{date_range}_{algorithm}_{seq}.html` | 交互式 HTML |
+| `market_visualizer_out/market_visualizer.db` | SQLite 数据库 |
+
+详细说明请参考 [行情可视化设计文档](docs/market_visualizer_design.md)
+
+### 4. 行情感知回测
+
+根据市场状态动态控制交易：
+
+```bash
+# 基本使用
+python market_aware_backtest.py --symbol BTCUSDT --days 30
+
+# 指定时间范围
+python market_aware_backtest.py --symbol BTCUSDT --date-range 20200101-20260310
+
+# 使用不同行情算法
+python market_aware_backtest.py --symbol BTCUSDT --days 30 --market-algorithm improved
+python market_aware_backtest.py --symbol BTCUSDT --days 30 --market-algorithm adx
+
+# 对比测试：始终震荡模式（不停止交易）
+python market_aware_backtest.py --symbol BTCUSDT --days 30 --market-algorithm always_ranging
+```
+
+**核心策略**：
+
+| 状态变化 | 处理动作 |
+|----------|----------|
+| 震荡 → 趋势 | 平仓所有订单，停止交易 |
+| 趋势 → 震荡 | 创建首个订单，开始交易 |
+
+详细说明请参考 [行情感知回测文档](docs/market_aware_backtest.md)
+
+### 5. Binance 回测
 
 ```bash
 # 激活虚拟环境
@@ -123,7 +236,7 @@ python binance_backtest.py --help
 - 如果没有振幅配置文件，则使用内置默认配置
 - `stop_loss`、`total_amount_quote`、`entry_price_strategy` 从配置文件读取
 
-### 3. Binance 实盘交易
+### 6. Binance 实盘交易
 
 ```bash
 # 激活虚拟环境
@@ -182,7 +295,7 @@ python binance_live.py --symbol BTCUSDT --no-testnet --decay-factor 1.0
 - 优雅退出：支持 SIGTERM 信号优雅退出
 - 脚本参数：支持 `--symbol`、`--testnet`、`--no-testnet`、`--decay-factor` 参数
 
-### 4. LongPort 回测（港股/美股/A股）
+### 7. LongPort 回测（港股/美股/A股）
 
 ```bash
 # 激活虚拟环境
@@ -216,7 +329,7 @@ python longport_backtest.py --help
 - 如果没有振幅配置文件，则使用内置默认配置
 - `stop_loss`、`total_amount_quote`、`entry_price_strategy` 从配置文件读取
 
-### 5. LongPort 实盘交易
+### 8. LongPort 实盘交易
 
 ```bash
 # 激活虚拟环境
@@ -275,6 +388,8 @@ python longport_live.py --help
 
 ## 核心类
 
+### Autofish 核心类
+
 | 类 | 说明 |
 |---|------|
 | `Autofish_Order` | 订单数据类 |
@@ -283,6 +398,35 @@ python longport_live.py --help
 | `Autofish_OrderCalculator` | 订单计算器（提供默认配置） |
 | `Autofish_AmplitudeAnalyzer` | 振幅分析器（生成权重和报告） |
 | `Autofish_AmplitudeConfig` | 振幅配置加载器（读取配置文件） |
+
+### 行情检测类
+
+| 类 | 说明 |
+|---|------|
+| `MarketStatusDetector` | 行情检测主控制器 |
+| `ImprovedStatusAlgorithm` | 改进算法（推荐） |
+| `DualThrustAlgorithm` | Dual Thrust 算法 |
+| `ADXAlgorithm` | ADX 趋势强度算法 |
+| `SupportResistanceDetector` | 支撑阻力位检测器 |
+| `BoxRangeDetector` | 箱体震荡检测器 |
+
+### 行情可视化类
+
+| 类 | 说明 |
+|---|------|
+| `MarketVisualizerDB` | 数据库管理 |
+| `ChartVisualizer` | 静态图表生成 |
+| `WebChartVisualizer` | 交互式 HTML 图表生成 |
+| `MarketStatusVisualizer` | 命令行控制器 |
+| `MarketVisualizerServer` | Web 服务器 |
+
+### 行情感知回测类
+
+| 类 | 说明 |
+|---|------|
+| `MarketAwareBacktestEngine` | 行情感知回测引擎 |
+| `MarketStatusEvent` | 行情状态事件 |
+| `TradingPeriod` | 交易时段记录 |
 
 ## 环境配置
 
@@ -421,7 +565,9 @@ HTTPS_PROXY=http://127.0.0.1:1087
 
 详细说明请参考 [入场价格策略文档](docs/entry_price_strategy.md)
 
-## 日志文件
+## 日志与输出文件
+
+### 日志文件
 
 | 文件 | 说明 |
 |------|------|
@@ -429,9 +575,50 @@ HTTPS_PROXY=http://127.0.0.1:1087
 | logs/binance_live.log | Binance 实盘日志 |
 | logs/binance_live_error.log | Binance 实盘错误日志 |
 | logs/amplitude_analyzer.log | 振幅分析日志 |
+| logs/market_visualizer_server.log | 行情可视化服务器日志 |
+
+### 振幅分析输出
+
+| 文件 | 说明 |
+|------|------|
 | autofish_output/{source}_{symbol}_amplitude_config.json | 振幅配置 |
 | autofish_output/{source}_{symbol}_amplitude_report.md | 振幅分析报告 |
-| autofish_output/{source}_{symbol}_backtest_report.md | 回测报告 |
+
+### 回测输出
+
+| 文件 | 说明 |
+|------|------|
+| autofish_output/{source}_{symbol}_backtest_report.md | Binance 回测报告 |
+| autofish_output/{source}_{symbol}_market_aware_backtest_{days}d_{date_range}.md | 行情感知回测报告 |
+| autofish_output/{source}_{symbol}_market_aware_history.md | 行情感知回测历史记录 |
+
+### 行情检测输出
+
+| 文件 | 说明 |
+|------|------|
+| autofish_output/binance_{symbol}_market_report_{interval}_{days}d.md | 行情检测报告 |
+| autofish_output/binance_{symbol}_market_history.md | 行情检测历史记录 |
+
+### 行情可视化输出
+
+| 文件 | 说明 |
+|------|------|
+| market_visualizer_out/market_visualizer.db | SQLite 数据库 |
+| market_visualizer_out/market_visualizer_{symbol}_{interval}_{date_range}_{algorithm}_{seq}.md | MD 分析报告 |
+| market_visualizer_out/market_visualizer_{symbol}_{interval}_{date_range}_{algorithm}_{seq}.png | PNG 图表 |
+| market_visualizer_out/market_visualizer_{symbol}_{interval}_{date_range}_{algorithm}_{seq}.html | 交互式 HTML |
+
+## 相关文档
+
+| 文档 | 说明 |
+|------|------|
+| [市场模块架构说明](docs/market_module_architecture.md) | 三大核心模块关系与使用场景 |
+| [行情检测器文档](docs/market_status_detector.md) | 行情状态检测算法详解 |
+| [行情可视化设计](docs/market_visualizer_design.md) | 可视化系统设计文档 |
+| [行情感知回测](docs/market_aware_backtest.md) | 行情感知回测引擎文档 |
+| [入场价格策略](docs/entry_price_strategy.md) | 入场价格策略详解 |
+| [Optuna Dual Thrust 优化器](docs/optuna_dual_thrust_optimizer.md) | Dual Thrust 参数优化 |
+| [Optuna Improved 优化器](docs/optuna_improved_strategy_optimizer.md) | Improved 策略参数优化 |
 
 ## V2 版本更新
 
@@ -446,6 +633,9 @@ HTTPS_PROXY=http://127.0.0.1:1087
 7. **配置简化**：移除冗余参数，统一使用 `--decay-factor` 选择策略
 8. **入场价格策略**：支持 5 种入场价格策略（fixed, atr, bollinger, support, composite）
 9. **CLI 简化**：移除 `--stop-loss` 和 `--total-amount` 参数，从配置文件读取
+10. **行情检测模块**：新增 `market_status_detector.py`，支持多种行情状态检测算法
+11. **行情可视化模块**：新增 `market_status_visualizer.py`，支持 K 线图可视化和 Web 界面
+12. **行情感知回测**：新增 `market_aware_backtest.py`，根据行情状态动态控制交易
 
 ### 类名对照
 

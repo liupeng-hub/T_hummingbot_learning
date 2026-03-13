@@ -1,10 +1,10 @@
-# 市场策略参数优化器 (Market Strategy Optimizer)
+# Optuna Improved Strategy 参数优化器
 
 ## 模块概述
 
-**源文件**: `market_strategy_optimizer.py`
+**源文件**: `optuna_improved_strategy_optimizer.py`
 
-**功能**: 使用贝叶斯优化（Optuna）对行情判断算法和交易策略参数进行联合优化，寻找在特定市场环境下表现最优的参数组合。
+**功能**: 使用贝叶斯优化（Optuna）对 Improved 行情判断算法和交易策略参数进行联合优化，寻找在特定市场环境下表现最优的参数组合。
 
 ## 核心原理
 
@@ -60,21 +60,21 @@ score = (
 
 ```bash
 # 基本用法：运行 50 次试验
-python market_strategy_optimizer.py --symbol BTCUSDT --date-range 20230101-20231231 --n-trials 50
+python optuna_improved_strategy_optimizer.py --symbol BTCUSDT --date-range 20230101-20231231 --n-trials 50
 
 # 增加试验次数以获得更好结果
-python market_strategy_optimizer.py --symbol ETHUSDT --date-range 20230101-20231231 --n-trials 100
+python optuna_improved_strategy_optimizer.py --symbol ETHUSDT --date-range 20230101-20231231 --n-trials 100
 ```
 
 ### 输出结果
 
 1.  **控制台输出**: 实时显示每次试验的参数和得分，以及最终的最佳参数。
-2.  **结果文件**: `autofish_output/optimization_results.csv`，包含所有试验的详细数据。
-3.  **优化报告**: `autofish_output/optimization_report.md`，包含最佳参数总结、参数重要性分析和使用建议。
+2.  **结果文件**: `autofish_output/optuna_improved_results.csv`，包含所有试验的详细数据。
+3.  **优化报告**: `autofish_output/optuna_improved_report.md`，包含最佳参数总结、参数重要性分析和使用建议。
 
 ## 类结构
 
-### MarketStrategyOptimizer
+### OptunaImprovedStrategyOptimizer
 
 主优化器类。
 

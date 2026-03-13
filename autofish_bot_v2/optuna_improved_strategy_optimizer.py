@@ -1,17 +1,22 @@
 #!/usr/bin/env python3
 """
-Dual Thrust 参数优化器
+Optuna Improved Strategy 参数优化器
 
-使用贝叶斯优化（Optuna）对 Dual Thrust 算法参数进行优化。
+使用贝叶斯优化（Optuna）对 Improved 行情判断算法和交易策略参数进行联合优化。
 
 使用方法:
-    python dual_thrust_optimizer.py --symbol BTCUSDT --date-range 20200101-20260310 --n-trials 50
+    # 运行50次优化试验
+    python optuna_improved_strategy_optimizer.py --symbol BTCUSDT --date-range 20200101-20260310 --n-trials 50
+
+    # 使用更多试验次数
+    python optuna_improved_strategy_optimizer.py --symbol BTCUSDT --date-range 20200101-20260310 --n-trials 100
 """
 
 import optuna
 import pandas as pd
 from datetime import datetime
 import asyncio
+import json
 import os
 import sys
 import argparse
@@ -22,30 +27,36 @@ from typing import Dict, List, Optional
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from market_aware_backtest import MarketAwareBacktestEngine
+from market_status_detector import (
+    ImprovedStatusAlgorithm, 
+    SupportResistanceDetector, 
+    BoxRangeDetector,
+    MarketStatus
+)
 
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s [%(levelname)s] %(message)s',
     datefmt='%Y-%m-%d %H:%M:%S'
 )
-logger = logging.getLogger("dual_thrust_optimizer")
+logger = logging.getLogger("optuna_improved_strategy_optimizer")
 
 optuna.logging.set_verbosity(optuna.logging.WARNING)
 
 
-class DualThrustOptimizer:
-    """Dual Thrust 参数优化器"""
+class OptunaImprovedStrategyOptimizer:
+    """Optuna Improved Strategy 参数优化器"""
     
     def __init__(self, symbol: str, date_range: str):
         self.symbol = symbol
         self.date_range = date_range
-        self.results_file = 'autofish_output/dual_thrust_optimization_results.csv'
-        self.report_file = 'autofish_output/dual_thrust_optimization_report.md'
+        self.results_file = 'autofish_output/optuna_improved_results.csv'
+        self.report_file = 'autofish_output/optuna_improved_report.md'
         self.results: List[Dict] = []
         self.best_params: Optional[Dict] = None
         self.best_value: float = 0.0
-        self._start_time: Optional[int] = None
-        self._end_time: Optional[int] = None
+        self._start_time: Optional[datetime] = None
+        self._end_time: Optional[datetime] = None
         
         os.makedirs('autofish_output', exist_ok=True)
         
@@ -72,35 +83,58 @@ class DualThrustOptimizer:
     
     def objective(self, trial: optuna.Trial) -> float:
         """优化目标函数"""
-        dual_thrust_params = {
-            'n_days': trial.suggest_int('n_days', 2, 7),
-            'k1': trial.suggest_float('k1', 0.3, 0.7),
-            'k2': trial.suggest_float('k2', 0.3, 0.7),
-            'k2_down_factor': trial.suggest_float('k2_down_factor', 0.5, 1.0),
-            'down_confirm_days': trial.suggest_int('down_confirm_days', 1, 3),
-            'cooldown_days': trial.suggest_int('cooldown_days', 1, 3),
+        market_params = {
+            'lookback_period': trial.suggest_int('lookback_period', 40, 90),
+            'min_range_duration': trial.suggest_int('min_range_duration', 5, 20),
+            'max_range_pct': trial.suggest_float('max_range_pct', 0.10, 0.25),
+            'breakout_threshold': trial.suggest_float('breakout_threshold', 0.02, 0.05),
+            'swing_window': trial.suggest_int('swing_window', 3, 7),
+            'merge_threshold': trial.suggest_float('merge_threshold', 0.02, 0.05),
+            'min_touches': trial.suggest_int('min_touches', 2, 5),
         }
         
         strategy_params = {
-            'grid_spacing': trial.suggest_float('grid_spacing', 0.008, 0.015),
-            'exit_profit': trial.suggest_float('exit_profit', 0.008, 0.015),
-            'stop_loss': trial.suggest_float('stop_loss', 0.08, 0.12),
-            'decay_factor': trial.suggest_float('decay_factor', 0.4, 0.6),
-            'max_entries': trial.suggest_int('max_entries', 2, 4),
+            'grid_spacing': trial.suggest_float('grid_spacing', 0.005, 0.02),
+            'exit_profit': trial.suggest_float('exit_profit', 0.005, 0.02),
+            'stop_loss': trial.suggest_float('stop_loss', 0.05, 0.12),
+            'decay_factor': trial.suggest_float('decay_factor', 0.3, 0.7),
+            'max_entries': trial.suggest_int('max_entries', 2, 6),
         }
         
         try:
-            result = asyncio.run(self._run_backtest(dual_thrust_params, strategy_params))
+            result = asyncio.run(self._run_backtest(market_params, strategy_params))
             
-            self._record_result(trial, dual_thrust_params, strategy_params, result)
+            self._record_result(trial, market_params, strategy_params, result)
             
             return result['score']
         except Exception as e:
             logger.error(f"Trial {trial.number} 失败: {e}")
             return 0.0
     
-    async def _run_backtest(self, dual_thrust_params: Dict, strategy_params: Dict) -> Dict:
+    async def _run_backtest(self, market_params: Dict, strategy_params: Dict) -> Dict:
         """运行回测并返回结果"""
+        sr_detector = SupportResistanceDetector({
+            'lookback_period': market_params['lookback_period'],
+            'swing_window': market_params['swing_window'],
+            'merge_threshold': market_params['merge_threshold'],
+            'min_touches': market_params['min_touches'],
+        })
+        
+        box_detector = BoxRangeDetector({
+            'min_duration': market_params['min_range_duration'],
+            'max_range_pct': market_params['max_range_pct'],
+            'lookback_period': market_params['lookback_period'],
+        })
+        
+        algorithm = ImprovedStatusAlgorithm({
+            'lookback_period': market_params['lookback_period'],
+            'min_range_duration': market_params['min_range_duration'],
+            'max_range_pct': market_params['max_range_pct'],
+            'breakout_threshold': market_params['breakout_threshold'],
+        })
+        algorithm.sr_detector = sr_detector
+        algorithm.box_detector = box_detector
+        
         config = {
             'symbol': self.symbol,
             'leverage': Decimal('10'),
@@ -113,17 +147,16 @@ class DualThrustOptimizer:
         }
         
         market_config = {
-            'algorithm': 'dual_thrust',
-            'n_days': dual_thrust_params['n_days'],
-            'k1': dual_thrust_params['k1'],
-            'k2': dual_thrust_params['k2'],
-            'k2_down_factor': dual_thrust_params['k2_down_factor'],
-            'down_confirm_days': dual_thrust_params['down_confirm_days'],
-            'cooldown_days': dual_thrust_params['cooldown_days'],
-            'min_market_klines': dual_thrust_params['n_days'] + 1,
+            'algorithm': 'improved',
+            'lookback_period': market_params['lookback_period'],
+            'min_range_duration': market_params['min_range_duration'],
+            'max_range_pct': market_params['max_range_pct'],
+            'breakout_threshold': market_params['breakout_threshold'],
+            'min_market_klines': market_params['lookback_period'],
         }
         
         engine = MarketAwareBacktestEngine(config, market_config)
+        engine.market_detector.algorithm = algorithm
         
         await engine.run(
             symbol=self.symbol,
@@ -134,7 +167,9 @@ class DualThrustOptimizer:
         
         score = self._calculate_score(engine.results)
         
-        net_profit = float(engine.results['total_profit'] - engine.results['total_loss']) if 'total_profit' in engine.results else 0.0
+        net_profit = float(engine.results['net_profit']) if 'net_profit' in engine.results else 0.0
+        if 'total_profit' in engine.results and 'total_loss' in engine.results:
+            net_profit = float(engine.results['total_profit'] - engine.results['total_loss'])
         
         total_trades = engine.results.get('total_trades', 0)
         win_trades = engine.results.get('win_trades', 0)
@@ -160,7 +195,7 @@ class DualThrustOptimizer:
         
         win_rate = (win_trades / total_trades * 100) if total_trades > 0 else 0
         
-        profit_score = min(max(net_profit / 5000, -1.0), 3.0)
+        profit_score = min(max(net_profit / 5000, -1.0), 2.0)
         
         winrate_score = win_rate / 100
         
@@ -175,13 +210,13 @@ class DualThrustOptimizer:
         
         return max(score, 0.0)
     
-    def _record_result(self, trial: optuna.Trial, dual_thrust_params: Dict, 
+    def _record_result(self, trial: optuna.Trial, market_params: Dict, 
                        strategy_params: Dict, result: Dict):
         """记录结果"""
         record = {
             'trial': trial.number,
             'timestamp': datetime.now().isoformat(),
-            **dual_thrust_params,
+            **market_params,
             **strategy_params,
             **result
         }
@@ -192,14 +227,14 @@ class DualThrustOptimizer:
     def run(self, n_trials: int = 50) -> optuna.Study:
         """运行优化"""
         print(f"\n{'='*60}")
-        print(f"开始 Dual Thrust 参数优化: {self.symbol}")
+        print(f"开始参数优化: {self.symbol}")
         print(f"时间范围: {self.date_range} ({self._total_days} 天)")
         print(f"试验次数: {n_trials}")
         print(f"{'='*60}\n")
         
         study = optuna.create_study(
             direction='maximize',
-            study_name='dual_thrust_optimization',
+            study_name='market_strategy_optimization',
             sampler=optuna.samplers.TPESampler(seed=42),
         )
         
@@ -231,7 +266,7 @@ class DualThrustOptimizer:
         """生成优化报告"""
         best = study.best_params
         
-        report = f"""# Dual Thrust 参数优化报告
+        report = f"""# Optuna Improved Strategy 参数优化报告
 
 ## 优化概览
 - 优化时间: {datetime.now().strftime('%Y-%m-%d %H:%M')}
@@ -242,15 +277,16 @@ class DualThrustOptimizer:
 
 ## 最佳参数组合
 
-### Dual Thrust 参数
+### 行情判断参数
 | 参数 | 最优值 |
 |------|--------|
-| n_days | {best['n_days']} |
-| k1 | {best['k1']:.4f} |
-| k2 | {best['k2']:.4f} |
-| k2_down_factor | {best['k2_down_factor']:.4f} |
-| down_confirm_days | {best['down_confirm_days']} |
-| cooldown_days | {best['cooldown_days']} |
+| lookback_period | {best['lookback_period']} |
+| min_range_duration | {best['min_range_duration']} |
+| max_range_pct | {best['max_range_pct']:.3f} |
+| breakout_threshold | {best['breakout_threshold']:.3f} |
+| swing_window | {best['swing_window']} |
+| merge_threshold | {best['merge_threshold']:.3f} |
+| min_touches | {best['min_touches']} |
 
 ### 交易策略参数
 | 参数 | 最优值 |
@@ -284,16 +320,11 @@ class DualThrustOptimizer:
 ## 最佳参数使用方法
 
 ```bash
+# 使用最佳参数运行回测
 python market_aware_backtest.py \\
     --symbol {self.symbol} \\
     --date-range {self.date_range} \\
-    --market-algorithm dual_thrust \\
-    --n-days {best['n_days']} \\
-    --k1 {best['k1']:.4f} \\
-    --k2 {best['k2']:.4f} \\
-    --k2-down-factor {best['k2_down_factor']:.4f} \\
-    --down-confirm-days {best['down_confirm_days']} \\
-    --cooldown-days {best['cooldown_days']} \\
+    --market-algorithm improved \\
     --decay-factor {best['decay_factor']:.2f} \\
     --stop-loss {best['stop_loss']:.2f} \\
     --total-amount 5000
@@ -301,13 +332,14 @@ python market_aware_backtest.py \\
 
 ## 参数说明
 
-### Dual Thrust 参数
-- **n_days**: 回看天数，用于计算 Range
-- **k1**: 上轨系数，控制上涨趋势识别敏感度
-- **k2**: 下轨系数，控制下跌趋势识别敏感度
-- **k2_down_factor**: 下跌敏感系数，< 1 时下跌识别更敏感
-- **down_confirm_days**: 下跌确认天数，需要连续跌破才确认
-- **cooldown_days**: 状态切换冷却期，避免频繁切换
+### 行情判断参数
+- **lookback_period**: 回看周期（天），用于判断行情的历史数据长度
+- **min_range_duration**: 最小震荡持续天数，识别震荡行情的最短持续时间
+- **max_range_pct**: 最大区间宽度，震荡区间的最大价格波动范围
+- **breakout_threshold**: 突破阈值，判断是否突破支撑/阻力位的阈值
+- **swing_window**: 局部高低点窗口，识别支撑/阻力位的窗口大小
+- **merge_threshold**: 价格合并阈值，将相近价格合并为同一支撑/阻力位
+- **min_touches**: 最少触及次数，支撑/阻力位的最少触及次数
 
 ### 交易策略参数
 - **grid_spacing**: 网格间距，相邻订单的价格间隔
@@ -323,13 +355,13 @@ python market_aware_backtest.py \\
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Dual Thrust 参数优化器")
+    parser = argparse.ArgumentParser(description="Optuna Improved Strategy 参数优化器")
     parser.add_argument('--symbol', default='BTCUSDT', help='交易对')
     parser.add_argument('--date-range', required=True, help='时间范围 (格式: yyyymmdd-yyyymmdd)')
     parser.add_argument('--n-trials', type=int, default=50, help='优化试验次数')
     args = parser.parse_args()
     
-    optimizer = DualThrustOptimizer(args.symbol, args.date_range)
+    optimizer = OptunaImprovedStrategyOptimizer(args.symbol, args.date_range)
     study = optimizer.run(n_trials=args.n_trials)
     
     print(f"\n最佳参数:")

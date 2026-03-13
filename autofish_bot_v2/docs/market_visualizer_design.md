@@ -134,11 +134,13 @@ for 每日状态 in 所有日期:
 - 使用独立的Grid区域显示状态色带
 - 优点：不干扰K线图主体
 - 支持：缩放和拖拽时色带自动跟随
+- **合并对比模式**：每个算法独立一条色带，多条色带依次排列在K线上方
 
 #### 模式2: K线上方色带
 - 在K线图上方叠加状态色带
 - 色带高度基于K线最高价计算
 - 使用ECharts markArea实现
+- **坐标系统**：使用数字索引而非日期字符串，确保单根K线也能正确显示色块
 
 ### 4.2 颜色方案
 
@@ -150,16 +152,54 @@ for 每日状态 in 所有日期:
 
 ### 4.3 ECharts 实现
 
+#### 单图表色带（主页/分屏对比）
 ```javascript
-// markArea 配置
+// markArea 配置 - 使用数字索引坐标
 markArea: {
     silent: true,
     data: [[
-        { xAxis: '2024-01-01', itemStyle: { color: 'rgba(239, 68, 68, 0.3)' } },
-        { xAxis: '2024-01-15', label: { formatter: '涨 (15天)' } }
+        { xAxis: startIndex, yAxis: barY, itemStyle: { color: 'rgba(239, 68, 68, 0.8)' } },
+        { xAxis: endIndex + 1, yAxis: barY + barHeight }
     ]]
 }
 ```
+
+#### 合并对比模式顶部色带
+```javascript
+// 为每个算法创建独立的色带Grid
+const colorBarHeight = 18;
+const colorBarGap = 4;
+
+for (let i = 0; i < numDatasets; i++) {
+    grids.push({
+        left: '5%', right: '5%',
+        top: 70 + i * (colorBarHeight + colorBarGap),
+        height: colorBarHeight,
+    });
+    // 每个算法独立的状态色带series
+}
+```
+
+### 4.4 对比模式设计
+
+#### 分屏对比
+- 每个测试结果独立显示在单独的图表中
+- 图表之间联动缩放
+- 支持顶部色带/K线上方色带两种渲染模式
+
+#### 合并对比
+- 所有测试结果在同一图表中叠加显示
+- **顶部色带模式**：每个算法一条独立色带，按算法顺序从上到下排列
+- **K线上方色带模式**：不同算法的色带在不同高度层显示，间距为 `priceRange * 0.08`
+
+### 4.5 色带间距参数
+
+| 参数 | 值 | 说明 |
+|------|-----|------|
+| gapRatio | 0.03 | 色带与K线最高价之间的间距比例 |
+| layerGap | priceRange * 0.08 | 多算法色带之间的层间距 |
+| colorBarHeight | 18px | 顶部色带高度 |
+| colorBarGap | 4px | 顶部色带之间的间距 |
 
 ## 5. 数据库设计
 
@@ -366,3 +406,4 @@ autofish_bot_v2/
 | 1.0 | 2024-03 | 初始版本，支持命令行模式 |
 | 2.0 | 2024-03 | 添加Web界面，支持测试管理 |
 | 3.0 | 2025-03 | 整合数据库和服务器模块，优化可视化效果 |
+| 3.1 | 2025-03-13 | 修复对比模式色带显示问题：<br>1. K线上方色带改用数字索引坐标，修复单根K线色块不显示问题<br>2. 合并对比模式顶部色带改为每个算法独立一条色带<br>3. 增大多条色带间距(layerGap: 0.04→0.08) |
