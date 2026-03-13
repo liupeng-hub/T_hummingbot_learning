@@ -50,15 +50,15 @@ class OptunaImprovedStrategyOptimizer:
     def __init__(self, symbol: str, date_range: str):
         self.symbol = symbol
         self.date_range = date_range
-        self.results_file = 'autofish_output/optuna_improved_results.csv'
-        self.report_file = 'autofish_output/optuna_improved_report.md'
+        self.results_file = 'out/market_optimization/optuna_improved_results.csv'
+        self.report_file = 'out/market_optimization/optuna_improved_report.md'
         self.results: List[Dict] = []
         self.best_params: Optional[Dict] = None
         self.best_value: float = 0.0
         self._start_time: Optional[datetime] = None
         self._end_time: Optional[datetime] = None
         
-        os.makedirs('autofish_output', exist_ok=True)
+        os.makedirs('out/market_optimization', exist_ok=True)
         
         self._parse_date_range()
     

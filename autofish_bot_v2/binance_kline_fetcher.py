@@ -60,7 +60,7 @@ HTTPS_PROXY = os.getenv("HTTPS_PROXY", "")
 class KlineFetcher:
     """K 线获取和缓存管理"""
     
-    def __init__(self, cache_dir: str = "kline_cache"):
+    def __init__(self, cache_dir: str = "database"):
         self.cache_dir = cache_dir
         self.db_path = os.path.join(cache_dir, "klines.db")
         self._init_db()

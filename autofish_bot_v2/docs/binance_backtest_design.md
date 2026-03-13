@@ -285,8 +285,8 @@ python binance_backtest.py --symbol SOLUSDT --interval 1m --limit 1000 --stop-lo
 
 | 文件 | 说明 |
 |------|------|
-| autofish_output/binance_{symbol}_backtest_report.md | 回测报告 |
-| autofish_output/binance_{symbol}_amplitude_config.json | 振幅配置（如果执行了分析） |
+| out/autofish/binance_{symbol}_backtest_report.md | 回测报告 |
+| out/autofish/binance_{symbol}_amplitude_config.json | 振幅配置（如果执行了分析） |
 
 ### 7.2 文件命名规则
 

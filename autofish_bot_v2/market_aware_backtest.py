@@ -599,7 +599,7 @@ class MarketAwareBacktestEngine(BacktestEngine):
         """保存回测报告（扩展）"""
         import os
         
-        output_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "autofish_output")
+        output_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "out/market_backtest")
         os.makedirs(output_dir, exist_ok=True)
         
         if date_range:
@@ -706,7 +706,7 @@ class MarketAwareBacktestEngine(BacktestEngine):
         """保存回测历史记录"""
         import os
         
-        output_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "autofish_output")
+        output_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "out/market_backtest")
         os.makedirs(output_dir, exist_ok=True)
         
         filepath = os.path.join(output_dir, f"binance_{symbol}_market_aware_history.md")

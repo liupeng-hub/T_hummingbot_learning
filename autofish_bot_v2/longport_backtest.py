@@ -439,7 +439,7 @@ class LongPortBacktestEngine:
     
     def save_report(self, symbol: str):
         """保存回测报告到 Markdown 文件"""
-        output_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "autofish_output")
+        output_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "out/autofish")
         os.makedirs(output_dir, exist_ok=True)
         
         source = "longport" if Autofish_AmplitudeAnalyzer.is_longport_symbol(symbol) else "binance"

@@ -392,7 +392,7 @@ autofish_bot_v2/
 ├── binance_kline_fetcher.py      # 数据获取
 ├── templates/
 │   └── index.html                # Web界面
-├── market_visualizer_out/        # 输出目录
+├── out/market_visualizer/     # 输出目录
 │   ├── market_visualizer.db      # SQLite数据库
 │   └── *.md, *.png, *.html       # 输出文件
 └── logs/

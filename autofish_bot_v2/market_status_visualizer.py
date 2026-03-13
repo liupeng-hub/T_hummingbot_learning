@@ -144,9 +144,9 @@ class MarketVisualizerDB:
     def __init__(self, db_path: str = None):
         if db_path is None:
             base_dir = os.path.dirname(os.path.abspath(__file__))
-            output_dir = os.path.join(base_dir, 'market_visualizer_out')
+            output_dir = os.path.join(base_dir, 'out/market_visualizer')
             os.makedirs(output_dir, exist_ok=True)
-            db_path = os.path.join(output_dir, 'market_visualizer.db')
+            db_path = os.path.join(base_dir, 'database/market_visualizer.db')
         
         self.db_path = db_path
         self._init_db()
@@ -1381,7 +1381,7 @@ class MarketStatusVisualizer:
     
     def __init__(self, args):
         self.args = args
-        self.output_dir = args.output_dir or 'market_visualizer_out'
+        self.output_dir = args.output_dir or 'out/market_visualizer'
         
         os.makedirs(self.output_dir, exist_ok=True)
         
@@ -1389,7 +1389,7 @@ class MarketStatusVisualizer:
         self.report_generator = ReportGenerator(self.output_dir)
         self.chart_visualizer = ChartVisualizer(self.output_dir)
         self.web_chart_visualizer = WebChartVisualizer(self.output_dir)
-        self.db = MarketVisualizerDB(os.path.join(self.output_dir, 'market_visualizer.db'))
+        self.db = MarketVisualizerDB('database/market_visualizer.db')
     
     def _parse_date_range(self, date_range: str) -> Tuple[datetime, datetime]:
         """解析日期范围"""
@@ -1739,10 +1739,11 @@ class MarketVisualizerServer:
     
     def __init__(self, port: int = 5001, output_dir: str = None):
         self.port = port
-        self.output_dir = output_dir or os.path.join(os.path.dirname(os.path.abspath(__file__)), 'market_visualizer_out')
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        self.output_dir = output_dir or os.path.join(base_dir, 'out/market_visualizer')
         os.makedirs(self.output_dir, exist_ok=True)
         
-        self.db = MarketVisualizerDB(os.path.join(self.output_dir, 'market_visualizer.db'))
+        self.db = MarketVisualizerDB(os.path.join(base_dir, 'database/market_visualizer.db'))
         
         self._setup_logging()
         self.app = self._create_app()
@@ -1768,8 +1769,7 @@ class MarketVisualizerServer:
         """创建Flask应用"""
         base_dir = os.path.dirname(os.path.abspath(__file__))
         app = Flask(__name__, 
-                    template_folder=os.path.join(base_dir, 'templates'),
-                    static_folder=os.path.join(base_dir, 'static'))
+                    template_folder=os.path.join(base_dir, 'templates'))
         CORS(app)
         
         self.logger.info("服务器初始化完成")
@@ -2258,7 +2258,7 @@ def main():
     parser.add_argument('--algorithm', default='dual_thrust', 
                         choices=['dual_thrust', 'improved', 'always_ranging'],
                         help='行情判断算法')
-    parser.add_argument('--output-dir', default='market_visualizer_out', help='输出目录')
+    parser.add_argument('--output-dir', default='out/market_visualizer', help='输出目录')
     
     parser.add_argument('--generate-md', action='store_true', help='生成MD报告文件')
     parser.add_argument('--generate-png', action='store_true', help='生成PNG图表文件')

@@ -108,8 +108,8 @@ python market_status_detector.py --symbol ETHUSDT --days 30 --algorithm adx
 
 | 文件 | 说明 |
 |------|------|
-| `autofish_output/binance_{symbol}_market_report_{interval}_{days}d.md` | 详细分析报告 |
-| `autofish_output/binance_{symbol}_market_history.md` | 历史记录汇总 |
+| `out/market_backtest/binance_{symbol}_market_report_{interval}_{days}d.md` | 详细分析报告 |
+| `out/market_backtest/binance_{symbol}_market_history.md` | 历史记录汇总 |
 
 ---
 
@@ -151,10 +151,10 @@ python market_status_visualizer.py --server --port 5001
 
 | 文件 | 说明 |
 |------|------|
-| `market_visualizer_out/market_visualizer_{symbol}_{interval}_{date_range}_{algorithm}_{seq}.md` | MD 分析报告 |
-| `market_visualizer_out/market_visualizer_{symbol}_{interval}_{date_range}_{algorithm}_{seq}.png` | PNG 图表 |
-| `market_visualizer_out/market_visualizer_{symbol}_{interval}_{date_range}_{algorithm}_{seq}.html` | 交互式 HTML |
-| `market_visualizer_out/market_visualizer.db` | SQLite 数据库 |
+| `out/market_visualizer/market_visualizer_{symbol}_{interval}_{date_range}_{algorithm}_{seq}.md` | MD 分析报告 |
+| `out/market_visualizer/market_visualizer_{symbol}_{interval}_{date_range}_{algorithm}_{seq}.png` | PNG 图表 |
+| `out/market_visualizer/market_visualizer_{symbol}_{interval}_{date_range}_{algorithm}_{seq}.html` | 交互式 HTML |
+| `database/market_visualizer.db` | SQLite 数据库 |
 
 **Web API 接口**:
 
@@ -216,8 +216,8 @@ python market_aware_backtest.py --symbol BTCUSDT --days 30 --market-algorithm al
 
 | 文件 | 说明 |
 |------|------|
-| `autofish_output/binance_{symbol}_market_aware_backtest_{days}d_{date_range}.md` | 详细回测报告 |
-| `autofish_output/binance_{symbol}_market_aware_history.md` | 历史记录汇总 |
+| `out/market_backtest/binance_{symbol}_market_aware_backtest_{days}d_{date_range}.md` | 详细回测报告 |
+| `out/market_backtest/binance_{symbol}_market_aware_history.md` | 历史记录汇总 |
 
 ---
 

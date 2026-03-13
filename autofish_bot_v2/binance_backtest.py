@@ -593,7 +593,7 @@ class BacktestEngine:
         """
         import os
         
-        output_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "autofish_output")
+        output_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "out/autofish")
         os.makedirs(output_dir, exist_ok=True)
         
         if date_range:

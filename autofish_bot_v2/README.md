@@ -39,11 +39,12 @@ autofish_bot_v2/
 │   ├── binance_live.log            # Binance 实盘日志
 │   ├── binance_live_error.log      # Binance 实盘错误日志
 │   └── amplitude_analyzer.log      # 振幅分析日志
-├── autofish_output/                # 输出目录
-│   ├── {source}_{symbol}_amplitude_config.json  # 振幅配置
-│   ├── {source}_{symbol}_amplitude_report.md    # 振幅分析报告
-│   └── {source}_{symbol}_backtest_report.md     # 回测报告
-├── market_visualizer_out/          # 行情可视化输出目录
+├── out/                           # 输出目录
+│   ├── autofish/                  # 基础振幅分析和普通回测输出
+│   ├── market_backtest/           # 行情感知回测输出
+│   ├── market_visualizer/         # 行情可视化输出
+│   └── market_optimization/       # 参数优化输出
+├── database/                      # 数据库文件
 │   ├── market_visualizer.db        # SQLite 数据库
 │   └── *.md, *.png, *.html         # 可视化输出文件
 ├── templates/                      # Web 界面模板
@@ -113,8 +114,8 @@ python autofish_core.py --help
 
 | 文件 | 说明 |
 |------|------|
-| `autofish_output/{source}_{symbol}_amplitude_config.json` | 配置文件（包含 d=0.5 和 d=1.0 两种策略） |
-| `autofish_output/{source}_{symbol}_amplitude_report.md` | 分析报告（包含完整数据和说明） |
+| `out/autofish/{source}_{symbol}_amplitude_config.json` | 配置文件（包含 d=0.5 和 d=1.0 两种策略） |
+| `out/autofish/{source}_{symbol}_amplitude_report.md` | 分析报告（包含完整数据和说明） |
 | `logs/amplitude_analyzer.log` | 振幅分析日志 |
 
 ### 2. 行情状态检测
@@ -146,8 +147,8 @@ python market_status_detector.py --symbol ETHUSDT --days 30 --algorithm adx
 
 | 文件 | 说明 |
 |------|------|
-| `autofish_output/binance_{symbol}_market_report_{interval}_{days}d.md` | 详细分析报告 |
-| `autofish_output/binance_{symbol}_market_history.md` | 历史记录汇总 |
+| `out/market_backtest/binance_{symbol}_market_report_{interval}_{days}d.md` | 详细分析报告 |
+| `out/market_backtest/binance_{symbol}_market_history.md` | 历史记录汇总 |
 
 ### 3. 行情可视化
 
@@ -170,10 +171,10 @@ python market_status_visualizer.py --server --port 5001
 
 | 文件 | 说明 |
 |------|------|
-| `market_visualizer_out/market_visualizer_{symbol}_{interval}_{date_range}_{algorithm}_{seq}.md` | MD 分析报告 |
-| `market_visualizer_out/market_visualizer_{symbol}_{interval}_{date_range}_{algorithm}_{seq}.png` | PNG 图表 |
-| `market_visualizer_out/market_visualizer_{symbol}_{interval}_{date_range}_{algorithm}_{seq}.html` | 交互式 HTML |
-| `market_visualizer_out/market_visualizer.db` | SQLite 数据库 |
+| `out/market_visualizer/market_visualizer_{symbol}_{interval}_{date_range}_{algorithm}_{seq}.md` | MD 分析报告 |
+| `out/market_visualizer/market_visualizer_{symbol}_{interval}_{date_range}_{algorithm}_{seq}.png` | PNG 图表 |
+| `out/market_visualizer/market_visualizer_{symbol}_{interval}_{date_range}_{algorithm}_{seq}.html` | 交互式 HTML |
+| `database/market_visualizer.db` | SQLite 数据库 |
 
 详细说明请参考 [行情可视化设计文档](docs/market_visualizer_design.md)
 
@@ -475,7 +476,7 @@ HTTPS_PROXY=http://127.0.0.1:1087
 
 ## 配置文件格式
 
-`autofish_output/binance_BTCUSDT_amplitude_config.json`：
+`out/autofish/binance_BTCUSDT_amplitude_config.json`：
 
 ```json
 {
@@ -577,36 +578,46 @@ HTTPS_PROXY=http://127.0.0.1:1087
 | logs/amplitude_analyzer.log | 振幅分析日志 |
 | logs/market_visualizer_server.log | 行情可视化服务器日志 |
 
-### 振幅分析输出
+### out/autofish - 基础振幅分析和普通回测输出
 
 | 文件 | 说明 |
 |------|------|
-| autofish_output/{source}_{symbol}_amplitude_config.json | 振幅配置 |
-| autofish_output/{source}_{symbol}_amplitude_report.md | 振幅分析报告 |
+| out/autofish/{source}_{symbol}_amplitude_config.json | 振幅配置 |
+| out/autofish/{source}_{symbol}_amplitude_report.md | 振幅分析报告 |
+| out/autofish/{source}_{symbol}_backtest_report.md | 回测报告 |
 
-### 回测输出
-
-| 文件 | 说明 |
-|------|------|
-| autofish_output/{source}_{symbol}_backtest_report.md | Binance 回测报告 |
-| autofish_output/{source}_{symbol}_market_aware_backtest_{days}d_{date_range}.md | 行情感知回测报告 |
-| autofish_output/{source}_{symbol}_market_aware_history.md | 行情感知回测历史记录 |
-
-### 行情检测输出
+### out/market_backtest - 行情感知回测输出
 
 | 文件 | 说明 |
 |------|------|
-| autofish_output/binance_{symbol}_market_report_{interval}_{days}d.md | 行情检测报告 |
-| autofish_output/binance_{symbol}_market_history.md | 行情检测历史记录 |
+| out/market_backtest/{source}_{symbol}_market_aware_backtest_{days}d_{date_range}.md | 行情感知回测报告 |
+| out/market_backtest/{source}_{symbol}_market_aware_history.md | 行情感知回测历史记录 |
+| out/market_backtest/binance_{symbol}_market_report_{interval}_{days}d.md | 行情检测报告 |
+| out/market_backtest/binance_{symbol}_market_history.md | 行情检测历史记录 |
 
-### 行情可视化输出
+### out/market_visualizer - 行情可视化输出
 
 | 文件 | 说明 |
 |------|------|
-| market_visualizer_out/market_visualizer.db | SQLite 数据库 |
-| market_visualizer_out/market_visualizer_{symbol}_{interval}_{date_range}_{algorithm}_{seq}.md | MD 分析报告 |
-| market_visualizer_out/market_visualizer_{symbol}_{interval}_{date_range}_{algorithm}_{seq}.png | PNG 图表 |
-| market_visualizer_out/market_visualizer_{symbol}_{interval}_{date_range}_{algorithm}_{seq}.html | 交互式 HTML |
+| out/market_visualizer/market_visualizer_{symbol}_{interval}_{date_range}_{algorithm}_{seq}.md | MD 分析报告 |
+| out/market_visualizer/market_visualizer_{symbol}_{interval}_{date_range}_{algorithm}_{seq}.png | PNG 图表 |
+| out/market_visualizer/market_visualizer_{symbol}_{interval}_{date_range}_{algorithm}_{seq}.html | 交互式 HTML |
+
+### out/market_optimization - 参数优化输出
+
+| 文件 | 说明 |
+|------|------|
+| out/market_optimization/optuna_dual_thrust_results.csv | Dual Thrust 优化结果 |
+| out/market_optimization/optuna_dual_thrust_report.md | Dual Thrust 优化报告 |
+| out/market_optimization/optuna_improved_results.csv | Improved 优化结果 |
+| out/market_optimization/optuna_improved_report.md | Improved 优化报告 |
+
+### database - 数据库文件
+
+| 文件 | 说明 |
+|------|------|
+| database/klines.db | K线缓存数据库 |
+| database/market_visualizer.db | 可视化数据库 |
 
 ## 相关文档
 

@@ -366,8 +366,8 @@ timestamp = candle.timestamp // 1000
 
 | 文件 | 说明 |
 |------|------|
-| autofish_output/longport_{symbol}_backtest_report.md | 回测报告 |
-| autofish_output/longport_{symbol}_amplitude_config.json | 振幅配置（如果执行了分析） |
+| out/autofish/longport_{symbol}_backtest_report.md | 回测报告 |
+| out/autofish/longport_{symbol}_amplitude_config.json | 振幅配置（如果执行了分析） |
 
 ### 8.2 文件命名规则
 

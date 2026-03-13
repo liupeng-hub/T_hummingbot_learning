@@ -947,7 +947,7 @@ class Autofish_AmplitudeAnalyzer:
     VALID_AMPLITUDE_MIN = 1
     
     def __init__(self, symbol: str = "BTCUSDT", interval: str = "1d", limit: int = 1000, 
-                 leverage: int = 10, source: str = "binance", output_dir: str = "autofish_output",
+                 leverage: int = 10, source: str = "binance", output_dir: str = "out/autofish",
                  log_dir: str = "logs", entry_strategy: dict = None):
         self.symbol = symbol
         self.interval = interval
@@ -1590,7 +1590,7 @@ class Autofish_AmplitudeAnalyzer:
 class Autofish_AmplitudeConfig:
     """振幅配置加载器"""
     
-    def __init__(self, config_path: str = None, symbol: str = None, output_dir: str = "autofish_output",
+    def __init__(self, config_path: str = None, symbol: str = None, output_dir: str = "out/autofish",
                  decay_factor: Decimal = Decimal("0.5")):
         if config_path is None:
             if symbol is None:
@@ -1710,7 +1710,7 @@ class Autofish_AmplitudeConfig:
         })
 
     @classmethod
-    def load_latest(cls, symbol: str = "BTCUSDT", output_dir: str = "autofish_output", 
+    def load_latest(cls, symbol: str = "BTCUSDT", output_dir: str = "out/autofish", 
                     decay_factor: Decimal = Decimal("0.5")) -> Optional['Autofish_AmplitudeConfig']:
         """加载最新配置"""
         config = cls(symbol=symbol, output_dir=output_dir, decay_factor=decay_factor)

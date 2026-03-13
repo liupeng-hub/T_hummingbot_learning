@@ -421,8 +421,8 @@ python market_aware_backtest.py --symbol BTCUSDT --date-range "20230101-20230331
   停止时间占比: 0.0%
 ============================================================
 
-📄 回测报告已保存: autofish_output/binance_BTCUSDT_market_aware_backtest_206d_20220616-20230107.md
-📊 历史记录已追加: autofish_output/binance_BTCUSDT_market_aware_history.md
+📄 回测报告已保存: out/market_backtest/binance_BTCUSDT_market_aware_backtest_206d_20220616-20230107.md
+📊 历史记录已追加: out/market_backtest/binance_BTCUSDT_market_aware_history.md
 ```
 
 ### 历史记录格式

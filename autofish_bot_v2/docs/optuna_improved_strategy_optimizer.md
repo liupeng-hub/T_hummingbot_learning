@@ -69,8 +69,8 @@ python optuna_improved_strategy_optimizer.py --symbol ETHUSDT --date-range 20230
 ### 输出结果
 
 1.  **控制台输出**: 实时显示每次试验的参数和得分，以及最终的最佳参数。
-2.  **结果文件**: `autofish_output/optuna_improved_results.csv`，包含所有试验的详细数据。
-3.  **优化报告**: `autofish_output/optuna_improved_report.md`，包含最佳参数总结、参数重要性分析和使用建议。
+2.  **结果文件**: `out/market_optimization/optuna_improved_results.csv`，包含所有试验的详细数据。
+3.  **优化报告**: `out/market_optimization/optuna_improved_report.md`，包含最佳参数总结、参数重要性分析和使用建议。
 
 ## 类结构
 

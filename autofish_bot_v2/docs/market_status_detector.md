@@ -108,6 +108,6 @@ else:
 
 ## 输出报告
 
-运行分析后，会在 `autofish_output` 目录下生成报告：
+运行分析后，会在 `out/market_backtest` 目录下生成报告：
 1.  `binance_BTCUSDT_market_report_1m_30d.md`: 详细分析报告，包含区间划分和状态变化。
 2.  `binance_BTCUSDT_market_history.md`: 历史记录汇总表。

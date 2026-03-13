@@ -3,6 +3,9 @@
 *.sqlite
 *.sqlite3
 
+# Output directories
+out/
+
 # Python
 __pycache__/
 *.py[cod]

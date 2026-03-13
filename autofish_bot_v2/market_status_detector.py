@@ -1568,7 +1568,7 @@ class MarketStatusDetector:
         else:
             filename = f"binance_{symbol}_market_report_{interval}.md"
         
-        output_dir = "autofish_output"
+        output_dir = "out/market_backtest"
         os.makedirs(output_dir, exist_ok=True)
         filepath = os.path.join(output_dir, filename)
         
@@ -1624,7 +1624,7 @@ class MarketStatusDetector:
         interval = interval or getattr(self, '_interval', '1m')
         
         filename = f"binance_{symbol}_market_history.md"
-        output_dir = "autofish_output"
+        output_dir = "out/market_backtest"
         os.makedirs(output_dir, exist_ok=True)
         filepath = os.path.join(output_dir, filename)
         
