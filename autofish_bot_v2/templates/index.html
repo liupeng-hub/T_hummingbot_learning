@@ -27,56 +27,77 @@
         
         .main-container { display: flex; height: calc(100vh - 68px); min-width: 1200px; }
         
-        .sidebar { width: 320px; min-width: 280px; max-width: 380px; background: white; border-right: 1px solid #e0e0e0; display: flex; flex-direction: column; }
-        .sidebar-header { padding: 16px; border-bottom: 1px solid #e0e0e0; }
-        .filter-group { margin-bottom: 12px; }
+        .sidebar { width: 280px; min-width: 260px; max-width: 320px; background: white; border-right: 1px solid #e0e0e0; display: flex; flex-direction: column; }
+        .sidebar-header { padding: 12px; border-bottom: 1px solid #e0e0e0; }
+        .filter-group { margin-bottom: 10px; }
         .filter-group label { display: block; font-size: 12px; color: #666; margin-bottom: 4px; }
-        .filter-group select, .filter-group input { width: 100%; padding: 8px 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 14px; }
+        .filter-group select, .filter-group input { width: 100%; padding: 6px 10px; border: 1px solid #ddd; border-radius: 6px; font-size: 13px; }
         
         .sidebar-content { flex: 1; overflow-y: auto; padding: 8px; }
-        .test-item { padding: 12px; border: 1px solid #e0e0e0; border-radius: 8px; margin-bottom: 8px; cursor: pointer; transition: all 0.2s; }
+        .test-item { padding: 10px; border: 1px solid #e0e0e0; border-radius: 8px; margin-bottom: 6px; cursor: pointer; transition: all 0.2s; }
         .test-item:hover { background: #f8f9fa; }
         .test-item.selected { border-color: #667eea; background: #f0f4ff; }
-        .test-item-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
-        .test-item-name { font-weight: 600; color: #333; }
-        .test-item-status { padding: 2px 8px; border-radius: 12px; font-size: 12px; }
+        .test-item-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+        .test-item-name { font-weight: 500; color: #333; font-size: 13px; }
+        .test-item-status { padding: 2px 8px; border-radius: 12px; font-size: 11px; }
         .status-pending { background: #fef3c7; color: #92400e; }
         .status-running { background: #dbeafe; color: #1e40af; }
         .status-completed { background: #dcfce7; color: #166534; }
         .status-failed { background: #fee2e2; color: #991b1b; }
-        .test-item-info { font-size: 12px; color: #666; display: flex; gap: 12px; flex-wrap: wrap; }
-        .test-item-params { margin-top: 8px; display: flex; gap: 6px; flex-wrap: wrap; }
-        .param-tag { font-size: 11px; padding: 2px 6px; background: #e0e7ff; color: #3730a3; border-radius: 4px; }
+        .test-item-info { font-size: 11px; color: #666; display: flex; gap: 8px; flex-wrap: wrap; }
+        .test-item-params { margin-top: 6px; display: flex; gap: 4px; flex-wrap: wrap; }
+        .param-tag { font-size: 10px; padding: 1px 5px; background: #e0e7ff; color: #3730a3; border-radius: 3px; }
         
-        .sidebar-footer { padding: 12px 16px; border-top: 1px solid #e0e0e0; display: flex; gap: 8px; }
-        .sidebar-footer .btn { flex: 1; }
+        .sidebar-footer { padding: 10px 12px; border-top: 1px solid #e0e0e0; display: flex; gap: 8px; }
+        .sidebar-footer .btn { flex: 1; padding: 8px 12px; font-size: 13px; }
         
         .content-area { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
         
-        .chart-section { flex: 1; padding: 16px; display: flex; flex-direction: column; overflow: hidden; }
-        .chart-container { flex: 1; display: flex; flex-direction: column; background: white; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); overflow: hidden; }
-        .chart-header { padding: 16px; border-bottom: 1px solid #e0e0e0; display: flex; justify-content: space-between; align-items: center; flex-shrink: 0; }
-        .chart-title { font-size: 16px; font-weight: 600; color: #333; }
-        .chart-info { font-size: 14px; color: #666; }
+        .chart-section { flex: 1; padding: 12px; display: flex; flex-direction: column; overflow: hidden; }
+        
+        .chart-layout { display: flex; flex: 1; gap: 12px; overflow: hidden; }
+        
+        .chart-sidebar { width: 140px; flex-shrink: 0; display: flex; flex-direction: column; gap: 8px; }
+        
+        .stats-sidebar { background: white; border-radius: 8px; padding: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+        .stats-sidebar h3 { font-size: 12px; color: #666; margin-bottom: 12px; text-align: center; border-bottom: 1px solid #eee; padding-bottom: 8px; }
+        .stat-item { display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid #f0f0f0; }
+        .stat-item:last-child { border-bottom: none; }
+        .stat-label { font-size: 12px; color: #666; }
+        .stat-value { font-size: 14px; font-weight: 600; }
+        .stat-value.total { color: #333; }
+        .stat-value.ranging { color: #f59e0b; }
+        .stat-value.up { color: #ef4444; }
+        .stat-value.down { color: #22c55e; }
+        
+        .render-mode-panel { background: white; border-radius: 8px; padding: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+        .render-mode-panel h3 { font-size: 12px; color: #666; margin-bottom: 8px; }
+        .render-mode-panel select { width: 100%; padding: 6px 8px; border: 1px solid #ddd; border-radius: 4px; font-size: 12px; }
+        
+        .legend-panel { background: white; border-radius: 8px; padding: 10px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+        .legend-panel h3 { font-size: 12px; color: #666; margin-bottom: 8px; }
+        .legend-item { display: flex; align-items: center; gap: 6px; font-size: 11px; margin-bottom: 4px; }
+        .legend-item:last-child { margin-bottom: 0; }
+        .legend-color { width: 16px; height: 16px; border-radius: 3px; }
+        .legend-ranging { background: rgba(245, 158, 11, 0.5); }
+        .legend-up { background: rgba(239, 68, 68, 0.5); }
+        .legend-down { background: rgba(34, 197, 94, 0.5); }
+        
+        .chart-main { flex: 1; display: flex; flex-direction: column; background: white; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); overflow: hidden; }
+        .chart-header { padding: 12px 16px; border-bottom: 1px solid #e0e0e0; display: flex; justify-content: space-between; align-items: center; flex-shrink: 0; }
+        .chart-title { font-size: 15px; font-weight: 600; color: #333; }
+        .chart-info { font-size: 13px; color: #666; }
         #chart { flex: 1; width: 100%; min-height: 300px; }
         
-        .stats-row { display: flex; gap: 16px; padding: 16px; background: #f8f9fa; flex-shrink: 0; }
-        .stat-card { flex: 1; background: white; padding: 16px; border-radius: 8px; text-align: center; }
-        .stat-card h3 { font-size: 12px; color: #666; margin-bottom: 8px; }
-        .stat-card .value { font-size: 24px; font-weight: bold; }
-        .stat-card.ranging .value { color: #f59e0b; }
-        .stat-card.up .value { color: #ef4444; }
-        .stat-card.down .value { color: #22c55e; }
-        
         .table-section { background: white; border-top: 1px solid #e0e0e0; flex-shrink: 0; max-height: 200px; display: flex; flex-direction: column; }
-        .table-header { padding: 16px; border-bottom: 1px solid #e0e0e0; }
-        .table-header h2 { font-size: 16px; color: #333; }
+        .table-header { padding: 12px 16px; border-bottom: 1px solid #e0e0e0; cursor: pointer; }
+        .table-header h2 { font-size: 14px; color: #333; display: flex; align-items: center; gap: 8px; }
         .table-container { flex: 1; overflow-y: auto; }
-        table { width: 100%; border-collapse: collapse; font-size: 14px; }
-        th, td { padding: 12px 16px; text-align: left; border-bottom: 1px solid #eee; }
+        table { width: 100%; border-collapse: collapse; font-size: 13px; }
+        th, td { padding: 10px 12px; text-align: left; border-bottom: 1px solid #eee; }
         th { background: #f8f9fa; font-weight: 600; position: sticky; top: 0; }
         tr:hover { background: #f8f9fa; }
-        .status-badge { padding: 4px 12px; border-radius: 12px; font-size: 12px; font-weight: 500; }
+        .status-badge { padding: 3px 10px; border-radius: 12px; font-size: 11px; font-weight: 500; }
         .badge-ranging { background: #dcfce7; color: #166534; }
         .badge-up { background: #fee2e2; color: #991b1b; }
         .badge-down { background: #dbeafe; color: #1e40af; }
@@ -100,32 +121,24 @@
         .param-item input { flex: 1; padding: 6px 10px; }
         .modal-footer { padding: 16px 20px; border-top: 1px solid #e0e0e0; display: flex; justify-content: flex-end; gap: 12px; }
         
-        .compare-container { display: flex; flex-direction: column; gap: 16px; padding: 16px; height: 100%; overflow-y: auto; }
-        .compare-item { width: 100%; border: 1px solid #e0e0e0; border-radius: 8px; overflow: hidden; }
-        .compare-item-header { background: #f5f5f5; padding: 12px 16px; border-bottom: 1px solid #e0e0e0; display: flex; justify-content: space-between; align-items: center; }
-        .compare-item-title { font-weight: 600; color: #333; }
-        .compare-item-stats { display: flex; gap: 24px; font-size: 14px; color: #666; }
-        .compare-item-chart { height: 350px; width: 100%; }
+        .compare-section { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+        .compare-scroll { flex: 1; overflow-y: auto; padding: 12px; }
+        .compare-item { width: 100%; border: 1px solid #e0e0e0; border-radius: 8px; overflow: hidden; margin-bottom: 12px; background: white; }
+        .compare-item-header { background: #f5f5f5; padding: 10px 16px; border-bottom: 1px solid #e0e0e0; display: flex; justify-content: space-between; align-items: center; }
+        .compare-item-title { font-weight: 600; color: #333; font-size: 14px; }
+        .compare-item-stats { display: flex; gap: 16px; font-size: 12px; color: #666; }
+        .compare-item-chart { height: 300px; width: 100%; }
+        
+        .compare-table-section { background: white; border-top: 1px solid #e0e0e0; flex-shrink: 0; }
+        .compare-table-header { padding: 12px 16px; border-bottom: 1px solid #e0e0e0; }
+        .compare-table-header h2 { font-size: 14px; color: #333; }
         
         .empty-state { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; color: #999; }
         .empty-state svg { width: 64px; height: 64px; margin-bottom: 16px; }
         .empty-state p { font-size: 16px; }
         
         .checkbox-wrapper { display: flex; align-items: center; gap: 8px; }
-        .checkbox-wrapper input[type="checkbox"] { width: 18px; height: 18px; cursor: pointer; }
-        
-        .legend { display: flex; gap: 20px; justify-content: center; padding: 12px; background: white; border-radius: 8px; margin-bottom: 16px; }
-        .legend-item { display: flex; align-items: center; gap: 8px; font-size: 14px; }
-        .legend-color { width: 24px; height: 24px; border-radius: 4px; }
-        .legend-ranging { background: rgba(245, 158, 11, 0.3); }
-        .legend-up { background: rgba(239, 68, 68, 0.3); }
-        .legend-down { background: rgba(34, 197, 94, 0.3); }
-        
-        @media (min-width: 2560px) {
-            .sidebar { width: 380px; }
-            #chart { height: 700px; }
-            .compare-item-chart { height: 380px; }
-        }
+        .checkbox-wrapper input[type="checkbox"] { width: 16px; height: 16px; cursor: pointer; }
     </style>
 </head>
 <body>
@@ -171,7 +184,7 @@
                 </div>
                 
                 <div class="sidebar-content">
-                    <div v-if="compareMode" style="padding: 8px; background: #f0f4ff; border-radius: 6px; margin-bottom: 8px; font-size: 13px; color: #666;">
+                    <div v-if="compareMode" style="padding: 8px; background: #f0f4ff; border-radius: 6px; margin-bottom: 8px; font-size: 12px; color: #666;">
                         已选择: {{ selectedCases.length }}/4 个测试
                     </div>
                     
@@ -180,7 +193,7 @@
                          :class="{ selected: compareMode ? selectedCases.includes(tc.id) : selectedCase?.id === tc.id }"
                          @click="onTestCaseClick(tc)">
                         
-                        <div v-if="compareMode" class="checkbox-wrapper" style="margin-bottom: 8px;">
+                        <div v-if="compareMode" class="checkbox-wrapper" style="margin-bottom: 6px;">
                             <input type="checkbox" :checked="selectedCases.includes(tc.id)" @click.stop>
                             <span class="test-item-name">{{ tc.name }}</span>
                         </div>
@@ -220,14 +233,8 @@
             
             <main class="content-area">
                 <template v-if="compareResults.length > 0">
-                    <div class="chart-section">
-                        <div class="legend">
-                            <div class="legend-item"><div class="legend-color legend-ranging"></div><span>震荡区间</span></div>
-                            <div class="legend-item"><div class="legend-color legend-up"></div><span>上涨趋势</span></div>
-                            <div class="legend-item"><div class="legend-color legend-down"></div><span>下跌趋势</span></div>
-                        </div>
-                        
-                        <div class="compare-container" :class="'count-' + compareResults.length">
+                    <div class="compare-section">
+                        <div class="compare-scroll">
                             <div v-for="(result, index) in compareResults" :key="result.test_case.id" class="compare-item">
                                 <div class="compare-item-header">
                                     <span class="compare-item-title">
@@ -243,9 +250,9 @@
                             </div>
                         </div>
                         
-                        <div class="table-section">
-                            <div class="table-header"><h2>对比统计表</h2></div>
-                            <div class="table-container">
+                        <div class="compare-table-section">
+                            <div class="compare-table-header"><h2>对比统计表</h2></div>
+                            <div class="table-container" style="max-height: 150px;">
                                 <table>
                                     <thead>
                                         <tr>
@@ -277,52 +284,60 @@
                 
                 <template v-else-if="selectedCase && selectedCase.status === 'completed'">
                     <div class="chart-section">
-                        <div class="chart-container">
-                            <div class="chart-header">
-                                <span class="chart-title">{{ selectedCase.name }}</span>
-                                <span class="chart-info">{{ selectedCase.symbol }} | {{ selectedCase.start_date }} ~ {{ selectedCase.end_date }} | {{ algorithms[selectedCase.algorithm]?.name }}</span>
-                            </div>
-                            <div class="legend">
-                                <div class="legend-item"><div class="legend-color legend-ranging"></div><span>震荡区间</span></div>
-                                <div class="legend-item"><div class="legend-color legend-up"></div><span>上涨趋势</span></div>
-                                <div class="legend-item"><div class="legend-color legend-down"></div><span>下跌趋势</span></div>
-                                <div style="margin-left: auto; display: flex; align-items: center; gap: 8px;">
-                                    <span style="font-size: 13px; color: #666;">渲染方式:</span>
-                                    <select v-model="renderMode" style="padding: 4px 8px; border: 1px solid #ddd; border-radius: 4px;">
+                        <div class="chart-layout">
+                            <div class="chart-sidebar">
+                                <div class="stats-sidebar">
+                                    <h3>统计信息</h3>
+                                    <div class="stat-item">
+                                        <span class="stat-label">总天数</span>
+                                        <span class="stat-value total">{{ statistics.total_days || 0 }}</span>
+                                    </div>
+                                    <div class="stat-item">
+                                        <span class="stat-label">震荡</span>
+                                        <span class="stat-value ranging">{{ statistics.ranging_days || 0 }} ({{ statistics.ranging_percent || 0 }}%)</span>
+                                    </div>
+                                    <div class="stat-item">
+                                        <span class="stat-label">上涨</span>
+                                        <span class="stat-value up">{{ statistics.trending_up_days || 0 }} ({{ statistics.trending_up_percent || 0 }}%)</span>
+                                    </div>
+                                    <div class="stat-item">
+                                        <span class="stat-label">下跌</span>
+                                        <span class="stat-value down">{{ statistics.trending_down_days || 0 }} ({{ statistics.trending_down_percent || 0 }}%)</span>
+                                    </div>
+                                </div>
+                                
+                                <div class="render-mode-panel">
+                                    <h3>渲染方式</h3>
+                                    <select v-model="renderMode">
                                         <option value="top">顶部色带</option>
                                         <option value="overlay">K线上方色带</option>
                                     </select>
                                 </div>
+                                
+                                <div class="legend-panel">
+                                    <h3>图例</h3>
+                                    <div class="legend-item"><div class="legend-color legend-ranging"></div><span>震荡</span></div>
+                                    <div class="legend-item"><div class="legend-color legend-up"></div><span>上涨</span></div>
+                                    <div class="legend-item"><div class="legend-color legend-down"></div><span>下跌</span></div>
+                                </div>
                             </div>
-                            <div id="chart"></div>
-                        </div>
-                        
-                        <div class="stats-row">
-                            <div class="stat-card">
-                                <h3>总天数</h3>
-                                <div class="value">{{ statistics.total_days || 0 }}</div>
-                            </div>
-                            <div class="stat-card ranging">
-                                <h3>震荡天数</h3>
-                                <div class="value">{{ statistics.ranging_days || 0 }} ({{ statistics.ranging_percent || 0 }}%)</div>
-                            </div>
-                            <div class="stat-card up">
-                                <h3>上涨天数</h3>
-                                <div class="value">{{ statistics.trending_up_days || 0 }} ({{ statistics.trending_up_percent || 0 }}%)</div>
-                            </div>
-                            <div class="stat-card down">
-                                <h3>下跌天数</h3>
-                                <div class="value">{{ statistics.trending_down_days || 0 }} ({{ statistics.trending_down_percent || 0 }}%)</div>
+                            
+                            <div class="chart-main">
+                                <div class="chart-header">
+                                    <span class="chart-title">{{ selectedCase.name }}</span>
+                                    <span class="chart-info">{{ selectedCase.symbol }} | {{ selectedCase.start_date }} ~ {{ selectedCase.end_date }} | {{ algorithms[selectedCase.algorithm]?.name }}</span>
+                                </div>
+                                <div id="chart"></div>
                             </div>
                         </div>
                     </div>
                     
-                    <div class="table-section" style="border-top: 1px solid #e0e0e0;">
-                        <div class="table-header" style="cursor: pointer;" @click="showTable = !showTable">
-                            <h2 style="display: flex; align-items: center; gap: 8px;">
+                    <div class="table-section">
+                        <div class="table-header" @click="showTable = !showTable">
+                            <h2>
                                 <span>{{ showTable ? '▼' : '▶' }}</span>
                                 <span>区间行情状态</span>
-                                <span style="font-size: 12px; color: #999; font-weight: normal;">({{ statusRanges.length }} 条)</span>
+                                <span style="font-size: 11px; color: #999; font-weight: normal;">({{ statusRanges.length }} 条)</span>
                             </h2>
                         </div>
                         <div v-show="showTable" class="table-container">
@@ -485,6 +500,7 @@
                 const compareMode = ref(false);
                 const compareResults = ref([]);
                 const showNewTestModal = ref(false);
+                const showTable = ref(true);
                 const symbols = ref(['BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'SOLUSDT', 'XRPUSDT', 'DOGEUSDT']);
                 const algorithms = ref({});
                 const filters = reactive({ symbol: '', algorithm: '', status: '' });
@@ -494,7 +510,6 @@
                 const renderMode = ref('top');
                 let chart = null;
                 let charts = [];
-                let syncManager = null;
                 
                 const newTest = reactive({
                     name: '',
@@ -598,11 +613,7 @@
                     
                     if (renderMode.value === 'top') {
                         option = {
-                            title: {
-                                text: selectedCase.value?.name || 'K线图',
-                                left: 'center',
-                                top: 10,
-                            },
+                            animation: false,
                             tooltip: {
                                 trigger: 'axis',
                                 axisPointer: { type: 'cross' },
@@ -626,13 +637,9 @@
                                     </div>`;
                                 }
                             },
-                            legend: {
-                                data: ['K线'],
-                                top: 40,
-                            },
                             grid: [
-                                { left: '10%', right: '8%', top: 60, height: 15 },
-                                { left: '10%', right: '8%', top: 85, height: '58%' },
+                                { left: '8%', right: '4%', top: 10, height: 20 },
+                                { left: '8%', right: '4%', top: 35, bottom: 40 },
                             ],
                             xAxis: [
                                 {
@@ -652,6 +659,7 @@
                                     boundaryGap: true,
                                     axisLine: { onZero: false },
                                     splitLine: { show: false },
+                                    axisLabel: { show: false },
                                     min: 'dataMin',
                                     max: 'dataMax',
                                 },
@@ -676,7 +684,7 @@
                             ],
                             dataZoom: [
                                 { type: 'inside', xAxisIndex: [0, 1], start: 0, end: 100 },
-                                { show: true, type: 'slider', xAxisIndex: [0, 1], bottom: 10, start: 0, end: 100 },
+                                { show: true, type: 'slider', xAxisIndex: [0, 1], bottom: 5, start: 0, end: 100, height: 20 },
                             ],
                             series: [
                                 {
@@ -759,11 +767,7 @@
                         });
                         
                         option = {
-                            title: {
-                                text: selectedCase.value?.name || 'K线图',
-                                left: 'center',
-                                top: 10,
-                            },
+                            animation: false,
                             tooltip: {
                                 trigger: 'axis',
                                 axisPointer: { type: 'cross' },
@@ -787,12 +791,8 @@
                                     </div>`;
                                 }
                             },
-                            legend: {
-                                data: ['K线'],
-                                top: 40,
-                            },
                             grid: [
-                                { left: '10%', right: '8%', top: 80, height: '60%' },
+                                { left: '8%', right: '4%', top: 20, bottom: 40 },
                             ],
                             xAxis: {
                                 type: 'category',
@@ -800,6 +800,7 @@
                                 boundaryGap: true,
                                 axisLine: { onZero: false },
                                 splitLine: { show: false },
+                                axisLabel: { show: false },
                                 min: 'dataMin',
                                 max: 'dataMax',
                             },
@@ -809,7 +810,7 @@
                             },
                             dataZoom: [
                                 { type: 'inside', start: 0, end: 100 },
-                                { show: true, type: 'slider', bottom: 10, start: 0, end: 100 },
+                                { show: true, type: 'slider', bottom: 5, start: 0, end: 100, height: 20 },
                             ],
                             series: [
                                 {
@@ -947,6 +948,7 @@
                         });
                         
                         const option = {
+                            animation: false,
                             title: {
                                 text: `${result.test_case.symbol} | ${result.test_case.algorithm} | 震${result.statistics?.ranging_days || 0} 涨${result.statistics?.trending_up_days || 0} 跌${result.statistics?.trending_down_days || 0}`,
                                 left: 'center',
@@ -958,8 +960,8 @@
                                 axisPointer: { type: 'cross' },
                             },
                             grid: [
-                                { left: '8%', right: '4%', top: 30, height: 20 },
-                                { left: '8%', right: '4%', top: 55, height: '70%' },
+                                { left: '8%', right: '4%', top: 30, height: 25 },
+                                { left: '8%', right: '4%', top: 60, bottom: 30 },
                             ],
                             xAxis: [
                                 {
@@ -1036,27 +1038,6 @@
                     if (charts.length > 1) {
                         echarts.connect(charts);
                     }
-                };
-                
-                const setupChartSync = () => {
-                    if (charts.length < 2) return;
-                    
-                    let isSyncing = false;
-                    
-                    charts.forEach((sourceChart, index) => {
-                        sourceChart.timeScale().subscribeVisibleTimeRangeChange((range) => {
-                            if (isSyncing) return;
-                            isSyncing = true;
-                            
-                            charts.forEach((targetChart, targetIndex) => {
-                                if (targetIndex !== index) {
-                                    targetChart.timeScale().setVisibleRange(range);
-                                }
-                            });
-                            
-                            isSyncing = false;
-                        });
-                    });
                 };
                 
                 const createTest = async () => {
@@ -1152,6 +1133,7 @@
                     compareMode,
                     compareResults,
                     showNewTestModal,
+                    showTable,
                     symbols,
                     algorithms,
                     filters,
