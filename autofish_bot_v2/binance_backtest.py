@@ -91,6 +91,8 @@ class BacktestEngine:
         self.interval = None
         self.days = None  # 回测天数
         
+        self.a1_timeout_minutes = config.get('a1_timeout_minutes', 10)
+        
         self.calculator = Autofish_WeightCalculator(Decimal(str(self.config.get("decay_factor", 0.5))))
         self.chain_state: Optional[Autofish_ChainState] = None
         self.results = {
@@ -366,13 +368,53 @@ class BacktestEngine:
         volume = Decimal(str(kline.get("volume", kline.get("v", 0))))
         timestamp = kline.get("timestamp", kline.get("t", 0))
         
+        kline_time = datetime.fromtimestamp(timestamp / 1000) if timestamp else datetime.now()
+        
         if self.kline_count % 100 == 0:
-            dt = datetime.fromtimestamp(timestamp / 1000) if timestamp else datetime.now()
-            logger.debug(f"[K线 #{self.kline_count}] {dt.strftime('%Y-%m-%d %H:%M')} "
+            logger.debug(f"[K线 #{self.kline_count}] {kline_time.strftime('%Y-%m-%d %H:%M')} "
                         f"O={open_price:.2f} H={high_price:.2f} L={low_price:.2f} C={close_price:.2f}")
+        
+        self._check_first_entry_timeout(close_price, kline_time)
         
         self._process_entry(low_price, close_price)
         self._process_exit(open_price, high_price, low_price, close_price)
+    
+    def _check_first_entry_timeout(self, current_price: Decimal, current_time: datetime) -> None:
+        """检查第一笔入场订单是否超时（回测版本）
+        
+        参数:
+            current_price: 当前价格
+            current_time: 当前 K 线时间
+        """
+        if self.a1_timeout_minutes <= 0:
+            return
+        
+        if not self.chain_state:
+            return
+        
+        timeout_first_entry = self.chain_state.check_first_entry_timeout(current_time, self.a1_timeout_minutes)
+        if not timeout_first_entry:
+            return
+        
+        logger.info(f"[A1 超时] A1 挂单已超过 {self.a1_timeout_minutes} 分钟未成交")
+        print(f"\n[{current_time.strftime('%Y-%m-%d %H:%M:%S')}] ⏰ A1 超时重挂")
+        print(f"   触发原因: A1 挂单超过 {self.a1_timeout_minutes} 分钟未成交")
+        print(f"   当前价格: {float(current_price):.2f}")
+        print(f"   原订单入场价: {float(timeout_first_entry.entry_price):.2f}")
+        print(f"   原订单创建时间: {timeout_first_entry.created_at}")
+        
+        self.chain_state.orders.remove(timeout_first_entry)
+        
+        new_first_entry = self._create_order(1, current_price, self.klines_history)
+        self.chain_state.orders.append(new_first_entry)
+        self.chain_state.base_price = current_price
+        
+        price_diff = abs(float(new_first_entry.entry_price) - float(timeout_first_entry.entry_price))
+        price_diff_pct = price_diff / float(timeout_first_entry.entry_price) * 100 if float(timeout_first_entry.entry_price) > 0 else 0
+        
+        logger.info(f"[新 A1] 入场价={new_first_entry.entry_price:.2f}")
+        print(f"   新 A1 入场价: {float(new_first_entry.entry_price):.2f}")
+        print(f"   价格调整: {price_diff:.2f} ({price_diff_pct:.2f}%)")
     
     async def fetch_klines(self, symbol: str, interval: str = "1m", limit: int = 1000, days: int = None, start_time: int = None, end_time: int = None, auto_fetch: bool = True) -> List[dict]:
         """获取历史 K 线数据

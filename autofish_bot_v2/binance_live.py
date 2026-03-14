@@ -38,6 +38,8 @@ from textwrap import dedent
 from typing import Optional, Dict, Any, List, Callable, Tuple, Type
 from urllib.parse import urlencode
 
+from market_status_detector import MarketStatusDetector, MarketStatus, StatusResult
+
 
 # ============================================================================
 # 常量定义
@@ -768,6 +770,63 @@ def notify_warning(warning_msg: str, config: dict):
         > **时间**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
     """).strip()
     send_wechat_notification("⚠️ Autofish 资金提醒", content)
+
+
+def notify_market_status(old_status: str, new_status: str, reason: str, config: dict):
+    """发送行情状态变化通知"""
+    symbol = config.get('symbol', 'BTCUSDT')
+    content = dedent(f"""
+        > **通知类型**: 行情状态变化
+        > **交易标的**: {symbol}
+        > **旧状态**: {old_status}
+        > **新状态**: {new_status}
+        > **原因**: {reason}
+        > **时间**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+    """).strip()
+    send_wechat_notification("🔄 行情状态变化", content)
+
+
+def notify_first_entry_timeout_refresh(old_order, new_order: dict, current_price: Decimal, timeout_minutes: int, config: dict):
+    """发送第一笔入场订单超时重挂通知"""
+    symbol = config.get('symbol', 'BTCUSDT')
+    max_entries = config.get('max_entries', 4)
+    
+    old_entry = old_order.get('entry_price', 0) if isinstance(old_order, dict) else getattr(old_order, 'entry_price', 0)
+    old_order_id = old_order.get('order_id', 'N/A') if isinstance(old_order, dict) else getattr(old_order, 'order_id', 'N/A')
+    old_created = old_order.get('created_at', 'N/A') if isinstance(old_order, dict) else getattr(old_order, 'created_at', 'N/A')
+    
+    new_entry = new_order.get('entry_price', 0) if isinstance(new_order, dict) else getattr(new_order, 'entry_price', 0)
+    new_order_id = new_order.get('order_id', 'N/A') if isinstance(new_order, dict) else getattr(new_order, 'order_id', 'N/A')
+    new_quantity = new_order.get('quantity', 0) if isinstance(new_order, dict) else getattr(new_order, 'quantity', 0)
+    new_stake = new_order.get('stake_amount', 0) if isinstance(new_order, dict) else getattr(new_order, 'stake_amount', 0)
+    new_tp = new_order.get('take_profit_price', 0) if isinstance(new_order, dict) else getattr(new_order, 'take_profit_price', 0)
+    new_sl = new_order.get('stop_loss_price', 0) if isinstance(new_order, dict) else getattr(new_order, 'stop_loss_price', 0)
+    new_level = new_order.get('level', 1) if isinstance(new_order, dict) else getattr(new_order, 'level', 1)
+    
+    price_diff = abs(float(new_entry) - float(old_entry))
+    price_diff_pct = price_diff / float(old_entry) * 100 if float(old_entry) > 0 else 0
+    
+    content = dedent(f"""\
+        > **层级**: A{new_level} (第{new_level}层/共{max_entries}层)
+        > **触发原因**: A1 挂单超过 {timeout_minutes} 分钟未成交
+        > **当前价格**: {float(current_price):.2f} USDT
+        > 
+        > **原订单**:
+        >   入场价: {float(old_entry):.2f} USDT
+        >   订单ID: {old_order_id}
+        >   创建时间: {old_created}
+        > 
+        > **新订单**:
+        >   入场价: {float(new_entry):.2f} USDT
+        >   数量: {float(new_quantity):.6f} BTC
+        >   金额: {float(new_stake):.2f} USDT
+        >   止盈价: {float(new_tp):.2f} USDT (+{float(config.get('exit_profit', Decimal('0.01')))*100:.1f}%)
+        >   止损价: {float(new_sl):.2f} USDT (-{float(config.get('stop_loss', Decimal('0.08')))*100:.1f}%)
+        >   订单ID: {new_order_id}
+        > 
+        > **价格调整**: {price_diff:.2f} ({price_diff_pct:.2f}%)
+        > **时间**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}""").strip()
+    send_wechat_notification(f"⏰ A1 超时重挂", content)
 
 
 # ============================================================================
@@ -1561,6 +1620,21 @@ class BinanceLiveTrader:
         self.config = config
         self.testnet = testnet
         
+        self.a1_timeout_minutes = config.get('a1_timeout_minutes', 10)
+        self.last_first_entry_check_time: Optional[datetime] = None
+        
+        market_config = config.get('market_aware', {})
+        if isinstance(market_config, bool):
+            market_config = {'enabled': market_config}
+        
+        self.market_aware = market_config.get('enabled', True)
+        self.market_algorithm = market_config.get('algorithm', 'dual_thrust')
+        self.market_detector: Optional[MarketStatusDetector] = None
+        self.current_market_status: MarketStatus = MarketStatus.UNKNOWN
+        self.market_check_interval = market_config.get('check_interval', 60)
+        self.last_market_check_time: Optional[datetime] = None
+        self.market_config = market_config
+        
         state_file = STATE_FILE
         self.chain_state: Optional[Any] = None
         self.state_repository = StateRepository(state_file)
@@ -1665,6 +1739,117 @@ class BinanceLiveTrader:
         except Exception as e:
             logger.warning(f"[K线获取] 异常: {e}")
             return []
+    
+    async def _init_market_detector(self) -> None:
+        """初始化行情检测器"""
+        if not self.market_aware:
+            logger.info("[行情检测] 行情感知功能未启用")
+            return
+        
+        detector_config = {
+            'algorithm': self.market_algorithm,
+            'lookback_period': self.market_config.get('lookback_period', 20),
+            'breakout_threshold': self.market_config.get('breakout_threshold', 0.02),
+            'consecutive_bars': self.market_config.get('consecutive_bars', 3),
+            'down_confirm_days': self.market_config.get('down_confirm_days', 1),
+            'k2_down_factor': self.market_config.get('k2_down_factor', 0.6),
+            'cooldown_days': self.market_config.get('cooldown_days', 1),
+        }
+        
+        self.market_detector = MarketStatusDetector(algorithm=None, config=detector_config)
+        
+        from market_status_detector import StatusAlgorithmFactory
+        algorithm_instance = StatusAlgorithmFactory.create(self.market_algorithm, detector_config)
+        self.market_detector.set_algorithm(algorithm_instance)
+        
+        trading_statuses = self.market_config.get('trading_statuses', ['ranging'])
+        logger.info(f"[行情检测] 初始化完成, 算法: {self.market_algorithm}, 交易状态: {trading_statuses}")
+        print(f"  行情感知: 启用 (算法: {self.market_algorithm}, 只做: {trading_statuses})")
+    
+    async def _check_market_status(self, current_price: Decimal) -> Optional[StatusResult]:
+        """检测当前行情状态
+        
+        参数:
+            current_price: 当前价格
+            
+        返回:
+            行情判断结果，如果检测失败返回 None
+        """
+        if not self.market_aware or not self.market_detector:
+            return None
+        
+        now = datetime.now()
+        if self.last_market_check_time:
+            elapsed = (now - self.last_market_check_time).total_seconds()
+            if elapsed < self.market_check_interval:
+                return None
+        
+        self.last_market_check_time = now
+        
+        try:
+            klines = await self._get_recent_klines(limit=100)
+            if not klines or len(klines) < 20:
+                logger.warning("[行情检测] K线数据不足")
+                return None
+            
+            result = self.market_detector.algorithm.calculate(klines, self.market_detector.config)
+            logger.info(f"[行情检测] 状态={result.status.value}, 置信度={result.confidence:.2f}, 原因={result.reason}")
+            return result
+        except Exception as e:
+            logger.warning(f"[行情检测] 检测失败: {e}")
+            return None
+    
+    async def _handle_market_status_change(self, old_status: MarketStatus, new_status: MarketStatus, 
+                                            current_price: Decimal) -> None:
+        """处理行情状态变化
+        
+        参数:
+            old_status: 旧状态
+            new_status: 新状态
+            current_price: 当前价格
+        """
+        from autofish_core import Autofish_ChainState
+        
+        logger.info(f"[行情变化] {old_status.value} -> {new_status.value}")
+        print(f"\n{'='*60}")
+        print(f"[{datetime.now().strftime('%H:%M:%S')}] 🔄 行情变化")
+        print(f"{'='*60}")
+        print(f"  旧状态: {old_status.value}")
+        print(f"  新状态: {new_status.value}")
+        print(f"  当前价格: {current_price:.2f}")
+        
+        trading_statuses_str = self.market_config.get('trading_statuses', ['ranging'])
+        trading_statuses = []
+        for status_str in trading_statuses_str:
+            if status_str == 'ranging':
+                trading_statuses.append(MarketStatus.RANGING)
+            elif status_str == 'trending_up':
+                trading_statuses.append(MarketStatus.TRENDING_UP)
+            elif status_str == 'trending_down':
+                trading_statuses.append(MarketStatus.TRENDING_DOWN)
+        
+        is_trading_status = new_status in trading_statuses
+        was_trading_status = old_status in trading_statuses
+        
+        if not is_trading_status and was_trading_status:
+            if self.chain_state and self.chain_state.orders:
+                print(f"  ⚠️ 进入非交易状态，平仓并停止交易")
+                await self._close_all_positions(current_price, "market_status_change")
+                self.chain_state.is_active = False
+                self._save_state()
+                notify_market_status(old_status.value, new_status.value, f"非交易状态({new_status.value})，停止交易", self.config)
+        
+        elif is_trading_status and not was_trading_status:
+            if not self.chain_state or not self.chain_state.orders:
+                print(f"  ✅ 进入可交易状态，开始交易")
+                klines = await self._get_recent_klines()
+                first_order = await self._create_order(1, current_price, klines)
+                self.chain_state = Autofish_ChainState(base_price=current_price, orders=[first_order])
+                await self._place_entry_order(first_order)
+                self._save_state()
+                notify_market_status(old_status.value, new_status.value, "可交易状态，开始交易", self.config)
+        
+        print(f"{'='*60}\n")
     
     def _adjust_price(self, price: Decimal) -> Decimal:
         tick_size = getattr(self, 'tick_size', Decimal("0.1"))
@@ -1915,6 +2100,49 @@ class BinanceLiveTrader:
         signal.signal(signal.SIGTERM, signal_handler)
         signal.signal(signal.SIGINT, signal_handler)
     
+    async def _close_all_positions(self, close_price: Decimal, reason: str) -> None:
+        """平仓所有持仓订单
+        
+        参数:
+            close_price: 平仓价格
+            reason: 平仓原因
+        """
+        if not self.chain_state or not self.chain_state.orders:
+            return
+        
+        symbol = self.config.get('symbol', 'BTCUSDT')
+        
+        for order in self.chain_state.orders:
+            if order.state == "filled":
+                try:
+                    if order.order_id:
+                        await self.client.cancel_order(symbol, order.order_id)
+                        logger.info(f"[平仓] 取消主订单: {order.order_id}")
+                except Exception as e:
+                    logger.warning(f"[平仓] 取消主订单失败: {e}")
+                
+                if order.tp_order_id:
+                    try:
+                        await self.client.cancel_algo_order(symbol, order.tp_order_id)
+                    except:
+                        pass
+                if order.sl_order_id:
+                    try:
+                        await self.client.cancel_algo_order(symbol, order.sl_order_id)
+                    except:
+                        pass
+                
+                order.state = "closed"
+                order.close_price = close_price
+                order.close_reason = reason
+                order.closed_at = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                
+                profit = (close_price - order.entry_price) * order.quantity
+                order.profit = float(profit)
+                
+                logger.info(f"[平仓] A{order.level}: 出场价={close_price:.2f}, 盈亏={profit:.2f}")
+                print(f"  平仓 A{order.level}: 出场价={close_price:.2f}, 盈亏={profit:.2f} USDT")
+    
     async def _handle_exit(self, reason: str) -> None:
         """处理程序退出
         
@@ -1958,7 +2186,11 @@ class BinanceLiveTrader:
         except Exception as e:
             logger.error(f"[退出处理] 处理失败: {e}")
     
-    async def _place_entry_order(self, order: Any, is_supplement: bool = False) -> None:
+    async def _place_entry_order(self, order: Any, is_supplement: bool = False,
+                                   is_timeout_refresh: bool = False,
+                                   old_order: Any = None,
+                                   timeout_minutes: int = 0,
+                                   current_price: Decimal = None) -> None:
         """下单入场单
         
         创建并提交一个限价买入订单。如果订单金额小于 Binance 最小要求（100 USDT），
@@ -1967,6 +2199,10 @@ class BinanceLiveTrader:
         参数:
             order: 订单对象，包含入场价、数量等信息
             is_supplement: 是否为补下订单（状态恢复时补下）
+            is_timeout_refresh: 是否为超时重挂订单
+            old_order: 原订单对象（超时重挂时使用）
+            timeout_minutes: 超时时间（超时重挂时使用）
+            current_price: 当前价格（超时重挂时使用）
         
         副作用:
             - 更新 order.order_id
@@ -1995,22 +2231,39 @@ class BinanceLiveTrader:
             
             weight_pct = self.calculator.get_weight_percentage(order.level)
             
-            if not is_supplement:
+            if not is_supplement and not is_timeout_refresh:
                 print(f"\n{'='*60}")
                 print(f"[{datetime.now().strftime('%H:%M:%S')}] 📤 下单成功: A{order.level}")
                 print(f"{'='*60}")
             
-            print(f"  层级: A{order.level} / {self.config.get('max_entries', 4)}")
-            print(f"  权重: {weight_pct:.2f}%")
-            print(f"  入场价: {price:.{self.price_precision}f}")
-            print(f"  数量: {order.quantity:.6f} BTC")
-            print(f"  金额: {order.stake_amount:.2f} USDT")
-            print(f"  止盈价: {order.take_profit_price:.2f}")
-            print(f"  止损价: {order.stop_loss_price:.2f}")
-            print(f"  订单ID: {order.order_id}")
-            print(f"{'='*60}\n")
+            if is_timeout_refresh:
+                print(f"\n{'='*60}")
+                print(f"[{datetime.now().strftime('%H:%M:%S')}] ⏰ A1 超时重挂成功")
+                print(f"{'='*60}")
+                print(f"  层级: A{order.level} / {self.config.get('max_entries', 4)}")
+                print(f"  入场价: {price:.{self.price_precision}f}")
+                print(f"  数量: {order.quantity:.6f} BTC")
+                print(f"  金额: {order.stake_amount:.2f} USDT")
+                print(f"  止盈价: {order.take_profit_price:.2f}")
+                print(f"  止损价: {order.stop_loss_price:.2f}")
+                print(f"  订单ID: {order.order_id}")
+                print(f"  原订单ID: {old_order.order_id if old_order else 'N/A'}")
+                print(f"{'='*60}\n")
+            else:
+                print(f"  层级: A{order.level} / {self.config.get('max_entries', 4)}")
+                print(f"  权重: {weight_pct:.2f}%")
+                print(f"  入场价: {price:.{self.price_precision}f}")
+                print(f"  数量: {order.quantity:.6f} BTC")
+                print(f"  金额: {order.stake_amount:.2f} USDT")
+                print(f"  止盈价: {order.take_profit_price:.2f}")
+                print(f"  止损价: {order.stop_loss_price:.2f}")
+                print(f"  订单ID: {order.order_id}")
+                print(f"{'='*60}\n")
             
-            if is_supplement:
+            if is_timeout_refresh:
+                logger.info(f"A1 超时重挂成功: orderId={order.order_id}, oldOrderId={old_order.order_id if old_order else 'N/A'}")
+                notify_first_entry_timeout_refresh(old_order, order, current_price, timeout_minutes, self.config)
+            elif is_supplement:
                 logger.info(f"入场单补下成功: A{order.level}, orderId={order.order_id}")
                 notify_entry_order_supplement(order, self.config)
             else:
@@ -2019,7 +2272,12 @@ class BinanceLiveTrader:
             
             self._save_state()
         else:
-            error_msg = "补下失败" if is_supplement else "下单失败"
+            if is_timeout_refresh:
+                error_msg = "超时重挂失败"
+            elif is_supplement:
+                error_msg = "补下失败"
+            else:
+                error_msg = "下单失败"
             logger.error(f"入场单{error_msg}: {result}")
             print(f"[{datetime.now().strftime('%H:%M:%S')}] ❌ {error_msg}: {result}")
     
@@ -2536,6 +2794,96 @@ class BinanceLiveTrader:
             self.chain_state = Autofish_ChainState(base_price=current_price, orders=[order])
             await self._place_entry_order(order)
     
+    async def _check_and_handle_first_entry_timeout(self, current_price: Decimal) -> None:
+        """检查并处理第一笔入场订单超时
+        
+        参数:
+            current_price: 当前价格
+        """
+        if self.a1_timeout_minutes <= 0:
+            return
+        
+        now = datetime.now()
+        
+        if self.last_first_entry_check_time:
+            if (now - self.last_first_entry_check_time).total_seconds() < 300:
+                return
+        
+        self.last_first_entry_check_time = now
+        
+        if not self.chain_state:
+            return
+        
+        timeout_first_entry = self.chain_state.check_first_entry_timeout(now, self.a1_timeout_minutes)
+        if not timeout_first_entry:
+            return
+        
+        logger.info(f"[A1 超时] A1 挂单已超过 {self.a1_timeout_minutes} 分钟未成交")
+        print(f"\n{'='*60}")
+        print(f"[{now.strftime('%H:%M:%S')}] ⏰ A1 超时重挂")
+        print(f"{'='*60}")
+        
+        symbol = self.config.get("symbol", "BTCUSDT")
+        
+        cancel_success = True
+        if timeout_first_entry.order_id:
+            try:
+                await self.client.cancel_order(symbol, timeout_first_entry.order_id)
+                logger.info(f"[取消 A1] orderId={timeout_first_entry.order_id}")
+                print(f"   ✅ 已取消原 A1 订单: {timeout_first_entry.order_id}")
+            except Exception as e:
+                logger.warning(f"[取消 A1] 失败: {e}")
+                print(f"   ⚠️ 取消原 A1 失败: {e}")
+                cancel_success = False
+                
+                try:
+                    order_info = await self.client.get_order_status(symbol, timeout_first_entry.order_id)
+                    order_status = order_info.get("status", "")
+                    logger.info(f"[A1 状态检查] orderId={timeout_first_entry.order_id}, status={order_status}")
+                    
+                    if order_status == "FILLED":
+                        logger.info(f"[A1 已成交] 取消失败原因是订单已成交，执行成交处理")
+                        filled_price = Decimal(str(order_info.get("avgPrice", timeout_first_entry.entry_price)))
+                        await self._process_order_filled(timeout_first_entry, filled_price)
+                        return
+                except Exception as check_error:
+                    logger.warning(f"[A1 状态检查] 查询订单状态失败: {check_error}")
+        
+        if not cancel_success:
+            logger.warning("[A1 超时] 取消订单失败且无法确认状态，跳过重挂")
+            return
+        
+        if timeout_first_entry.tp_order_id:
+            try:
+                await self.client.cancel_algo_order(symbol, timeout_first_entry.tp_order_id)
+            except:
+                pass
+        if timeout_first_entry.sl_order_id:
+            try:
+                await self.client.cancel_algo_order(symbol, timeout_first_entry.sl_order_id)
+            except:
+                pass
+        
+        self.chain_state.orders.remove(timeout_first_entry)
+        
+        klines = await self._get_recent_klines()
+        new_first_entry = await self._create_order(1, current_price, klines)
+        self.chain_state.orders.append(new_first_entry)
+        self.chain_state.base_price = current_price
+        
+        logger.info(f"[新 A1] 入场价={new_first_entry.entry_price:.2f}")
+        
+        await self._place_entry_order(
+            new_first_entry, 
+            is_supplement=False,
+            is_timeout_refresh=True,
+            old_order=timeout_first_entry,
+            timeout_minutes=self.a1_timeout_minutes,
+            current_price=current_price
+        )
+        
+        self._save_state()
+    
     async def run(self) -> None:
         from autofish_core import Autofish_ChainState
         
@@ -2551,6 +2899,8 @@ class BinanceLiveTrader:
         print(f"  止盈比例: {self.config.get('take_profit_pct', 0.01) * 100}%")
         print(f"  止损比例: {self.config.get('stop_loss_pct', 0.08) * 100}%")
         print(f"  衰减因子: {self.config.get('decay_factor', 0.5)}")
+        print(f"  A1 超时: {self.a1_timeout_minutes} 分钟")
+        print(f"  行情感知: {'启用' if self.market_aware else '禁用'}")
         print(f"  日志文件: {LOG_DIR}/{LOG_FILE}")
         print(f"  状态文件: {STATE_FILE}")
         print(f"{'='*60}\n")
@@ -2565,11 +2915,19 @@ class BinanceLiveTrader:
                 try:
                     await self._init_precision()
                     
+                    await self._init_market_detector()
+                    
                     current_price = await self._get_current_price()
                     
                     if not self._startup_notified:
                         notify_startup(self.config, current_price)
                         self._startup_notified = True
+                        
+                        if self.market_aware and self.market_detector:
+                            market_result = await self._check_market_status(current_price)
+                            if market_result:
+                                self.current_market_status = market_result.status
+                                print(f"  初始行情: {market_result.status.value}, 原因: {market_result.reason}")
                     
                     if not await self._check_fund_sufficiency():
                         await self.client.close()
@@ -2614,6 +2972,16 @@ class BinanceLiveTrader:
                                         logger.info("[WebSocket] 连接关闭")
                                         break
                                 except asyncio.TimeoutError:
+                                    current_price = await self._get_current_price()
+                                    await self._check_and_handle_first_entry_timeout(current_price)
+                                    
+                                    if self.market_aware and self.market_detector:
+                                        market_result = await self._check_market_status(current_price)
+                                        if market_result and market_result.status != self.current_market_status:
+                                            old_status = self.current_market_status
+                                            self.current_market_status = market_result.status
+                                            await self._handle_market_status_change(old_status, market_result.status, current_price)
+                                    
                                     continue
                         finally:
                             keepalive_task.cancel()
@@ -2784,6 +3152,8 @@ class BinanceLiveTrader:
         order_id = order_data.get("orderId")
         order_status = order_data.get("orderStatus")
         
+        logger.debug(f"[订单更新] orderId={order_id}, status={order_status}")
+        
         order = None
         for o in self.chain_state.orders:
             if o.order_id == order_id:
@@ -2791,6 +3161,7 @@ class BinanceLiveTrader:
                 break
         
         if not order:
+            logger.warning(f"[订单更新] 未找到本地订单: orderId={order_id}, status={order_status}, 当前订单列表: {[o.order_id for o in self.chain_state.orders]}")
             return
         
         if order_status == "FILLED":
@@ -2931,7 +3302,7 @@ async def main():
     """主函数"""
     import argparse
     from dotenv import load_dotenv
-    from autofish_core import Autofish_AmplitudeConfig, Autofish_OrderCalculator
+    from autofish_core import Autofish_AmplitudeConfig, Autofish_OrderCalculator, Autofish_ExternStrategy
     
     parser = argparse.ArgumentParser(description="Autofish V2 Binance 实盘交易")
     parser.add_argument("--symbol", type=str, default="BTCUSDT", help="交易对 (默认: BTCUSDT)")
@@ -2956,6 +3327,9 @@ async def main():
         api_secret = os.getenv("BINANCE_SECRET_KEY", "")
     
     decay_factor = Decimal(str(args.decay_factor))
+    
+    extern_strategy = Autofish_ExternStrategy.load_config()
+    
     amplitude_config = Autofish_AmplitudeConfig.load_latest(args.symbol, decay_factor=decay_factor)
     if amplitude_config:
         config = {
@@ -2970,7 +3344,8 @@ async def main():
             "weights": amplitude_config.get_weights(),
             "valid_amplitudes": amplitude_config.get_valid_amplitudes(),
             "total_expected_return": amplitude_config.get_total_expected_return(),
-            "entry_price_strategy": amplitude_config.get_entry_price_strategy(),
+            "entry_price_strategy": extern_strategy.get_entry_price_strategy(),
+            "market_aware": extern_strategy.get_market_aware(),
         }
         config_file = amplitude_config.config_path
     else:
@@ -2980,6 +3355,8 @@ async def main():
         config.update({
             "stop_loss": Decimal(str(args.stop_loss)),
             "total_amount_quote": Decimal(str(args.total_amount)),
+            "entry_price_strategy": extern_strategy.get_entry_price_strategy(),
+            "market_aware": extern_strategy.get_market_aware(),
         })
         config_file = "无（使用内置默认配置）"
     

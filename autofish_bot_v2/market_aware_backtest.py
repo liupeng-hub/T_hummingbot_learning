@@ -280,9 +280,12 @@ class MarketAwareBacktestEngine(BacktestEngine):
         is_trending = new_status in [MarketStatus.TRENDING_UP, MarketStatus.TRENDING_DOWN]
         was_trending = old_status in [MarketStatus.TRENDING_UP, MarketStatus.TRENDING_DOWN]
         
+        is_trading_status = new_status in [MarketStatus.RANGING, MarketStatus.TRENDING_UP]
+        was_trading_status = old_status in [MarketStatus.RANGING, MarketStatus.TRENDING_UP]
+        
         action = 'continue'
         
-        if is_trending and not was_trending:
+        if new_status == MarketStatus.TRENDING_DOWN and not old_status == MarketStatus.TRENDING_DOWN:
             if self.trading_enabled:
                 self._close_all_positions(price, timestamp, 'market_status_change')
                 self.trading_enabled = False
@@ -290,7 +293,7 @@ class MarketAwareBacktestEngine(BacktestEngine):
                 self._end_trading_period(time)
                 logger.info(f"[行情变化] {old_status.value} -> {new_status.value}, 停止交易")
         
-        elif new_status == MarketStatus.RANGING and was_trending:
+        elif is_trading_status and not was_trading_status:
             if not self.trading_enabled:
                 self.trading_enabled = True
                 self._create_first_order(price, kline)
@@ -401,9 +404,10 @@ class MarketAwareBacktestEngine(BacktestEngine):
         close_price = Decimal(str(kline.get("close", kline.get("c", 0))))
         timestamp = kline.get("timestamp", kline.get("t", 0))
         
+        kline_time = datetime.fromtimestamp(timestamp / 1000) if timestamp else datetime.now()
+        
         if self.kline_count % 100 == 0:
-            dt = datetime.fromtimestamp(timestamp / 1000) if timestamp else datetime.now()
-            logger.debug(f"[K线 #{self.kline_count}] {dt.strftime('%Y-%m-%d %H:%M')} "
+            logger.debug(f"[K线 #{self.kline_count}] {kline_time.strftime('%Y-%m-%d %H:%M')} "
                         f"O={open_price:.2f} H={high_price:.2f} L={low_price:.2f} C={close_price:.2f}")
         
         new_status = self._check_market_status(kline)
@@ -418,10 +422,12 @@ class MarketAwareBacktestEngine(BacktestEngine):
             )
         
         if self._current_trading_period:
-            self._current_trading_period.end_time = datetime.fromtimestamp(timestamp / 1000)
+            self._current_trading_period.end_time = kline_time
         
         if not self.trading_enabled:
             return
+        
+        self._check_first_entry_timeout(close_price, kline_time)
         
         self._process_entry(low_price, close_price)
         self._process_exit(open_price, high_price, low_price, close_price)
@@ -502,9 +508,9 @@ class MarketAwareBacktestEngine(BacktestEngine):
             self.current_market_status = initial_result.status
             logger.info(f"[初始行情] {initial_result.status.value}, 原因={initial_result.reason}")
             
-            if self.current_market_status in [MarketStatus.TRENDING_UP, MarketStatus.TRENDING_DOWN]:
+            if self.current_market_status == MarketStatus.TRENDING_DOWN:
                 self.trading_enabled = False
-                print(f"\n⚠️ 初始行情为趋势，暂停交易")
+                print(f"\n⚠️ 初始行情为下跌趋势，暂停交易")
             else:
                 first_order = self._create_order(1, first_price, self.klines_history)
                 self.chain_state.orders.append(first_order)
@@ -602,12 +608,17 @@ class MarketAwareBacktestEngine(BacktestEngine):
         output_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "out/market_backtest")
         os.makedirs(output_dir, exist_ok=True)
         
+        base_name = f"binance_{symbol}_market_aware_backtest"
         if date_range:
-            filepath = os.path.join(output_dir, f"binance_{symbol}_market_aware_backtest_{date_range}.md")
+            base_name += f"_{date_range}"
         elif days:
-            filepath = os.path.join(output_dir, f"binance_{symbol}_market_aware_backtest_{days}d.md")
-        else:
-            filepath = os.path.join(output_dir, f"binance_{symbol}_market_aware_backtest.md")
+            base_name += f"_{days}d"
+        
+        seq = 1
+        filepath = os.path.join(output_dir, f"{base_name}.md")
+        while os.path.exists(filepath):
+            filepath = os.path.join(output_dir, f"{base_name}_{seq:02d}.md")
+            seq += 1
         
         net_profit = self.results["total_profit"] - self.results["total_loss"]
         win_rate = (self.results["win_trades"] / self.results["total_trades"] * 100 
@@ -777,6 +788,7 @@ async def main():
     parser.add_argument("--k2-down-factor", type=float, default=0.8, help="Dual Thrust 增强参数: 下跌敏感系数")
     parser.add_argument("--down-confirm-days", type=int, default=2, help="Dual Thrust 增强参数: 下跌确认天数")
     parser.add_argument("--cooldown-days", type=int, default=1, help="Dual Thrust 增强参数: 状态切换冷却期")
+    parser.add_argument("--first-entry-timeout", type=int, default=10, help="第一笔入场订单超时时间(分钟), 0表示禁用")
     
     args = parser.parse_args()
     
@@ -843,6 +855,7 @@ async def main():
         config.update({
             "stop_loss": Decimal(str(args.stop_loss)),
             "total_amount_quote": Decimal(str(args.total_amount)),
+            "a1_timeout_minutes": args.first_entry_timeout,
         })
     
     market_config = {

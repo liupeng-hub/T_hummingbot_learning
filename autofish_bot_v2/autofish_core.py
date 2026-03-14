@@ -243,6 +243,39 @@ class Autofish_ChainState:
             if order.state == "pending":
                 order.state = "cancelled"
     
+    def get_pending_first_entry(self) -> Optional['Autofish_Order']:
+        """获取待成交的第一笔入场订单（Level 1）"""
+        for order in self.orders:
+            if order.level == 1 and order.state == "pending":
+                return order
+        return None
+    
+    def check_first_entry_timeout(self, current_time: datetime, timeout_minutes: int = 10) -> Optional['Autofish_Order']:
+        """检查第一笔入场订单是否超时
+        
+        参数:
+            current_time: 当前时间
+                - 回测：传入 K 线时间 (datetime.fromtimestamp(kline['open_time'] / 1000))
+                - 实盘：传入 datetime.now()
+            timeout_minutes: 超时分钟数
+            
+        返回:
+            超时的第一笔入场订单，如果没有超时则返回 None
+        """
+        if timeout_minutes <= 0:
+            return None
+        
+        first_entry = self.get_pending_first_entry()
+        if not first_entry or not first_entry.created_at:
+            return None
+        
+        created = datetime.strptime(first_entry.created_at, '%Y-%m-%d %H:%M:%S')
+        elapsed = (current_time - created).total_seconds() / 60
+        
+        if elapsed >= timeout_minutes:
+            return first_entry
+        return None
+    
     def to_dict(self) -> dict:
         """转换为字典"""
         return {
@@ -1695,19 +1728,6 @@ class Autofish_AmplitudeConfig:
         """获取权重列表"""
         config = self._get_recommended_config()
         return config.get("weights", [])
-    
-    def get_entry_price_strategy(self) -> dict:
-        """获取入场价格策略配置"""
-        config = self._get_recommended_config()
-        return config.get("entry_price_strategy", {
-            "name": "atr",
-            "params": {
-                "atr_period": 14,
-                "atr_multiplier": 0.5,
-                "min_spacing": 0.005,
-                "max_spacing": 0.03
-            }
-        })
 
     @classmethod
     def load_latest(cls, symbol: str = "BTCUSDT", output_dir: str = "out/autofish", 
@@ -1717,6 +1737,95 @@ class Autofish_AmplitudeConfig:
         if config.load():
             return config
         return None
+
+
+class Autofish_ExternStrategy:
+    """扩展策略配置加载器
+    
+    管理所有标的共用的扩展策略配置：
+    - entry_price_strategy: 入场价格策略
+    - market_aware: 行情感知策略
+    """
+    
+    DEFAULT_CONFIG = {
+        "entry_price_strategy": {
+            "name": "atr",
+            "params": {
+                "atr_period": 14,
+                "atr_multiplier": 0.5,
+                "min_spacing": 0.005,
+                "max_spacing": 0.03
+            }
+        },
+        "market_aware": {
+            "enabled": True,
+            "algorithm": "dual_thrust",
+            "lookback_period": 20,
+            "breakout_threshold": 0.02,
+            "consecutive_bars": 3,
+            "down_confirm_days": 1,
+            "k2_down_factor": 0.6,
+            "cooldown_days": 1,
+            "check_interval": 60,
+            "trading_statuses": ["ranging"]
+        }
+    }
+    
+    def __init__(self, config_path: str = None, output_dir: str = "out/autofish"):
+        self.output_dir = output_dir
+        self.config_path = config_path or os.path.join(output_dir, "autofish_extern_strategy.json")
+        self.config = {}
+    
+    def load(self) -> bool:
+        """加载配置文件"""
+        try:
+            if os.path.exists(self.config_path):
+                with open(self.config_path, 'r', encoding='utf-8') as f:
+                    self.config = json.load(f)
+                return True
+        except Exception as e:
+            print(f"[扩展策略] 加载配置失败: {e}")
+        return False
+    
+    def save(self) -> bool:
+        """保存配置文件"""
+        try:
+            os.makedirs(os.path.dirname(self.config_path), exist_ok=True)
+            with open(self.config_path, 'w', encoding='utf-8') as f:
+                json.dump(self.config, f, indent=2, ensure_ascii=False)
+            return True
+        except Exception as e:
+            print(f"[扩展策略] 保存配置失败: {e}")
+            return False
+    
+    def get_entry_price_strategy(self) -> dict:
+        """获取入场价格策略配置"""
+        if "entry_price_strategy" in self.config:
+            return self.config["entry_price_strategy"]
+        return self.DEFAULT_CONFIG["entry_price_strategy"]
+    
+    def get_market_aware(self) -> dict:
+        """获取行情感知策略配置"""
+        if "market_aware" in self.config:
+            return self.config["market_aware"]
+        return self.DEFAULT_CONFIG["market_aware"]
+    
+    def set_entry_price_strategy(self, strategy: dict) -> None:
+        """设置入场价格策略配置"""
+        self.config["entry_price_strategy"] = strategy
+    
+    def set_market_aware(self, market_aware: dict) -> None:
+        """设置行情感知策略配置"""
+        self.config["market_aware"] = market_aware
+    
+    @classmethod
+    def load_config(cls, output_dir: str = "out/autofish") -> 'Autofish_ExternStrategy':
+        """加载配置（类方法）"""
+        instance = cls(output_dir=output_dir)
+        if not instance.load():
+            instance.config = instance.DEFAULT_CONFIG.copy()
+            instance.save()
+        return instance
 
 
 async def main():

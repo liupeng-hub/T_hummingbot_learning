@@ -72,11 +72,14 @@ pip install -r requirements.txt
 
 ### 1. 振幅分析（推荐首先执行）
 
+振幅分析用于生成标的特定的配置参数，包括权重、网格间距、止盈止损比例等。
+
 ```bash
 # 激活虚拟环境
 source venv/bin/activate
 
 # 分析 BTCUSDT 日线振幅（Binance，默认 ATR 入场策略）
+# 执行后会生成 binance_BTCUSDT_amplitude_config.json 配置文件
 python autofish_core.py --symbol BTCUSDT
 
 # 分析 ETHUSDT（使用布林带入场策略）
@@ -387,6 +390,22 @@ python longport_live.py --help
 3. 重复直到达到最大层级
 4. 止盈/止损触发后，取消另一个条件单，重新创建该层级入场单
 
+### A1 超时重挂
+
+当 A1 订单挂单后，如果行情持续上涨，价格一直无法达到 A1 入场位置，可启用超时重挂机制：
+
+1. A1 挂单超过 `a1_timeout_minutes` 分钟未成交
+2. 取消原 A1 订单及其关联的止盈止损单
+3. 使用当前价格重新计算 A1 入场价
+4. 重新挂单 A1
+
+**配置参数**：
+- `a1_timeout_minutes`: 超时时间（分钟），默认 60，设为 0 不启用
+
+**适用场景**：
+- 行情持续上涨，A1 入场价迟迟无法触及
+- 避免长时间空仓错过交易机会
+
 ## 核心类
 
 ### Autofish 核心类
@@ -476,7 +495,9 @@ HTTPS_PROXY=http://127.0.0.1:1087
 
 ## 配置文件格式
 
-`out/autofish/binance_BTCUSDT_amplitude_config.json`：
+### 振幅配置文件
+
+`out/autofish/binance_BTCUSDT_amplitude_config.json`（由 `python autofish_core.py --symbol BTCUSDT` 生成）：
 
 ```json
 {
@@ -491,16 +512,7 @@ HTTPS_PROXY=http://127.0.0.1:1087
     "grid_spacing": 0.01,
     "exit_profit": 0.01,
     "stop_loss": 0.08,
-    "total_expected_return": 0.2942,
-    "entry_price_strategy": {
-      "name": "atr",
-      "params": {
-        "atr_period": 14,
-        "atr_multiplier": 0.5,
-        "min_spacing": 0.005,
-        "max_spacing": 0.03
-      }
-    }
+    "total_expected_return": 0.2942
   },
   "d_1.0": {
     "symbol": "BTCUSDT",
@@ -513,16 +525,7 @@ HTTPS_PROXY=http://127.0.0.1:1087
     "grid_spacing": 0.01,
     "exit_profit": 0.01,
     "stop_loss": 0.08,
-    "total_expected_return": 0.2942,
-    "entry_price_strategy": {
-      "name": "atr",
-      "params": {
-        "atr_period": 14,
-        "atr_multiplier": 0.5,
-        "min_spacing": 0.005,
-        "max_spacing": 0.03
-      }
-    }
+    "total_expected_return": 0.2942
   }
 }
 ```
@@ -538,7 +541,87 @@ HTTPS_PROXY=http://127.0.0.1:1087
 | max_entries | 回测/实盘读取前N个权重 |
 | total_expected_return | 总预期收益（所有正收益区间之和） |
 
+### 扩展策略配置文件
+
+`out/autofish/autofish_extern_strategy.json`（所有标的共用的扩展策略配置）：
+
+```json
+{
+  "entry_price_strategy": {
+    "name": "atr",
+    "params": {
+      "atr_period": 14,
+      "atr_multiplier": 0.5,
+      "min_spacing": 0.005,
+      "max_spacing": 0.03
+    }
+  },
+  "market_aware": {
+    "enabled": true,
+    "algorithm": "dual_thrust",
+    "lookback_period": 20,
+    "breakout_threshold": 0.02,
+    "consecutive_bars": 3,
+    "down_confirm_days": 1,
+    "k2_down_factor": 0.6,
+    "cooldown_days": 1,
+    "check_interval": 60,
+    "trading_statuses": ["ranging"]
+  }
+}
+```
+
+**字段说明**：
+
+| 字段 | 说明 |
+|------|------|
+| entry_price_strategy | 入场价格策略配置 |
+| entry_price_strategy.name | 策略名称: fixed, atr, bollinger, support, composite |
+| entry_price_strategy.params | 策略参数 |
+| market_aware | 行情感知策略配置 |
+| market_aware.enabled | 是否启用行情感知 |
+| market_aware.algorithm | 行情检测算法: improved, dual_thrust, adx, composite |
+| market_aware.lookback_period | 回看天数（日线） |
+| market_aware.breakout_threshold | 突破阈值 |
+| market_aware.consecutive_bars | 连续确认天数 |
+| market_aware.down_confirm_days | 下跌确认天数 |
+| market_aware.k2_down_factor | K2下跌因子 |
+| market_aware.cooldown_days | 状态切换冷却期 |
+| market_aware.check_interval | 检测间隔（秒） |
+| market_aware.trading_statuses | 允许交易的状态: ranging, trending_up, trending_down |
+
+**配置文件关系**：
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    autofish_extern_strategy.json                │
+│                    （所有标的共用的扩展策略）                      │
+│  ┌─────────────────────┐  ┌─────────────────────────────────┐  │
+│  │ entry_price_strategy│  │        market_aware             │  │
+│  │   (入场价格策略)      │  │      (行情感知策略)              │  │
+│  └─────────────────────┘  └─────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│              binance_BTCUSDT_amplitude_config.json              │
+│                   （BTCUSDT 标的特定参数）                        │
+│  ┌─────────────────────────────────────────────────────────┐   │
+│  │ d_0.5: weights, grid_spacing, stop_loss, ...            │   │
+│  │ d_1.0: weights, grid_spacing, stop_loss, ...            │   │
+│  └─────────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│              binance_ETHUSDT_amplitude_config.json              │
+│                   （ETHUSDT 标的特定参数）                        │
+└─────────────────────────────────────────────────────────────────┘
+```
+
 ## 配置参数说明
+
+### 振幅配置参数
 
 | 参数 | 默认值 | 说明 |
 |------|--------|------|
@@ -552,7 +635,16 @@ HTTPS_PROXY=http://127.0.0.1:1087
 | grid_spacing | 0.01 (1%) | 网格间距 |
 | exit_profit | 0.01 (1%) | 止盈比例 |
 | stop_loss | 0.08 (8%) | 止损比例 |
-| entry_price_strategy | {"name": "atr", ...} | 入场价格策略配置 |
+
+### 扩展策略参数
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| a1_timeout_minutes | 10 | A1 订单超时时间（分钟），0 表示不启用 |
+| entry_price_strategy.name | atr | 入场价格策略: fixed, atr, bollinger, support, composite |
+| market_aware.enabled | true | 是否启用行情感知 |
+| market_aware.algorithm | dual_thrust | 行情检测算法 |
+| market_aware.trading_statuses | ["ranging"] | 允许交易的状态 |
 
 ### 入场价格策略
 
