@@ -491,8 +491,8 @@ class ATRDynamicStrategy(EntryPriceStrategy):
             return current_price * (Decimal("1") - grid_spacing * level)
         
         atr_percent = atr / current_price
-        dynamic_spacing = atr_percent * self.atr_multiplier
-        dynamic_spacing = max(self.min_spacing, min(self.max_spacing, dynamic_spacing))
+        dynamic_spacing = atr_percent * Decimal(str(self.atr_multiplier))
+        dynamic_spacing = max(Decimal(str(self.min_spacing)), min(Decimal(str(self.max_spacing)), dynamic_spacing))
         
         logger.info(f"[ATR策略] atr={atr:.2f}, atr_percent={float(atr_percent)*100:.2f}%, "
                    f"dynamic_spacing={float(dynamic_spacing)*100:.2f}%")
@@ -544,7 +544,7 @@ class BollingerBandStrategy(EntryPriceStrategy):
             return current_price * (Decimal("1") - grid_spacing * level)
         
         lower_band = self._calculate_lower_band(klines)
-        min_entry = current_price * (Decimal("1") - self.min_spacing)
+        min_entry = current_price * (Decimal("1") - Decimal(str(self.min_spacing)))
         
         entry_price = max(lower_band, min_entry)
         
@@ -595,7 +595,7 @@ class SupportLevelStrategy(EntryPriceStrategy):
             return current_price * (Decimal("1") - grid_spacing * level)
         
         support = self._find_support(klines)
-        min_entry = current_price * (Decimal("1") - self.min_spacing)
+        min_entry = current_price * (Decimal("1") - Decimal(str(self.min_spacing)))
         
         entry_price = max(support, min_entry)
         
@@ -944,8 +944,7 @@ class Autofish_OrderCalculator:
                 "leverage": Decimal("1"),
                 "max_entries": 4,
                 "valid_amplitudes":[1, 2, 3, 4, 5, 6, 7, 8],
-                "weights":[0.3999, 0.3933, 0.1586, 0.0422, 0.0021, 0.0036, 0.0001, 0.0001],
-                "entry_price_strategy": DEFAULT_ENTRY_STRATEGY.copy(),
+                "weights":[0.3999, 0.3933, 0.1586, 0.0422, 0.0021, 0.0036, 0.0001, 0.0001]
             }
         else:
             return {
@@ -958,8 +957,7 @@ class Autofish_OrderCalculator:
                 "leverage": Decimal("10"),
                 "max_entries": 4,
                 "valid_amplitudes":[1, 2, 3, 4, 5, 6, 7, 8, 9],
-                "weights":[0.0852, 0.2956, 0.3177, 0.137, 0.1008, 0.0282, 0.0271, 0.0066, 0.0019],
-                "entry_price_strategy": DEFAULT_ENTRY_STRATEGY.copy(),
+                "weights":[0.0852, 0.2956, 0.3177, 0.137, 0.1008, 0.0282, 0.0271, 0.0066, 0.0019]
             }
 
 
@@ -1745,28 +1743,68 @@ class Autofish_ExternStrategy:
     管理所有标的共用的扩展策略配置：
     - entry_price_strategy: 入场价格策略
     - market_aware: 行情感知策略
+    
+    新格式说明：
+    - entry_price_strategy: {"strategy": "atr", "atr": {...}, "bollinger": {...}}
+    - market_aware: {"algorithm": "dual_thrust", "dual_thrust": {...}, "trading_statuses": [...]}
     """
     
     DEFAULT_CONFIG = {
         "entry_price_strategy": {
-            "name": "atr",
-            "params": {
+            "strategy": "atr",
+            "atr": {
                 "atr_period": 14,
                 "atr_multiplier": 0.5,
                 "min_spacing": 0.005,
                 "max_spacing": 0.03
+            },
+            "bollinger": {
+                "period": 20,
+                "num_std": 2,
+                "min_spacing": 0.005,
+                "max_spacing": 0.03
+            },
+            "support": {
+                "period": 20,
+                "min_touches": 2,
+                "price_tolerance": 0.01
+            },
+            "composite": {
+                "atr_period": 14,
+                "atr_multiplier": 0.5,
+                "bb_period": 20,
+                "bb_std": 2
             }
         },
         "market_aware": {
-            "enabled": True,
             "algorithm": "dual_thrust",
-            "lookback_period": 20,
-            "breakout_threshold": 0.02,
-            "consecutive_bars": 3,
-            "down_confirm_days": 1,
-            "k2_down_factor": 0.6,
-            "cooldown_days": 1,
-            "check_interval": 60,
+            "dual_thrust": {
+                "n_days": 4,
+                "k1": 0.4,
+                "k2": 0.4,
+                "k2_down_factor": 0.8,
+                "down_confirm_days": 2,
+                "cooldown_days": 1
+            },
+            "improved": {
+                "lookback_period": 60,
+                "min_range_duration": 10,
+                "max_range_pct": 0.15,
+                "breakout_threshold": 0.03,
+                "breakout_confirm_days": 3
+            },
+            "composite": {
+                "adx_period": 14,
+                "adx_threshold": 25,
+                "atr_period": 14,
+                "atr_multiplier": 1.5,
+                "bb_period": 20,
+                "bb_std": 2
+            },
+            "adx": {
+                "period": 14,
+                "threshold": 25
+            },
             "trading_statuses": ["ranging"]
         }
     }
@@ -1799,16 +1837,58 @@ class Autofish_ExternStrategy:
             return False
     
     def get_entry_price_strategy(self) -> dict:
-        """获取入场价格策略配置"""
+        """获取入场价格策略完整配置"""
         if "entry_price_strategy" in self.config:
             return self.config["entry_price_strategy"]
         return self.DEFAULT_CONFIG["entry_price_strategy"]
     
+    def get_active_entry_strategy(self) -> dict:
+        """获取当前激活的入场价格策略参数
+        
+        返回格式: {"name": "atr", "params": {...}}
+        """
+        config = self.get_entry_price_strategy()
+        strategy_name = config.get("strategy", "atr")
+        
+        # 兼容旧格式
+        if "name" in config and "params" in config:
+            return config
+        
+        # 新格式
+        params = config.get(strategy_name, {})
+        return {"name": strategy_name, "params": params}
+    
     def get_market_aware(self) -> dict:
-        """获取行情感知策略配置"""
+        """获取行情感知策略完整配置"""
         if "market_aware" in self.config:
             return self.config["market_aware"]
         return self.DEFAULT_CONFIG["market_aware"]
+    
+    def get_active_market_algorithm(self) -> dict:
+        """获取当前激活的行情算法参数
+        
+        返回格式: {"name": "dual_thrust", "params": {...}, "trading_statuses": [...]}
+        """
+        config = self.get_market_aware()
+        algorithm_name = config.get("algorithm", "dual_thrust")
+        
+        # 兼容旧格式（顶层参数）
+        if "lookback_period" in config or "n_days" in config:
+            params = {k: v for k, v in config.items() 
+                     if k not in ["algorithm", "enabled", "trading_statuses"]}
+            return {
+                "name": algorithm_name,
+                "params": params,
+                "trading_statuses": config.get("trading_statuses", ["ranging"])
+            }
+        
+        # 新格式
+        params = config.get(algorithm_name, {})
+        return {
+            "name": algorithm_name,
+            "params": params,
+            "trading_statuses": config.get("trading_statuses", ["ranging"])
+        }
     
     def set_entry_price_strategy(self, strategy: dict) -> None:
         """设置入场价格策略配置"""

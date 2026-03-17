@@ -1,0 +1,1689 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>测试结果管理系统</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
+    <style>
+        body { padding: 20px; background-color: #f5f5f5; }
+        .card { margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        .card-header { background-color: #fff; border-bottom: 1px solid #eee; }
+        .metric-card { text-align: center; padding: 20px; }
+        .metric-value { font-size: 2em; font-weight: bold; color: #333; }
+        .metric-label { color: #666; margin-top: 5px; }
+        .positive { color: #28a745; }
+        .negative { color: #dc3545; }
+        .table-container { overflow-x: auto; }
+        #resultChart { height: 400px; }
+        #klineChart { height: 600px; }
+        .nav-tabs .nav-link { color: #333; }
+        .nav-tabs .nav-link.active { font-weight: bold; }
+        .error-text { font-family: monospace; white-space: pre-wrap; word-break: break-all; max-height: 300px; overflow-y: auto; background: #f8f9fa; padding: 10px; border-radius: 5px; }
+        .status-badge { padding: 4px 12px; border-radius: 12px; font-size: 12px; font-weight: 500; }
+        .status-draft { background: #e9ecef; color: #495057; }
+        .status-active { background: #fff3cd; color: #856404; }
+        .status-running { background: #cce5ff; color: #004085; }
+        .status-completed { background: #d4edda; color: #155724; }
+        .status-archived { background: #d6d8db; color: #383d41; }
+        .status-ranging { background: #dcfce7; color: #166534; }
+        .status-trending_up { background: #fee2e2; color: #991b1b; }
+        .status-trending_down { background: #dbeafe; color: #1e40af; }
+    </style>
+</head>
+<body>
+    <div class="modal fade" id="errorModal" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header bg-danger text-white">
+                    <h5 class="modal-title">错误信息</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="error-text" id="errorText"></div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-outline-secondary" onclick="copyErrorText()">复制错误信息</button>
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">关闭</button>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="container-fluid">
+        <h1 class="mb-4">测试结果管理系统</h1>
+        
+        <div class="row" id="statsCards">
+            <div class="col-md-3">
+                <div class="card metric-card">
+                    <div class="metric-value" id="totalExecutions">0</div>
+                    <div class="metric-label">总执行次数</div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card metric-card">
+                    <div class="metric-value" id="successRate">0%</div>
+                    <div class="metric-label">成功率</div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card metric-card">
+                    <div class="metric-value" id="avgWinRate">0%</div>
+                    <div class="metric-label">平均胜率</div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card metric-card">
+                    <div class="metric-value" id="avgROI">0%</div>
+                    <div class="metric-label">平均收益率</div>
+                </div>
+            </div>
+        </div>
+        
+        <ul class="nav nav-tabs" id="mainTabs">
+            <li class="nav-item">
+                <a class="nav-link active" data-bs-toggle="tab" href="#cases">测试用例</a>
+            </li>
+            <li class="nav-item">
+                <a class="nav-link" data-bs-toggle="tab" href="#results">测试结果</a>
+            </li>
+            <li class="nav-item">
+                <a class="nav-link" data-bs-toggle="tab" href="#history">测试历史</a>
+            </li>
+            <li class="nav-item">
+                <a class="nav-link" data-bs-toggle="tab" href="#compare">测试对比</a>
+            </li>
+        </ul>
+        
+        <div class="tab-content">
+            <div class="tab-pane fade show active" id="cases">
+                <div class="card">
+                    <div class="card-header">
+                        <div class="row">
+                            <div class="col-md-6">
+                                <h5>测试用例列表</h5>
+                            </div>
+                            <div class="col-md-6 text-end">
+                                <button class="btn btn-primary" onclick="showCreateCaseForm()">新建测试用例</button>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <div class="row mb-3">
+                            <div class="col-md-3">
+                                <select class="form-select" id="filterCaseStatus">
+                                    <option value="">全部状态</option>
+                                    <option value="draft">草稿</option>
+                                    <option value="active">激活</option>
+                                    <option value="running">运行中</option>
+                                    <option value="completed">已完成</option>
+                                    <option value="archived">已归档</option>
+                                </select>
+                            </div>
+                            <div class="col-md-3">
+                                <select class="form-select" id="filterCaseSymbol">
+                                    <option value="">全部标的</option>
+                                </select>
+                            </div>
+                            <div class="col-md-3">
+                                <button class="btn btn-primary w-100" onclick="loadCases()">查询</button>
+                            </div>
+                        </div>
+                        <div class="table-container">
+                            <table class="table table-striped table-hover">
+                                <thead>
+                                    <tr>
+                                        <th>用例ID</th>
+                                        <th>名称</th>
+                                        <th>标的</th>
+                                        <th>日期范围</th>
+                                        <th>类型</th>
+                                        <th>状态</th>
+                                        <th>创建时间</th>
+                                        <th>操作</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="casesTable">
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="tab-pane fade" id="results">
+                <div class="card">
+                    <div class="card-header">
+                        <div class="row">
+                            <div class="col-md-3">
+                                <select class="form-select" id="filterResultSymbol">
+                                    <option value="">全部标的</option>
+                                </select>
+                            </div>
+                            <div class="col-md-3">
+                                <select class="form-select" id="filterResultType">
+                                    <option value="">全部类型</option>
+                                    <option value="backtest">普通回测</option>
+                                    <option value="market_aware">行情感知回测</option>
+                                </select>
+                            </div>
+                            <div class="col-md-3">
+                                <input type="text" class="form-control" id="filterCaseId" placeholder="用例ID">
+                            </div>
+                            <div class="col-md-3">
+                                <button class="btn btn-primary w-100" onclick="loadResults()">查询</button>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <div class="table-container">
+                            <table class="table table-striped table-hover">
+                                <thead>
+                                    <tr>
+                                        <th>结果ID</th>
+                                        <th>用例ID</th>
+                                        <th>标的</th>
+                                        <th>类型</th>
+                                        <th>交易次数</th>
+                                        <th>胜率</th>
+                                        <th>净收益</th>
+                                        <th>收益率</th>
+                                        <th>标的涨跌</th>
+                                        <th>超额收益</th>
+                                        <th>执行时间</th>
+                                        <th>操作</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="resultsTable">
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="tab-pane fade" id="history">
+                <div class="card">
+                    <div class="card-header">
+                        <div class="row">
+                            <div class="col-md-6">
+                                <h5>测试历史汇总</h5>
+                            </div>
+                            <div class="col-md-6 text-end">
+                                <button class="btn btn-outline-primary" onclick="exportHistory('md')">导出MD</button>
+                                <button class="btn btn-outline-primary" onclick="exportHistory('csv')">导出CSV</button>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <div class="row mb-4">
+                            <div class="col-md-2">
+                                <div class="card metric-card">
+                                    <div class="metric-value" id="historyTotal">0</div>
+                                    <div class="metric-label">总测试</div>
+                                </div>
+                            </div>
+                            <div class="col-md-2">
+                                <div class="card metric-card">
+                                    <div class="metric-value" id="historySuccess">0</div>
+                                    <div class="metric-label">成功次数</div>
+                                </div>
+                            </div>
+                            <div class="col-md-2">
+                                <div class="card metric-card">
+                                    <div class="metric-value" id="historySuccessRate">0%</div>
+                                    <div class="metric-label">成功率</div>
+                                </div>
+                            </div>
+                            <div class="col-md-2">
+                                <div class="card metric-card">
+                                    <div class="metric-value" id="historyAvgWinRate">0%</div>
+                                    <div class="metric-label">平均胜率</div>
+                                </div>
+                            </div>
+                            <div class="col-md-2">
+                                <div class="card metric-card">
+                                    <div class="metric-value" id="historyAvgRoi">0%</div>
+                                    <div class="metric-label">平均收益率</div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="row">
+                            <div class="col-md-6">
+                                <h6>按标的统计</h6>
+                                <div class="table-container">
+                                    <table class="table table-sm table-striped">
+                                        <thead>
+                                            <tr>
+                                                <th>标的</th>
+                                                <th>测试次数</th>
+                                                <th>平均胜率</th>
+                                                <th>平均收益率</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="historyBySymbol">
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <h6>按算法统计</h6>
+                                <div class="table-container">
+                                    <table class="table table-sm table-striped">
+                                        <thead>
+                                            <tr>
+                                                <th>算法</th>
+                                                <th>测试次数</th>
+                                                <th>平均胜率</th>
+                                                <th>平均收益率</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="historyByAlgorithm">
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <h6 class="mt-4">最近测试记录</h6>
+                        <div class="table-container">
+                            <table class="table table-sm table-striped">
+                                <thead>
+                                    <tr>
+                                        <th><input type="checkbox" id="selectAll" onchange="toggleSelectAll()"></th>
+                                        <th>结果ID</th>
+                                        <th>标的</th>
+                                        <th>算法</th>
+                                        <th>胜率</th>
+                                        <th>收益率</th>
+                                        <th>执行时间</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="historyRecent">
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="tab-pane fade" id="compare">
+                <div class="card">
+                    <div class="card-header">
+                        <div class="row">
+                            <div class="col-md-6">
+                                <h5>测试结果对比</h5>
+                            </div>
+                            <div class="col-md-6 text-end">
+                                <button class="btn btn-primary" onclick="doCompare()">对比选中结果</button>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <div id="compareContent">
+                            <p class="text-muted">请在"测试历史"标签页选择要对比的测试结果</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="modal fade" id="detailModal" tabindex="-1">
+        <div class="modal-dialog modal-xl">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">测试结果详情</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div id="detailContent"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="modal fade" id="caseFormModal" tabindex="-1">
+        <div class="modal-dialog modal-xl">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="caseFormTitle">新建测试用例</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <form id="caseForm">
+                        <input type="hidden" id="editCaseId" value="">
+                        
+                        <h6>基本信息</h6>
+                        <div class="row mb-3">
+                            <div class="col-md-4">
+                                <label class="form-label">用例名称</label>
+                                <input type="text" class="form-control" id="formCaseName" placeholder="如: BTCUSDT基础回测">
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label">测试类型</label>
+                                <select class="form-select" id="formTestType">
+                                    <option value="backtest">普通回测</option>
+                                    <option value="market_aware">行情感知回测</option>
+                                </select>
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label">状态</label>
+                                <select class="form-select" id="formCaseStatus">
+                                    <option value="draft">草稿</option>
+                                    <option value="active">激活</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="row mb-3">
+                            <div class="col-md-4">
+                                <label class="form-label">标的 *</label>
+                                <input type="text" class="form-control" id="formSymbol" placeholder="如: BTCUSDT" required>
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label">开始日期 *</label>
+                                <input type="date" class="form-control" id="formDateStart" required>
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label">结束日期 *</label>
+                                <input type="date" class="form-control" id="formDateEnd" required>
+                            </div>
+                        </div>
+                        <div class="row mb-3">
+                            <div class="col-md-12">
+                                <label class="form-label">描述</label>
+                                <textarea class="form-control" id="formDescription" rows="2" placeholder="测试用例描述"></textarea>
+                            </div>
+                        </div>
+                        
+                        <h6>振幅参数 (amplitude)</h6>
+                        <div class="row mb-3">
+                            <div class="col-md-3">
+                                <label class="form-label">衰减因子</label>
+                                <input type="number" step="0.1" class="form-control" id="formDecayFactor" placeholder="默认: 0.5">
+                            </div>
+                            <div class="col-md-3">
+                                <label class="form-label">止损比例</label>
+                                <input type="number" step="0.01" class="form-control" id="formStopLoss" placeholder="默认: 0.08">
+                            </div>
+                            <div class="col-md-3">
+                                <label class="form-label">总金额</label>
+                                <input type="number" class="form-control" id="formTotalAmount" placeholder="默认: 10000">
+                            </div>
+                            <div class="col-md-3">
+                                <label class="form-label">杠杆倍数</label>
+                                <input type="number" class="form-control" id="formLeverage" placeholder="默认: 10">
+                            </div>
+                        </div>
+                        <div class="row mb-3">
+                            <div class="col-md-3">
+                                <label class="form-label">最大入场次数</label>
+                                <input type="number" class="form-control" id="formMaxEntries" placeholder="默认: 4">
+                            </div>
+                            <div class="col-md-3">
+                                <label class="form-label">网格间距</label>
+                                <input type="number" step="0.01" class="form-control" id="formGridSpacing" placeholder="默认: 0.01">
+                            </div>
+                            <div class="col-md-3">
+                                <label class="form-label">止盈比例</label>
+                                <input type="number" step="0.01" class="form-control" id="formExitProfit" placeholder="默认: 0.01">
+                            </div>
+                        </div>
+                        <div class="row mb-3">
+                            <div class="col-md-6">
+                                <label class="form-label">有效振幅 (valid_amplitudes)</label>
+                                <input type="text" class="form-control" id="formValidAmplitudes" placeholder='默认: [1, 2, 3, 4, 5, 6, 7, 8, 9]'>
+                                <small class="text-muted">JSON数组格式，如: [1, 2, 3, 4, 5]</small>
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label">权重 (weights)</label>
+                                <input type="text" class="form-control" id="formWeights" placeholder='默认: [0.0831, 0.2996, ...]'>
+                                <small class="text-muted">JSON数组格式，与valid_amplitudes长度一致</small>
+                            </div>
+                        </div>
+                        
+                        <h6>行情算法参数 (market)</h6>
+                        <div class="row mb-3">
+                            <div class="col-md-4">
+                                <label class="form-label">算法</label>
+                                <select class="form-select" id="formMarketAlgorithm" onchange="onMarketAlgorithmChange()">
+                                    <option value="always_ranging">always_ranging (总是震荡)</option>
+                                    <option value="dual_thrust">dual_thrust</option>
+                                    <option value="improved">improved</option>
+                                    <option value="composite">composite</option>
+                                    <option value="adx">adx</option>
+                                </select>
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label">允许交易状态</label>
+                                <input type="text" class="form-control" id="formTradingStatuses" placeholder="如: ranging (逗号分隔)">
+                            </div>
+                        </div>
+                        
+                        <div id="dualThrustParams" class="algorithm-params" style="display:none;">
+                            <div class="row mb-3">
+                                <div class="col-md-2">
+                                    <label class="form-label">回看天数</label>
+                                    <input type="number" class="form-control" id="formNDays" placeholder="默认: 4">
+                                </div>
+                                <div class="col-md-2">
+                                    <label class="form-label">上轨系数 K1</label>
+                                    <input type="number" step="0.1" class="form-control" id="formK1" placeholder="默认: 0.4">
+                                </div>
+                                <div class="col-md-2">
+                                    <label class="form-label">下轨系数 K2</label>
+                                    <input type="number" step="0.1" class="form-control" id="formK2" placeholder="默认: 0.4">
+                                </div>
+                                <div class="col-md-2">
+                                    <label class="form-label">下跌确认天数</label>
+                                    <input type="number" class="form-control" id="formDownConfirmDays" placeholder="默认: 2">
+                                </div>
+                                <div class="col-md-2">
+                                    <label class="form-label">下跌敏感系数</label>
+                                    <input type="number" step="0.1" class="form-control" id="formK2DownFactor" placeholder="默认: 0.8">
+                                </div>
+                                <div class="col-md-2">
+                                    <label class="form-label">冷却期</label>
+                                    <input type="number" class="form-control" id="formCooldownDays" placeholder="默认: 1">
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div id="improvedParams" class="algorithm-params" style="display:none;">
+                            <div class="row mb-3">
+                                <div class="col-md-3">
+                                    <label class="form-label">回看周期</label>
+                                    <input type="number" class="form-control" id="formLookbackPeriod" placeholder="默认: 20">
+                                </div>
+                                <div class="col-md-3">
+                                    <label class="form-label">最小震荡天数</label>
+                                    <input type="number" class="form-control" id="formMinRangeDuration" placeholder="默认: 3">
+                                </div>
+                                <div class="col-md-3">
+                                    <label class="form-label">最大震荡幅度</label>
+                                    <input type="number" step="0.01" class="form-control" id="formMaxRangePct" placeholder="默认: 0.05">
+                                </div>
+                                <div class="col-md-3">
+                                    <label class="form-label">突破阈值</label>
+                                    <input type="number" step="0.01" class="form-control" id="formBreakoutThreshold" placeholder="默认: 0.02">
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div id="compositeParams" class="algorithm-params" style="display:none;">
+                            <div class="row mb-3">
+                                <div class="col-md-3">
+                                    <label class="form-label">ADX周期</label>
+                                    <input type="number" class="form-control" id="formAdxPeriod" placeholder="默认: 14">
+                                </div>
+                                <div class="col-md-3">
+                                    <label class="form-label">ADX阈值</label>
+                                    <input type="number" class="form-control" id="formAdxThreshold" placeholder="默认: 25">
+                                </div>
+                                <div class="col-md-3">
+                                    <label class="form-label">ATR周期</label>
+                                    <input type="number" class="form-control" id="formAtrPeriod" placeholder="默认: 14">
+                                </div>
+                                <div class="col-md-3">
+                                    <label class="form-label">ATR倍数</label>
+                                    <input type="number" step="0.1" class="form-control" id="formAtrMultiplier" placeholder="默认: 1.5">
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div id="adxParams" class="algorithm-params" style="display:none;">
+                            <div class="row mb-3">
+                                <div class="col-md-4">
+                                    <label class="form-label">ADX周期</label>
+                                    <input type="number" class="form-control" id="formAdxPeriodAdx" placeholder="默认: 14">
+                                </div>
+                                <div class="col-md-4">
+                                    <label class="form-label">ADX阈值</label>
+                                    <input type="number" class="form-control" id="formAdxThresholdAdx" placeholder="默认: 25">
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <h6>入场价格策略 (entry)</h6>
+                        <div class="row mb-3">
+                            <div class="col-md-4">
+                                <label class="form-label">策略</label>
+                                <select class="form-select" id="formEntryStrategy" onchange="onEntryStrategyChange()">
+                                    <option value="">不使用入场策略</option>
+                                    <option value="fixed">fixed (固定网格)</option>
+                                    <option value="atr">atr (ATR动态)</option>
+                                    <option value="bollinger">bollinger (布林带)</option>
+                                    <option value="support">support (支撑位)</option>
+                                    <option value="composite">composite (综合)</option>
+                                </select>
+                            </div>
+                        </div>
+                        
+                        <div id="atrStrategyParams" class="strategy-params" style="display:none;">
+                            <div class="row mb-3">
+                                <div class="col-md-3">
+                                    <label class="form-label">ATR周期</label>
+                                    <input type="number" class="form-control" id="formEntryAtrPeriod" placeholder="默认: 14">
+                                </div>
+                                <div class="col-md-3">
+                                    <label class="form-label">ATR倍数</label>
+                                    <input type="number" step="0.1" class="form-control" id="formEntryAtrMultiplier" placeholder="默认: 0.5">
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div id="bollingerStrategyParams" class="strategy-params" style="display:none;">
+                            <div class="row mb-3">
+                                <div class="col-md-3">
+                                    <label class="form-label">周期</label>
+                                    <input type="number" class="form-control" id="formEntryBbPeriod" placeholder="默认: 20">
+                                </div>
+                                <div class="col-md-3">
+                                    <label class="form-label">标准差倍数</label>
+                                    <input type="number" step="0.1" class="form-control" id="formEntryBbStd" placeholder="默认: 2">
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <h6>超时参数 (timeout)</h6>
+                        <div class="row mb-3">
+                            <div class="col-md-4">
+                                <label class="form-label">首次入场超时(分钟)</label>
+                                <input type="number" class="form-control" id="formA1TimeoutMinutes" placeholder="0表示不启用">
+                            </div>
+                        </div>
+                    </form>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                    <button type="button" class="btn btn-danger" id="deleteCaseBtn" onclick="deleteCase()" style="display:none;">删除</button>
+                    <button type="button" class="btn btn-primary" onclick="saveCase()">保存</button>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="modal fade" id="chartModal" tabindex="-1">
+        <div class="modal-dialog modal-xl">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">K线图 - 行情与交易标注</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="row mb-3">
+                        <div class="col-md-12">
+                            <div class="btn-group" role="group">
+                                <input type="checkbox" class="btn-check" id="showTrades" checked onchange="updateChart()">
+                                <label class="btn btn-outline-primary" for="showTrades">显示交易标注</label>
+                            </div>
+                        </div>
+                    </div>
+                    <div id="klineChart"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        const API_BASE = window.location.origin;
+        let selectedResultIds = [];
+        let currentChartData = null;
+        let klineChart = null;
+        
+        const DEFAULT_PARAMS = {
+            amplitude: {
+                decay_factor: 0.5,
+                stop_loss: 0.08,
+                total_amount_quote: 10000,
+                leverage: 10,
+                max_entries: 4,
+                grid_spacing: 0.01,
+                exit_profit: 0.01,
+                valid_amplitudes: [1, 2, 3, 4, 5, 6, 7, 8, 9],
+                weights: [0.0831, 0.2996, 0.3167, 0.1365, 0.1005, 0.0281, 0.027, 0.0066, 0.0018]
+            },
+            dual_thrust: {
+                n_days: 4,
+                k1: 0.4,
+                k2: 0.4,
+                down_confirm_days: 2,
+                k2_down_factor: 0.8,
+                cooldown_days: 1
+            },
+            improved: {
+                lookback_period: 20,
+                min_range_duration: 3,
+                max_range_pct: 0.05,
+                breakout_threshold: 0.02
+            },
+            composite: {
+                adx_period: 14,
+                adx_threshold: 25,
+                atr_period: 14,
+                atr_multiplier: 2.0
+            },
+            adx: {
+                period: 14,
+                threshold: 25
+            },
+            atr: {
+                atr_period: 14,
+                atr_multiplier: 2.0
+            },
+            bollinger: {
+                period: 20,
+                num_std: 2.0
+            }
+        };
+        
+        function getParamWithDefault(value, defaultValue) {
+            return value !== undefined && value !== null && value !== '' ? value : defaultValue;
+        }
+        
+        function showError(title, message) {
+            document.getElementById('errorText').textContent = message;
+            const modal = new bootstrap.Modal(document.getElementById('errorModal'));
+            modal.show();
+        }
+        
+        function copyErrorText() {
+            const text = document.getElementById('errorText').textContent;
+            navigator.clipboard.writeText(text).then(() => {
+                alert('已复制到剪贴板');
+            }).catch(err => {
+                console.error('复制失败:', err);
+            });
+        }
+        
+        document.addEventListener('DOMContentLoaded', function() {
+            loadStatistics();
+            loadCases();
+            loadResults();
+            loadSymbols();
+            loadTestHistory();
+        });
+        
+        async function loadStatistics() {
+            try {
+                const response = await fetch(`${API_BASE}/api/statistics`);
+                const data = await response.json();
+                if (data.success) {
+                    const stats = data.data;
+                    document.getElementById('totalExecutions').textContent = stats.total_executions || 0;
+                    document.getElementById('successRate').textContent = 
+                        stats.total_executions > 0 
+                        ? ((stats.successful_executions / stats.total_executions) * 100).toFixed(1) + '%' 
+                        : '0%';
+                    document.getElementById('avgWinRate').textContent = (stats.avg_win_rate || 0).toFixed(1) + '%';
+                    document.getElementById('avgROI').textContent = (stats.avg_roi || 0).toFixed(2) + '%';
+                }
+            } catch (error) {
+                console.error('加载统计数据失败:', error);
+            }
+        }
+        
+        async function loadSymbols() {
+            try {
+                const response = await fetch(`${API_BASE}/api/statistics`);
+                const data = await response.json();
+                if (data.success) {
+                    const symbols = data.data.by_symbol || {};
+                    const select = document.getElementById('filterResultSymbol');
+                    const caseSelect = document.getElementById('filterCaseSymbol');
+                    
+                    for (const symbol in symbols) {
+                        const option = new Option(symbol, symbol);
+                        select.add(option);
+                        caseSelect.add(option.cloneNode(true));
+                    }
+                }
+            } catch (error) {
+                console.error('加载标的列表失败:', error);
+            }
+        }
+        
+        async function loadCases() {
+            try {
+                const params = new URLSearchParams();
+                const status = document.getElementById('filterCaseStatus').value;
+                const symbol = document.getElementById('filterCaseSymbol').value;
+                
+                if (status) params.append('status', status);
+                if (symbol) params.append('symbol', symbol);
+                
+                const response = await fetch(`${API_BASE}/api/cases?${params}`);
+                const data = await response.json();
+                
+                if (data.success) {
+                    renderCasesTable(data.data);
+                }
+            } catch (error) {
+                console.error('加载测试用例失败:', error);
+            }
+        }
+        
+        function renderCasesTable(cases) {
+            const tbody = document.getElementById('casesTable');
+            tbody.innerHTML = '';
+            
+            cases.forEach(c => {
+                const row = document.createElement('tr');
+                const statusClass = `status-${c.status}`;
+                const canEdit = ['draft', 'active'].includes(c.status);
+                const canRun = c.status === 'active';
+                const canReset = c.status === 'completed';
+                
+                row.innerHTML = `
+                    <td><small>${c.case_id.substring(0, 8)}...</small></td>
+                    <td>${c.name || '-'}</td>
+                    <td>${c.symbol}</td>
+                    <td>${c.date_start} ~ ${c.date_end}</td>
+                    <td>${c.test_type || '-'}</td>
+                    <td><span class="status-badge ${statusClass}">${c.status}</span></td>
+                    <td><small>${c.created_at || '-'}</small></td>
+                    <td>
+                        <button class="btn btn-sm btn-outline-primary" onclick="showCaseDetail('${c.case_id}')">详情</button>
+                        ${canEdit ? `<button class="btn btn-sm btn-outline-warning" onclick="showEditCaseForm('${c.case_id}')">编辑</button>` : ''}
+                        ${canRun ? `<button class="btn btn-sm btn-outline-success" onclick="runCase('${c.case_id}')">执行</button>` : ''}
+                        ${canReset ? `<button class="btn btn-sm btn-outline-info" onclick="resetCase('${c.case_id}')">重置</button>` : ''}
+                    </td>
+                `;
+                tbody.appendChild(row);
+            });
+        }
+        
+        async function showCaseDetail(caseId) {
+            try {
+                const response = await fetch(`${API_BASE}/api/cases/${caseId}`);
+                const data = await response.json();
+                
+                if (data.success) {
+                    const c = data.data;
+                    
+                    const amplitude = c.amplitude || {};
+                    const fullAmplitude = {
+                        decay_factor: getParamWithDefault(amplitude.decay_factor, DEFAULT_PARAMS.amplitude.decay_factor),
+                        stop_loss: getParamWithDefault(amplitude.stop_loss, DEFAULT_PARAMS.amplitude.stop_loss),
+                        total_amount_quote: getParamWithDefault(amplitude.total_amount_quote, DEFAULT_PARAMS.amplitude.total_amount_quote),
+                        leverage: getParamWithDefault(amplitude.leverage, DEFAULT_PARAMS.amplitude.leverage),
+                        max_entries: getParamWithDefault(amplitude.max_entries, DEFAULT_PARAMS.amplitude.max_entries),
+                        grid_spacing: getParamWithDefault(amplitude.grid_spacing, DEFAULT_PARAMS.amplitude.grid_spacing),
+                        exit_profit: getParamWithDefault(amplitude.exit_profit, DEFAULT_PARAMS.amplitude.exit_profit)
+                    };
+                    
+                    const market = c.market || {};
+                    const marketAlgo = market.algorithm || 'always_ranging';
+                    const fullMarket = { algorithm: marketAlgo };
+                    if (market.trading_statuses) fullMarket.trading_statuses = market.trading_statuses;
+                    
+                    if (marketAlgo === 'dual_thrust') {
+                        const p = market.dual_thrust || {};
+                        fullMarket.dual_thrust = {
+                            n_days: getParamWithDefault(p.n_days, DEFAULT_PARAMS.dual_thrust.n_days),
+                            k1: getParamWithDefault(p.k1, DEFAULT_PARAMS.dual_thrust.k1),
+                            k2: getParamWithDefault(p.k2, DEFAULT_PARAMS.dual_thrust.k2),
+                            down_confirm_days: getParamWithDefault(p.down_confirm_days, DEFAULT_PARAMS.dual_thrust.down_confirm_days),
+                            k2_down_factor: getParamWithDefault(p.k2_down_factor, DEFAULT_PARAMS.dual_thrust.k2_down_factor),
+                            cooldown_days: getParamWithDefault(p.cooldown_days, DEFAULT_PARAMS.dual_thrust.cooldown_days)
+                        };
+                    } else if (marketAlgo === 'improved') {
+                        const p = market.improved || {};
+                        fullMarket.improved = {
+                            lookback_period: getParamWithDefault(p.lookback_period, DEFAULT_PARAMS.improved.lookback_period),
+                            min_range_duration: getParamWithDefault(p.min_range_duration, DEFAULT_PARAMS.improved.min_range_duration),
+                            max_range_pct: getParamWithDefault(p.max_range_pct, DEFAULT_PARAMS.improved.max_range_pct),
+                            breakout_threshold: getParamWithDefault(p.breakout_threshold, DEFAULT_PARAMS.improved.breakout_threshold)
+                        };
+                    } else if (marketAlgo === 'composite') {
+                        const p = market.composite || {};
+                        fullMarket.composite = {
+                            adx_period: getParamWithDefault(p.adx_period, DEFAULT_PARAMS.composite.adx_period),
+                            adx_threshold: getParamWithDefault(p.adx_threshold, DEFAULT_PARAMS.composite.adx_threshold),
+                            atr_period: getParamWithDefault(p.atr_period, DEFAULT_PARAMS.composite.atr_period),
+                            atr_multiplier: getParamWithDefault(p.atr_multiplier, DEFAULT_PARAMS.composite.atr_multiplier)
+                        };
+                    } else if (marketAlgo === 'adx') {
+                        const p = market.adx || {};
+                        fullMarket.adx = {
+                            period: getParamWithDefault(p.period, DEFAULT_PARAMS.adx.period),
+                            threshold: getParamWithDefault(p.threshold, DEFAULT_PARAMS.adx.threshold)
+                        };
+                    }
+                    
+                    const entry = c.entry || {};
+                    const entryStrategy = entry.strategy || '';
+                    const fullEntry = {};
+                    if (entryStrategy) {
+                        fullEntry.strategy = entryStrategy;
+                        if (entryStrategy === 'atr') {
+                            const p = entry.atr || {};
+                            fullEntry.atr = {
+                                atr_period: getParamWithDefault(p.atr_period, DEFAULT_PARAMS.atr.atr_period),
+                                atr_multiplier: getParamWithDefault(p.atr_multiplier, DEFAULT_PARAMS.atr.atr_multiplier)
+                            };
+                        } else if (entryStrategy === 'bollinger') {
+                            const p = entry.bollinger || {};
+                            fullEntry.bollinger = {
+                                period: getParamWithDefault(p.period, DEFAULT_PARAMS.bollinger.period),
+                                num_std: getParamWithDefault(p.num_std, DEFAULT_PARAMS.bollinger.num_std)
+                            };
+                        }
+                    }
+                    
+                    document.getElementById('detailContent').innerHTML = `
+                        <div class="row">
+                            <div class="col-md-6">
+                                <h6>基本信息</h6>
+                                <table class="table table-sm">
+                                    <tr><td>用例ID</td><td>${c.case_id}</td></tr>
+                                    <tr><td>名称</td><td>${c.name || '-'}</td></tr>
+                                    <tr><td>描述</td><td>${c.description || '-'}</td></tr>
+                                    <tr><td>标的</td><td>${c.symbol}</td></tr>
+                                    <tr><td>日期范围</td><td>${c.date_start} ~ ${c.date_end}</td></tr>
+                                    <tr><td>类型</td><td>${c.test_type || '-'}</td></tr>
+                                    <tr><td>状态</td><td><span class="status-badge status-${c.status}">${c.status}</span></td></tr>
+                                    <tr><td>创建时间</td><td>${c.created_at || '-'}</td></tr>
+                                </table>
+                            </div>
+                            <div class="col-md-6">
+                                <h6>配置参数 (含默认值)</h6>
+                                <pre class="bg-light p-2" style="max-height: 400px; overflow-y: auto;">${JSON.stringify({
+                                    amplitude: fullAmplitude,
+                                    market: fullMarket,
+                                    entry: fullEntry,
+                                    timeout: c.timeout || {}
+                                }, null, 2)}</pre>
+                            </div>
+                        </div>
+                    `;
+                    new bootstrap.Modal(document.getElementById('detailModal')).show();
+                }
+            } catch (error) {
+                console.error('加载用例详情失败:', error);
+            }
+        }
+        
+        function showCreateCaseForm() {
+            document.getElementById('caseFormTitle').textContent = '新建测试用例';
+            document.getElementById('editCaseId').value = '';
+            document.getElementById('caseForm').reset();
+            document.querySelectorAll('.algorithm-params').forEach(el => el.style.display = 'none');
+            document.querySelectorAll('.strategy-params').forEach(el => el.style.display = 'none');
+            document.getElementById('deleteCaseBtn').style.display = 'none';
+            new bootstrap.Modal(document.getElementById('caseFormModal')).show();
+        }
+        
+        async function showEditCaseForm(caseId) {
+            try {
+                const response = await fetch(`${API_BASE}/api/cases/${caseId}`);
+                const data = await response.json();
+                
+                if (data.success) {
+                    const c = data.data;
+                    document.getElementById('caseFormTitle').textContent = '编辑测试用例';
+                    document.getElementById('editCaseId').value = c.case_id;
+                    document.getElementById('formCaseName').value = c.name || '';
+                    document.getElementById('formTestType').value = c.test_type || 'market_aware';
+                    document.getElementById('formCaseStatus').value = c.status || 'draft';
+                    document.getElementById('formSymbol').value = c.symbol || '';
+                    document.getElementById('formDateStart').value = c.date_start || '';
+                    document.getElementById('formDateEnd').value = c.date_end || '';
+                    document.getElementById('formDescription').value = c.description || '';
+                    
+                    const amplitude = c.amplitude || {};
+                    document.getElementById('formDecayFactor').value = getParamWithDefault(amplitude.decay_factor, DEFAULT_PARAMS.amplitude.decay_factor);
+                    document.getElementById('formStopLoss').value = getParamWithDefault(amplitude.stop_loss, DEFAULT_PARAMS.amplitude.stop_loss);
+                    document.getElementById('formTotalAmount').value = getParamWithDefault(amplitude.total_amount_quote, DEFAULT_PARAMS.amplitude.total_amount_quote);
+                    document.getElementById('formLeverage').value = getParamWithDefault(amplitude.leverage, DEFAULT_PARAMS.amplitude.leverage);
+                    document.getElementById('formMaxEntries').value = getParamWithDefault(amplitude.max_entries, DEFAULT_PARAMS.amplitude.max_entries);
+                    document.getElementById('formGridSpacing').value = getParamWithDefault(amplitude.grid_spacing, DEFAULT_PARAMS.amplitude.grid_spacing);
+                    document.getElementById('formExitProfit').value = getParamWithDefault(amplitude.exit_profit, DEFAULT_PARAMS.amplitude.exit_profit);
+                    document.getElementById('formValidAmplitudes').value = JSON.stringify(getParamWithDefault(amplitude.valid_amplitudes, DEFAULT_PARAMS.amplitude.valid_amplitudes));
+                    document.getElementById('formWeights').value = JSON.stringify(getParamWithDefault(amplitude.weights, DEFAULT_PARAMS.amplitude.weights));
+                    
+                    const market = c.market || {};
+                    const marketAlgo = market.algorithm || 'always_ranging';
+                    document.getElementById('formMarketAlgorithm').value = marketAlgo;
+                    document.getElementById('formTradingStatuses').value = (market.trading_statuses || []).join(',');
+                    
+                    document.querySelectorAll('.algorithm-params').forEach(el => el.style.display = 'none');
+                    if (marketAlgo === 'dual_thrust') {
+                        document.getElementById('dualThrustParams').style.display = 'block';
+                        const p = market.dual_thrust || {};
+                        document.getElementById('formNDays').value = getParamWithDefault(p.n_days, DEFAULT_PARAMS.dual_thrust.n_days);
+                        document.getElementById('formK1').value = getParamWithDefault(p.k1, DEFAULT_PARAMS.dual_thrust.k1);
+                        document.getElementById('formK2').value = getParamWithDefault(p.k2, DEFAULT_PARAMS.dual_thrust.k2);
+                        document.getElementById('formDownConfirmDays').value = getParamWithDefault(p.down_confirm_days, DEFAULT_PARAMS.dual_thrust.down_confirm_days);
+                        document.getElementById('formK2DownFactor').value = getParamWithDefault(p.k2_down_factor, DEFAULT_PARAMS.dual_thrust.k2_down_factor);
+                        document.getElementById('formCooldownDays').value = getParamWithDefault(p.cooldown_days, DEFAULT_PARAMS.dual_thrust.cooldown_days);
+                    } else if (marketAlgo === 'improved') {
+                        document.getElementById('improvedParams').style.display = 'block';
+                        const p = market.improved || {};
+                        document.getElementById('formLookbackPeriod').value = getParamWithDefault(p.lookback_period, DEFAULT_PARAMS.improved.lookback_period);
+                        document.getElementById('formMinRangeDuration').value = getParamWithDefault(p.min_range_duration, DEFAULT_PARAMS.improved.min_range_duration);
+                        document.getElementById('formMaxRangePct').value = getParamWithDefault(p.max_range_pct, DEFAULT_PARAMS.improved.max_range_pct);
+                        document.getElementById('formBreakoutThreshold').value = getParamWithDefault(p.breakout_threshold, DEFAULT_PARAMS.improved.breakout_threshold);
+                    } else if (marketAlgo === 'composite') {
+                        document.getElementById('compositeParams').style.display = 'block';
+                        const p = market.composite || {};
+                        document.getElementById('formAdxPeriod').value = getParamWithDefault(p.adx_period, DEFAULT_PARAMS.composite.adx_period);
+                        document.getElementById('formAdxThreshold').value = getParamWithDefault(p.adx_threshold, DEFAULT_PARAMS.composite.adx_threshold);
+                        document.getElementById('formAtrPeriod').value = getParamWithDefault(p.atr_period, DEFAULT_PARAMS.composite.atr_period);
+                        document.getElementById('formAtrMultiplier').value = getParamWithDefault(p.atr_multiplier, DEFAULT_PARAMS.composite.atr_multiplier);
+                    } else if (marketAlgo === 'adx') {
+                        document.getElementById('adxParams').style.display = 'block';
+                        const p = market.adx || {};
+                        document.getElementById('formAdxPeriodAdx').value = getParamWithDefault(p.period, DEFAULT_PARAMS.adx.period);
+                        document.getElementById('formAdxThresholdAdx').value = getParamWithDefault(p.threshold, DEFAULT_PARAMS.adx.threshold);
+                    }
+                    
+                    const entry = c.entry || {};
+                    const entryStrategy = entry.strategy || '';
+                    document.getElementById('formEntryStrategy').value = entryStrategy;
+                    
+                    document.querySelectorAll('.strategy-params').forEach(el => el.style.display = 'none');
+                    if (entryStrategy === 'atr') {
+                        document.getElementById('atrStrategyParams').style.display = 'block';
+                        const p = entry.atr || {};
+                        document.getElementById('formEntryAtrPeriod').value = getParamWithDefault(p.atr_period, DEFAULT_PARAMS.atr.atr_period);
+                        document.getElementById('formEntryAtrMultiplier').value = getParamWithDefault(p.atr_multiplier, DEFAULT_PARAMS.atr.atr_multiplier);
+                    } else if (entryStrategy === 'bollinger') {
+                        document.getElementById('bollingerStrategyParams').style.display = 'block';
+                        const p = entry.bollinger || {};
+                        document.getElementById('formEntryBbPeriod').value = getParamWithDefault(p.period, DEFAULT_PARAMS.bollinger.period);
+                        document.getElementById('formEntryBbStd').value = getParamWithDefault(p.num_std, DEFAULT_PARAMS.bollinger.num_std);
+                    }
+                    
+                    const timeout = c.timeout || {};
+                    document.getElementById('formA1TimeoutMinutes').value = timeout.a1_timeout_minutes || '';
+                    
+                    document.getElementById('deleteCaseBtn').style.display = 'inline-block';
+                    new bootstrap.Modal(document.getElementById('caseFormModal')).show();
+                }
+            } catch (error) {
+                console.error('加载用例失败:', error);
+            }
+        }
+        
+        function onMarketAlgorithmChange() {
+            const algorithm = document.getElementById('formMarketAlgorithm').value;
+            document.querySelectorAll('.algorithm-params').forEach(el => el.style.display = 'none');
+            
+            if (algorithm === 'dual_thrust') {
+                document.getElementById('dualThrustParams').style.display = 'block';
+            } else if (algorithm === 'improved') {
+                document.getElementById('improvedParams').style.display = 'block';
+            } else if (algorithm === 'composite') {
+                document.getElementById('compositeParams').style.display = 'block';
+            } else if (algorithm === 'adx') {
+                document.getElementById('adxParams').style.display = 'block';
+            }
+        }
+        
+        function onEntryStrategyChange() {
+            const strategy = document.getElementById('formEntryStrategy').value;
+            document.querySelectorAll('.strategy-params').forEach(el => el.style.display = 'none');
+            
+            if (strategy === 'atr') {
+                document.getElementById('atrStrategyParams').style.display = 'block';
+            } else if (strategy === 'bollinger') {
+                document.getElementById('bollingerStrategyParams').style.display = 'block';
+            }
+        }
+        
+        async function saveCase() {
+            const editCaseId = document.getElementById('editCaseId').value;
+            const symbol = document.getElementById('formSymbol').value;
+            const dateStart = document.getElementById('formDateStart').value;
+            const dateEnd = document.getElementById('formDateEnd').value;
+            
+            if (!symbol || !dateStart || !dateEnd) {
+                showError('提示', '请填写标的和日期范围');
+                return;
+            }
+            
+            const amplitude = {};
+            const decayFactor = parseFloat(document.getElementById('formDecayFactor').value);
+            const stopLoss = parseFloat(document.getElementById('formStopLoss').value);
+            const totalAmount = parseFloat(document.getElementById('formTotalAmount').value);
+            const leverage = parseFloat(document.getElementById('formLeverage').value);
+            const maxEntries = parseInt(document.getElementById('formMaxEntries').value);
+            const gridSpacing = parseFloat(document.getElementById('formGridSpacing').value);
+            const exitProfit = parseFloat(document.getElementById('formExitProfit').value);
+            
+            if (decayFactor) amplitude.decay_factor = decayFactor;
+            if (stopLoss) amplitude.stop_loss = stopLoss;
+            if (totalAmount) amplitude.total_amount_quote = totalAmount;
+            if (leverage) amplitude.leverage = leverage;
+            if (maxEntries) amplitude.max_entries = maxEntries;
+            if (gridSpacing) amplitude.grid_spacing = gridSpacing;
+            if (exitProfit) amplitude.exit_profit = exitProfit;
+            
+            const marketAlgorithm = document.getElementById('formMarketAlgorithm').value;
+            const market = { algorithm: marketAlgorithm };
+            const tradingStatuses = document.getElementById('formTradingStatuses').value;
+            if (tradingStatuses) market.trading_statuses = tradingStatuses.split(',').map(s => s.trim());
+            
+            if (marketAlgorithm === 'dual_thrust') {
+                market.dual_thrust = {};
+                const nDays = parseInt(document.getElementById('formNDays').value);
+                const k1 = parseFloat(document.getElementById('formK1').value);
+                const k2 = parseFloat(document.getElementById('formK2').value);
+                const downConfirmDays = parseInt(document.getElementById('formDownConfirmDays').value);
+                const k2DownFactor = parseFloat(document.getElementById('formK2DownFactor').value);
+                const cooldownDays = parseInt(document.getElementById('formCooldownDays').value);
+                if (nDays) market.dual_thrust.n_days = nDays;
+                if (k1) market.dual_thrust.k1 = k1;
+                if (k2) market.dual_thrust.k2 = k2;
+                if (downConfirmDays) market.dual_thrust.down_confirm_days = downConfirmDays;
+                if (k2DownFactor) market.dual_thrust.k2_down_factor = k2DownFactor;
+                if (cooldownDays) market.dual_thrust.cooldown_days = cooldownDays;
+            } else if (marketAlgorithm === 'improved') {
+                market.improved = {};
+                const lookbackPeriod = parseInt(document.getElementById('formLookbackPeriod').value);
+                const minRangeDuration = parseInt(document.getElementById('formMinRangeDuration').value);
+                const maxRangePct = parseFloat(document.getElementById('formMaxRangePct').value);
+                const breakoutThreshold = parseFloat(document.getElementById('formBreakoutThreshold').value);
+                if (lookbackPeriod) market.improved.lookback_period = lookbackPeriod;
+                if (minRangeDuration) market.improved.min_range_duration = minRangeDuration;
+                if (maxRangePct) market.improved.max_range_pct = maxRangePct;
+                if (breakoutThreshold) market.improved.breakout_threshold = breakoutThreshold;
+            } else if (marketAlgorithm === 'composite') {
+                market.composite = {};
+                const adxPeriod = parseInt(document.getElementById('formAdxPeriod').value);
+                const adxThreshold = parseInt(document.getElementById('formAdxThreshold').value);
+                const atrPeriod = parseInt(document.getElementById('formAtrPeriod').value);
+                const atrMultiplier = parseFloat(document.getElementById('formAtrMultiplier').value);
+                if (adxPeriod) market.composite.adx_period = adxPeriod;
+                if (adxThreshold) market.composite.adx_threshold = adxThreshold;
+                if (atrPeriod) market.composite.atr_period = atrPeriod;
+                if (atrMultiplier) market.composite.atr_multiplier = atrMultiplier;
+            } else if (marketAlgorithm === 'adx') {
+                market.adx = {};
+                const adxPeriodAdx = parseInt(document.getElementById('formAdxPeriodAdx').value);
+                const adxThresholdAdx = parseInt(document.getElementById('formAdxThresholdAdx').value);
+                if (adxPeriodAdx) market.adx.period = adxPeriodAdx;
+                if (adxThresholdAdx) market.adx.threshold = adxThresholdAdx;
+            }
+            
+            const entryStrategy = document.getElementById('formEntryStrategy').value;
+            const entry = {};
+            if (entryStrategy) {
+                entry.strategy = entryStrategy;
+                if (entryStrategy === 'atr') {
+                    entry.atr = {};
+                    const atrPeriod = parseInt(document.getElementById('formEntryAtrPeriod').value);
+                    const atrMultiplier = parseFloat(document.getElementById('formEntryAtrMultiplier').value);
+                    if (atrPeriod) entry.atr.atr_period = atrPeriod;
+                    if (atrMultiplier) entry.atr.atr_multiplier = atrMultiplier;
+                } else if (entryStrategy === 'bollinger') {
+                    entry.bollinger = {};
+                    const bbPeriod = parseInt(document.getElementById('formEntryBbPeriod').value);
+                    const bbStd = parseFloat(document.getElementById('formEntryBbStd').value);
+                    if (bbPeriod) entry.bollinger.period = bbPeriod;
+                    if (bbStd) entry.bollinger.num_std = bbStd;
+                }
+            }
+            
+            const timeout = {};
+            const a1TimeoutMinutes = parseInt(document.getElementById('formA1TimeoutMinutes').value);
+            if (a1TimeoutMinutes) timeout.a1_timeout_minutes = a1TimeoutMinutes;
+            
+            const caseData = {
+                name: document.getElementById('formCaseName').value,
+                description: document.getElementById('formDescription').value,
+                test_type: document.getElementById('formTestType').value,
+                symbol: symbol,
+                date_start: dateStart.replace(/-/g, ''),
+                date_end: dateEnd.replace(/-/g, ''),
+                status: document.getElementById('formCaseStatus').value,
+                amplitude: amplitude,
+                market: market,
+                entry: entry,
+                timeout: timeout
+            };
+            
+            try {
+                const url = editCaseId ? `${API_BASE}/api/cases/${editCaseId}` : `${API_BASE}/api/cases`;
+                const method = editCaseId ? 'PUT' : 'POST';
+                
+                const response = await fetch(url, {
+                    method: method,
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(caseData)
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    alert(data.message);
+                    bootstrap.Modal.getInstance(document.getElementById('caseFormModal')).hide();
+                    loadCases();
+                } else {
+                    showError('保存失败', data.error);
+                }
+            } catch (error) {
+                console.error('保存测试用例失败:', error);
+                showError('保存失败', error.message);
+            }
+        }
+        
+        async function deleteCase() {
+            const caseId = document.getElementById('editCaseId').value;
+            if (!caseId) return;
+            
+            if (!confirm(`确定要删除测试用例吗？此操作不可恢复！`)) return;
+            
+            try {
+                const response = await fetch(`${API_BASE}/api/cases/${caseId}`, { method: 'DELETE' });
+                const data = await response.json();
+                
+                if (data.success) {
+                    alert(data.message);
+                    bootstrap.Modal.getInstance(document.getElementById('caseFormModal')).hide();
+                    loadCases();
+                } else {
+                    showError('删除失败', data.error);
+                }
+            } catch (error) {
+                console.error('删除测试用例失败:', error);
+                showError('删除失败', error.message);
+            }
+        }
+        
+        async function runCase(caseId) {
+            if (!confirm(`确定要执行测试用例吗？`)) return;
+            
+            try {
+                const response = await fetch(`${API_BASE}/api/cases/${caseId}/run`, { method: 'POST' });
+                const data = await response.json();
+                
+                if (data.success) {
+                    alert(data.message);
+                    loadCases();
+                    loadResults();
+                } else {
+                    showError('执行失败', data.error);
+                }
+            } catch (error) {
+                console.error('执行测试用例失败:', error);
+                showError('执行失败', error.message);
+            }
+        }
+        
+        async function resetCase(caseId) {
+            if (!confirm(`确定要重置测试用例吗？这将清除所有测试结果数据。`)) return;
+            
+            try {
+                const response = await fetch(`${API_BASE}/api/cases/${caseId}/reset`, { method: 'POST' });
+                const data = await response.json();
+                
+                if (data.success) {
+                    alert(data.message);
+                    loadCases();
+                } else {
+                    showError('重置失败', data.error);
+                }
+            } catch (error) {
+                console.error('重置测试用例失败:', error);
+                showError('重置失败', error.message);
+            }
+        }
+        
+        async function loadResults() {
+            try {
+                const params = new URLSearchParams();
+                const symbol = document.getElementById('filterResultSymbol').value;
+                const type = document.getElementById('filterResultType').value;
+                const caseId = document.getElementById('filterCaseId').value;
+                
+                if (symbol) params.append('symbol', symbol);
+                if (type) params.append('test_type', type);
+                if (caseId) params.append('case_id', caseId);
+                
+                const response = await fetch(`${API_BASE}/api/results?${params}`);
+                const data = await response.json();
+                
+                if (data.success) {
+                    renderResultsTable(data.data);
+                }
+            } catch (error) {
+                console.error('加载测试结果失败:', error);
+            }
+        }
+        
+        function renderResultsTable(results) {
+            const tbody = document.getElementById('resultsTable');
+            tbody.innerHTML = '';
+            
+            results.forEach(r => {
+                const row = document.createElement('tr');
+                const netProfitClass = r.net_profit >= 0 ? 'positive' : 'negative';
+                const roiClass = r.roi >= 0 ? 'positive' : 'negative';
+                const excessClass = r.excess_return >= 0 ? 'positive' : 'negative';
+                
+                row.innerHTML = `
+                    <td><small>${r.result_id.substring(0, 8)}...</small></td>
+                    <td><small>${r.case_id ? r.case_id.substring(0, 8) + '...' : '-'}</small></td>
+                    <td>${r.symbol}</td>
+                    <td>${r.test_type}</td>
+                    <td>${r.total_trades}</td>
+                    <td>${r.win_rate.toFixed(1)}%</td>
+                    <td class="${netProfitClass}">${r.net_profit.toFixed(2)}</td>
+                    <td class="${roiClass}">${r.roi.toFixed(2)}%</td>
+                    <td>${r.price_change.toFixed(2)}%</td>
+                    <td class="${excessClass}">${r.excess_return.toFixed(2)}%</td>
+                    <td><small>${r.executed_at}</small></td>
+                    <td>
+                        <button class="btn btn-sm btn-outline-primary" onclick="showResultDetail('${r.result_id}')">详情</button>
+                        <button class="btn btn-sm btn-outline-info" onclick="showChart('${r.result_id}')">图表</button>
+                    </td>
+                `;
+                tbody.appendChild(row);
+            });
+        }
+        
+        async function showResultDetail(resultId) {
+            try {
+                const response = await fetch(`${API_BASE}/api/results/${resultId}`);
+                const data = await response.json();
+                
+                if (data.success) {
+                    const r = data.data;
+                    const trades = r.trades || [];
+                    
+                    let tradesHtml = '';
+                    if (trades.length > 0) {
+                        tradesHtml = `
+                            <div class="col-md-12 mt-3">
+                                <h6>交易明细 (${trades.length} 条)</h6>
+                                <div class="table-container" style="max-height: 300px; overflow-y: auto;">
+                                    <table class="table table-sm table-striped">
+                                        <thead>
+                                            <tr>
+                                                <th>#</th>
+                                                <th>层级</th>
+                                                <th>入场价</th>
+                                                <th>出场价</th>
+                                                <th>类型</th>
+                                                <th>盈亏</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            ${trades.map(t => `
+                                                <tr>
+                                                    <td>${t.trade_seq}</td>
+                                                    <td>A${t.level}</td>
+                                                    <td>${parseFloat(t.entry_price).toFixed(2)}</td>
+                                                    <td>${parseFloat(t.exit_price).toFixed(2)}</td>
+                                                    <td>${t.trade_type === 'take_profit' ? '止盈' : '止损'}</td>
+                                                    <td class="${parseFloat(t.profit) >= 0 ? 'positive' : 'negative'}">${parseFloat(t.profit).toFixed(2)}</td>
+                                                </tr>
+                                            `).join('')}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        `;
+                    }
+                    
+                    document.getElementById('detailContent').innerHTML = `
+                        <div class="row">
+                            <div class="col-md-6">
+                                <h6>基本信息</h6>
+                                <table class="table table-sm">
+                                    <tr><td>结果ID</td><td>${r.result_id}</td></tr>
+                                    <tr><td>用例ID</td><td>${r.case_id || '-'}</td></tr>
+                                    <tr><td>标的</td><td>${r.symbol}</td></tr>
+                                    <tr><td>类型</td><td>${r.test_type}</td></tr>
+                                    <tr><td>行情算法</td><td>${r.market_algorithm || '-'}</td></tr>
+                                    <tr><td>执行时间</td><td>${r.executed_at}</td></tr>
+                                </table>
+                            </div>
+                            <div class="col-md-6">
+                                <h6>交易统计</h6>
+                                <table class="table table-sm">
+                                    <tr><td>总交易</td><td>${r.total_trades}</td></tr>
+                                    <tr><td>胜率</td><td>${r.win_rate.toFixed(1)}%</td></tr>
+                                    <tr><td>净收益</td><td>${r.net_profit.toFixed(2)} USDT</td></tr>
+                                    <tr><td>收益率</td><td>${r.roi.toFixed(2)}%</td></tr>
+                                    <tr><td>超额收益</td><td>${r.excess_return.toFixed(2)}%</td></tr>
+                                </table>
+                            </div>
+                            ${tradesHtml}
+                        </div>
+                    `;
+                    new bootstrap.Modal(document.getElementById('detailModal')).show();
+                }
+            } catch (error) {
+                console.error('加载详情失败:', error);
+            }
+        }
+        
+        async function showChart(resultId) {
+            try {
+                const response = await fetch(`${API_BASE}/api/results/${resultId}/chart`);
+                const data = await response.json();
+                
+                if (data.success) {
+                    currentChartData = data.data;
+                    new bootstrap.Modal(document.getElementById('chartModal')).show();
+                    setTimeout(() => {
+                        renderKlineChart();
+                    }, 100);
+                } else {
+                    showError('加载图表失败', data.error);
+                }
+            } catch (error) {
+                console.error('加载图表失败:', error);
+                showError('加载图表失败', error.message);
+            }
+        }
+        
+        function renderKlineChart() {
+            if (!currentChartData) return;
+            
+            const chartDom = document.getElementById('klineChart');
+            if (klineChart) {
+                klineChart.dispose();
+            }
+            klineChart = echarts.init(chartDom);
+            
+            const klines = currentChartData.klines || [];
+            const trades = currentChartData.trades || [];
+            
+            const showTrades = document.getElementById('showTrades').checked;
+            
+            const dates = klines.map(k => k.date);
+            const ohlc = klines.map(k => [k.open, k.close, k.low, k.high]);
+            const volumes = klines.map(k => k.volume);
+            
+            const markPoints = [];
+            if (showTrades && trades.length > 0) {
+                trades.forEach(t => {
+                    const entryIdx = dates.indexOf(t.entry_date);
+                    const exitIdx = dates.indexOf(t.exit_date);
+                    
+                    if (entryIdx >= 0) {
+                        markPoints.push({
+                            name: `入场 A${t.level}`,
+                            coord: [t.entry_date, t.entry_price],
+                            symbol: 'triangle',
+                            symbolSize: 12,
+                            symbolRotate: 0,
+                            itemStyle: { color: '#22c55e' },
+                            label: { show: true, formatter: `A${t.level}`, position: 'top' }
+                        });
+                    }
+                    
+                    if (exitIdx >= 0) {
+                        const isProfit = t.trade_type === 'take_profit';
+                        markPoints.push({
+                            name: `出场 A${t.level}`,
+                            coord: [t.exit_date, t.exit_price],
+                            symbol: 'pin',
+                            symbolSize: 30,
+                            itemStyle: { color: isProfit ? '#22c55e' : '#ef4444' },
+                            label: { show: true, formatter: `${t.profit > 0 ? '+' : ''}${t.profit.toFixed(0)}`, position: 'inside', color: '#fff', fontSize: 10 }
+                        });
+                    }
+                });
+            }
+            
+            const option = {
+                title: {
+                    text: 'K线图 - 交易标注',
+                    left: 'center'
+                },
+                tooltip: {
+                    trigger: 'axis',
+                    axisPointer: { type: 'cross' },
+                    backgroundColor: 'rgba(255, 255, 255, 0.9)',
+                    borderColor: '#ccc',
+                    borderWidth: 1,
+                    textStyle: { color: '#333' }
+                },
+                legend: {
+                    data: ['K线', '成交量'],
+                    top: 40
+                },
+                grid: [
+                    { left: '10%', right: '8%', top: 80, height: '55%' },
+                    { left: '10%', right: '8%', top: '75%', height: '15%' }
+                ],
+                xAxis: [
+                    {
+                        type: 'category',
+                        data: dates,
+                        boundaryGap: true,
+                        axisLine: { onZero: false },
+                        splitLine: { show: false },
+                        min: 'dataMin',
+                        max: 'dataMax'
+                    },
+                    {
+                        type: 'category',
+                        gridIndex: 1,
+                        data: dates,
+                        boundaryGap: true,
+                        axisLine: { onZero: false },
+                        axisTick: { show: false },
+                        splitLine: { show: false },
+                        axisLabel: { show: false },
+                        min: 'dataMin',
+                        max: 'dataMax'
+                    }
+                ],
+                yAxis: [
+                    { scale: true, splitArea: { show: true } },
+                    { scale: true, gridIndex: 1, splitNumber: 2, axisLabel: { show: false }, axisLine: { show: false }, axisTick: { show: false }, splitLine: { show: false } }
+                ],
+                dataZoom: [
+                    { type: 'inside', xAxisIndex: [0, 1], start: 0, end: 100 },
+                    { show: true, xAxisIndex: [0, 1], type: 'slider', bottom: 10, start: 0, end: 100 }
+                ],
+                series: [
+                    {
+                        name: 'K线',
+                        type: 'candlestick',
+                        data: ohlc,
+                        itemStyle: {
+                            color: '#ef4444',
+                            color0: '#22c55e',
+                            borderColor: '#ef4444',
+                            borderColor0: '#22c55e'
+                        },
+                        markPoint: {
+                            data: markPoints
+                        }
+                    },
+                    {
+                        name: '成交量',
+                        type: 'bar',
+                        xAxisIndex: 1,
+                        yAxisIndex: 1,
+                        data: volumes
+                    }
+                ]
+            };
+            
+            klineChart.setOption(option);
+        }
+        
+        function updateChart() {
+            if (currentChartData) {
+                renderKlineChart();
+            }
+        }
+        
+        async function loadTestHistory() {
+            try {
+                const response = await fetch(`${API_BASE}/api/history`);
+                const data = await response.json();
+                
+                if (data.success) {
+                    const summary = data.data.summary;
+                    document.getElementById('historyTotal').textContent = summary.total_tests;
+                    document.getElementById('historySuccess').textContent = summary.success_count;
+                    document.getElementById('historySuccessRate').textContent = summary.success_rate + '%';
+                    document.getElementById('historyAvgWinRate').textContent = summary.avg_win_rate + '%';
+                    document.getElementById('historyAvgRoi').textContent = summary.avg_roi + '%';
+                    
+                    const bySymbolTbody = document.getElementById('historyBySymbol');
+                    bySymbolTbody.innerHTML = '';
+                    (data.data.by_symbol || []).forEach(item => {
+                        const row = document.createElement('tr');
+                        row.innerHTML = `
+                            <td>${item.symbol}</td>
+                            <td>${item.count}</td>
+                            <td>${item.avg_win_rate.toFixed(1)}%</td>
+                            <td>${item.avg_roi.toFixed(2)}%</td>
+                        `;
+                        bySymbolTbody.appendChild(row);
+                    });
+                    
+                    const byAlgorithmTbody = document.getElementById('historyByAlgorithm');
+                    byAlgorithmTbody.innerHTML = '';
+                    (data.data.by_algorithm || []).forEach(item => {
+                        const row = document.createElement('tr');
+                        row.innerHTML = `
+                            <td>${item.algorithm}</td>
+                            <td>${item.count}</td>
+                            <td>${item.avg_win_rate.toFixed(1)}%</td>
+                            <td>${item.avg_roi.toFixed(2)}%</td>
+                        `;
+                        byAlgorithmTbody.appendChild(row);
+                    });
+                    
+                    const recentTbody = document.getElementById('historyRecent');
+                    recentTbody.innerHTML = '';
+                    (data.data.recent_tests || []).forEach(item => {
+                        const row = document.createElement('tr');
+                        row.innerHTML = `
+                            <td><input type="checkbox" class="result-checkbox" value="${item.result_id}" onchange="updateSelection()"></td>
+                            <td><small>${item.result_id.substring(0, 8)}...</small></td>
+                            <td>${item.symbol}</td>
+                            <td>${item.market_algorithm || '-'}</td>
+                            <td>${item.win_rate.toFixed(1)}%</td>
+                            <td>${item.roi.toFixed(2)}%</td>
+                            <td>${item.executed_at}</td>
+                        `;
+                        recentTbody.appendChild(row);
+                    });
+                }
+            } catch (error) {
+                console.error('加载测试历史失败:', error);
+            }
+        }
+        
+        function toggleSelectAll() {
+            const selectAll = document.getElementById('selectAll');
+            const checkboxes = document.querySelectorAll('.result-checkbox');
+            checkboxes.forEach(cb => cb.checked = selectAll.checked);
+            updateSelection();
+        }
+        
+        function updateSelection() {
+            const checkboxes = document.querySelectorAll('.result-checkbox:checked');
+            selectedResultIds = Array.from(checkboxes).map(cb => cb.value);
+        }
+        
+        async function exportHistory(format) {
+            try {
+                const response = await fetch(`${API_BASE}/api/history/export?format=${format}`);
+                const data = await response.json();
+                
+                if (data.success) {
+                    alert(data.message + '\n路径: ' + data.path);
+                } else {
+                    showError('导出失败', data.error);
+                }
+            } catch (error) {
+                console.error('导出失败:', error);
+            }
+        }
+        
+        async function doCompare() {
+            if (selectedResultIds.length < 2) {
+                showError('提示', '请至少选择2个测试结果进行对比');
+                return;
+            }
+            
+            if (selectedResultIds.length > 5) {
+                showError('提示', '最多支持对比5个测试结果');
+                return;
+            }
+            
+            try {
+                const response = await fetch(`${API_BASE}/api/compare`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ result_ids: selectedResultIds })
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    renderComparison(data.data);
+                } else {
+                    showError('对比失败', data.error);
+                }
+            } catch (error) {
+                console.error('对比失败:', error);
+                showError('对比失败', error.message);
+            }
+        }
+        
+        function renderComparison(data) {
+            const results = data.results || [];
+            const comparison = data.comparison || {};
+            
+            let html = '<h6>对比结果</h6>';
+            html += '<div class="table-container"><table class="table table-sm table-striped">';
+            html += '<thead><tr><th>指标</th>';
+            results.forEach((r, i) => {
+                html += `<th>结果${i + 1}</th>`;
+            });
+            html += '<th>最优</th></tr></thead><tbody>';
+            
+            const metricNames = {
+                'win_rate': '胜率',
+                'roi': '收益率',
+                'excess_return': '超额收益',
+                'total_trades': '总交易',
+                'net_profit': '净收益',
+                'profit_factor': '盈亏比'
+            };
+            
+            for (const [key, name] of Object.entries(metricNames)) {
+                const comp = comparison[key];
+                if (!comp) continue;
+                
+                html += `<tr><td>${name}</td>`;
+                results.forEach(r => {
+                    const val = comp.values ? comp.values[r.result_id] : r[key];
+                    if (typeof val === 'number') {
+                        html += `<td>${val.toFixed ? val.toFixed(2) : val}</td>`;
+                    } else {
+                        html += `<td>${val || '-'}</td>`;
+                    }
+                });
+                html += `<td>${comp.best ? '结果' + (results.findIndex(r => r.result_id === comp.best) + 1) : '-'} ✅</td></tr>`;
+            }
+            
+            html += '</tbody></table></div>';
+            
+            document.getElementById('compareContent').innerHTML = html;
+            
+            const compareTab = document.querySelector('a[href="#compare"]');
+            if (compareTab) {
+                compareTab.click();
+            }
+        }
+    </script>
+</body>
+</html>

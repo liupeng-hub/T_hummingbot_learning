@@ -49,7 +49,7 @@ from market_status_detector import MarketStatusDetector, MarketStatus, StatusRes
 STATE_FILE = "binance_live_state.json"
 LOG_FILE = "binance_live.log"
 LOG_DIR = "logs"
-MESSAGE_COUNTER_FILE = "message_counter.txt"
+MESSAGE_COUNTER_DB = "database/test_results.db"
 
 
 class OrderState(str, Enum):
@@ -148,17 +148,12 @@ logger = logging.getLogger("autofish")
 
 
 def get_next_message_number() -> int:
-    """获取下一个消息号"""
+    """获取下一个消息号（从数据库）"""
     try:
-        if os.path.exists(MESSAGE_COUNTER_FILE):
-            with open(MESSAGE_COUNTER_FILE, 'r') as f:
-                counter = int(f.read().strip() or '0')
-        else:
-            counter = 0
-        counter += 1
-        with open(MESSAGE_COUNTER_FILE, 'w') as f:
-            f.write(str(counter))
-        return counter
+        from database.test_results_db import TestResultsDB
+        
+        db = TestResultsDB()
+        return db.get_next_message_number()
     except Exception as e:
         logger.error(f"[消息号] 获取失败: {e}")
         return 1
@@ -1624,14 +1619,23 @@ class BinanceLiveTrader:
         self.last_first_entry_check_time: Optional[datetime] = None
         
         market_config = config.get('market_aware', {})
-        if isinstance(market_config, bool):
-            market_config = {'enabled': market_config}
         
-        self.market_aware = market_config.get('enabled', True)
-        self.market_algorithm = market_config.get('algorithm', 'dual_thrust')
+        # 兼容旧格式和新格式
+        if 'enabled' in market_config:
+            # 旧格式
+            self.market_aware = market_config.get('enabled', True)
+            self.market_algorithm = market_config.get('algorithm', 'dual_thrust')
+            self.market_algorithm_params = {k: v for k, v in market_config.items() 
+                                            if k not in ["algorithm", "enabled", "trading_statuses"]}
+        else:
+            # 新格式
+            self.market_aware = True  # 新格式默认启用
+            self.market_algorithm = market_config.get('algorithm', 'dual_thrust')
+            self.market_algorithm_params = market_config.get(self.market_algorithm, {})
+        
         self.market_detector: Optional[MarketStatusDetector] = None
         self.current_market_status: MarketStatus = MarketStatus.UNKNOWN
-        self.market_check_interval = market_config.get('check_interval', 60)
+        self.market_check_interval = self.market_algorithm_params.get('check_interval', 60)
         self.last_market_check_time: Optional[datetime] = None
         self.market_config = market_config
         
@@ -1746,15 +1750,9 @@ class BinanceLiveTrader:
             logger.info("[行情检测] 行情感知功能未启用")
             return
         
-        detector_config = {
-            'algorithm': self.market_algorithm,
-            'lookback_period': self.market_config.get('lookback_period', 20),
-            'breakout_threshold': self.market_config.get('breakout_threshold', 0.02),
-            'consecutive_bars': self.market_config.get('consecutive_bars', 3),
-            'down_confirm_days': self.market_config.get('down_confirm_days', 1),
-            'k2_down_factor': self.market_config.get('k2_down_factor', 0.6),
-            'cooldown_days': self.market_config.get('cooldown_days', 1),
-        }
+        # 使用解析后的算法参数
+        detector_config = self.market_algorithm_params.copy()
+        detector_config['algorithm'] = self.market_algorithm
         
         self.market_detector = MarketStatusDetector(algorithm=None, config=detector_config)
         
@@ -2053,10 +2051,14 @@ class BinanceLiveTrader:
         
         # 从配置创建入场价格策略
         strategy_config = self.config.get("entry_price_strategy", {"name": "fixed"})
-        strategy = EntryPriceStrategyFactory.create(
-            strategy_config.get("name", "fixed"),
-            **strategy_config.get("params", {})
-        )
+        # 兼容新格式
+        if "strategy" in strategy_config:
+            strategy_name = strategy_config.get("strategy", "fixed")
+            strategy_params = strategy_config.get(strategy_name, {})
+        else:
+            strategy_name = strategy_config.get("name", "fixed")
+            strategy_params = strategy_config.get("params", {})
+        strategy = EntryPriceStrategyFactory.create(strategy_name, **strategy_params)
         
         order_calculator = Autofish_OrderCalculator(
             grid_spacing=self.config.get("grid_spacing", Decimal("0.01")),
@@ -3344,7 +3346,7 @@ async def main():
             "weights": amplitude_config.get_weights(),
             "valid_amplitudes": amplitude_config.get_valid_amplitudes(),
             "total_expected_return": amplitude_config.get_total_expected_return(),
-            "entry_price_strategy": extern_strategy.get_entry_price_strategy(),
+            "entry_price_strategy": extern_strategy.get_active_entry_strategy(),
             "market_aware": extern_strategy.get_market_aware(),
         }
         config_file = amplitude_config.config_path
@@ -3355,7 +3357,7 @@ async def main():
         config.update({
             "stop_loss": Decimal(str(args.stop_loss)),
             "total_amount_quote": Decimal(str(args.total_amount)),
-            "entry_price_strategy": extern_strategy.get_entry_price_strategy(),
+            "entry_price_strategy": extern_strategy.get_active_entry_strategy(),
             "market_aware": extern_strategy.get_market_aware(),
         })
         config_file = "无（使用内置默认配置）"

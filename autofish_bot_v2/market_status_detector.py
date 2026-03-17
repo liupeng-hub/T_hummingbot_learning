@@ -21,6 +21,7 @@
 
 import os
 import sys
+import json
 import asyncio
 import argparse
 import logging
@@ -358,6 +359,15 @@ class StatusAlgorithm(ABC):
     name: str = "base"
     description: str = "基础算法"
     
+    @classmethod
+    @abstractmethod
+    def get_default_config(cls) -> Dict:
+        """获取算法默认配置
+        
+        返回格式: {'name': xxx, 'params': {}}
+        """
+        pass
+    
     @abstractmethod
     def calculate(self, klines: List[Dict], config: Dict) -> StatusResult:
         """计算市场状态"""
@@ -379,9 +389,25 @@ class ADXAlgorithm(StatusAlgorithm):
     name = "adx"
     description = "基于 ADX 的趋势强度判断"
     
-    def __init__(self, period: int = 14, threshold: int = 25):
-        self.period = period
-        self.threshold = threshold
+    @classmethod
+    def get_default_config(cls) -> Dict:
+        """获取算法默认配置"""
+        return {
+            'name': cls.name,
+            'params': {
+                'period': 14,
+                'threshold': 25
+            }
+        }
+    
+    def __init__(self, config: Dict = None):
+        if config is None:
+            config = self.get_default_config()['params']
+        elif 'params' in config:
+            config = config['params']
+        
+        self.period = config.get('period', 14)
+        self.threshold = config.get('threshold', 25)
         self._indicators = {}
     
     def calculate(self, klines: List[Dict], config: Dict) -> StatusResult:
@@ -514,23 +540,45 @@ class CompositeAlgorithm(StatusAlgorithm):
     name = "composite"
     description = "ADX + ATR + 布林带宽度组合判断"
     
+    @classmethod
+    def get_default_config(cls) -> Dict:
+        """获取算法默认配置"""
+        return {
+            'name': cls.name,
+            'params': {
+                'adx_period': 14,
+                'adx_threshold': 25,
+                'atr_period': 14,
+                'atr_multiplier': 1.5,
+                'bb_period': 20,
+                'bb_std': 2,
+                'bb_width_threshold': 0.04,
+                'ma_period': 50
+            }
+        }
+    
     def __init__(self, config: Dict = None):
-        self.config = config or {
-            'adx_period': 14,
-            'adx_threshold': 25,
-            'atr_period': 14,
-            'atr_multiplier': 1.5,
-            'bb_period': 20,
-            'bb_std': 2,
-            'bb_width_threshold': 0.04,
-            'ma_period': 50,
+        if config is None:
+            config = self.get_default_config()['params']
+        elif 'params' in config:
+            config = config['params']
+        
+        self.config = {
+            'adx_period': config.get('adx_period', 14),
+            'adx_threshold': config.get('adx_threshold', 25),
+            'atr_period': config.get('atr_period', 14),
+            'atr_multiplier': config.get('atr_multiplier', 1.5),
+            'bb_period': config.get('bb_period', 20),
+            'bb_std': config.get('bb_std', 2),
+            'bb_width_threshold': config.get('bb_width_threshold', 0.04),
+            'ma_period': config.get('ma_period', 50),
         }
         
         # 子算法
-        self.adx_algo = ADXAlgorithm(
-            period=self.config['adx_period'],
-            threshold=self.config['adx_threshold']
-        )
+        self.adx_algo = ADXAlgorithm({
+            'period': self.config['adx_period'],
+            'threshold': self.config['adx_threshold']
+        })
         
         self._indicators = {}
     
@@ -704,6 +752,17 @@ class AlwaysRangingAlgorithm(StatusAlgorithm):
     name = "always_ranging"
     description = "始终返回震荡行情（用于对比测试）"
     
+    @classmethod
+    def get_default_config(cls) -> Dict:
+        """获取算法默认配置"""
+        return {
+            'name': cls.name,
+            'params': {}
+        }
+    
+    def __init__(self, config: Dict = None):
+        pass
+    
     def calculate(self, klines: List[Dict], config: Dict) -> StatusResult:
         return StatusResult(
             status=MarketStatus.RANGING,
@@ -738,14 +797,34 @@ class DualThrustAlgorithm(StatusAlgorithm):
     name = "dual_thrust"
     description = "Dual Thrust 状态过滤器（增强版）"
     
+    @classmethod
+    def get_default_config(cls) -> Dict:
+        """获取算法默认配置"""
+        return {
+            'name': cls.name,
+            'params': {
+                'n_days': 4,
+                'k1': 0.4,
+                'k2': 0.4,
+                'k2_down_factor': 0.8,
+                'down_confirm_days': 2,
+                'cooldown_days': 1
+            }
+        }
+    
     def __init__(self, config: Dict = None):
-        self.config = config or {
-            'n_days': 4,
-            'k1': 0.4,
-            'k2': 0.4,
-            'k2_down_factor': 0.8,  # 下跌时更敏感，系数 < 1
-            'down_confirm_days': 2,  # 下跌确认需要连续天数
-            'cooldown_days': 1,  # 状态切换冷却期
+        if config is None:
+            config = self.get_default_config()['params']
+        elif 'params' in config:
+            config = config['params']
+        
+        self.config = {
+            'n_days': config.get('n_days', 4),
+            'k1': config.get('k1', 0.4),
+            'k2': config.get('k2', 0.4),
+            'k2_down_factor': config.get('k2_down_factor', 0.8),
+            'down_confirm_days': config.get('down_confirm_days', 2),
+            'cooldown_days': config.get('cooldown_days', 1),
         }
         self._current_status = MarketStatus.UNKNOWN
         self._upper_band = None
@@ -926,29 +1005,51 @@ class ImprovedStatusAlgorithm(StatusAlgorithm):
     name = "improved"
     description = "改进的行情判断算法（支撑阻力+箱体震荡）"
     
+    @classmethod
+    def get_default_config(cls) -> Dict:
+        """获取算法默认配置"""
+        return {
+            'name': cls.name,
+            'params': {
+                'lookback_period': 60,
+                'min_range_duration': 10,
+                'max_range_pct': 0.15,
+                'breakout_threshold': 0.03,
+                'breakout_confirm_days': 3,
+                'swing_window': 5,
+                'merge_threshold': 0.03,
+                'min_touches': 3
+            }
+        }
+    
     def __init__(self, config: Dict = None):
-        self.config = config or {
-            'lookback_period': 60,
-            'min_range_duration': 10,
-            'max_range_pct': 0.15,
-            'breakout_threshold': 0.03,
-            'breakout_confirm_days': 3,
-            'swing_window': 5,
-            'merge_threshold': 0.03,
-            'min_touches': 3,
+        if config is None:
+            config = self.get_default_config()['params']
+        elif 'params' in config:
+            config = config['params']
+        
+        self.config = {
+            'lookback_period': config.get('lookback_period', 60),
+            'min_range_duration': config.get('min_range_duration', 10),
+            'max_range_pct': config.get('max_range_pct', 0.15),
+            'breakout_threshold': config.get('breakout_threshold', 0.03),
+            'breakout_confirm_days': config.get('breakout_confirm_days', 3),
+            'swing_window': config.get('swing_window', 5),
+            'merge_threshold': config.get('merge_threshold', 0.03),
+            'min_touches': config.get('min_touches', 3),
         }
         
         self.sr_detector = SupportResistanceDetector({
-            'lookback_period': self.config.get('lookback_period', 60),
-            'swing_window': self.config.get('swing_window', 5),
-            'merge_threshold': self.config.get('merge_threshold', 0.03),
-            'min_touches': self.config.get('min_touches', 3),
+            'lookback_period': self.config['lookback_period'],
+            'swing_window': self.config['swing_window'],
+            'merge_threshold': self.config['merge_threshold'],
+            'min_touches': self.config['min_touches'],
         })
         
         self.box_detector = BoxRangeDetector({
-            'min_duration': self.config.get('min_range_duration', 10),
-            'max_range_pct': self.config.get('max_range_pct', 0.15),
-            'lookback_period': self.config.get('lookback_period', 60),
+            'min_duration': self.config['min_range_duration'],
+            'max_range_pct': self.config['max_range_pct'],
+            'lookback_period': self.config['lookback_period'],
         })
         
         self._indicators = {}
@@ -1126,19 +1227,44 @@ class RealTimeStatusAlgorithm(StatusAlgorithm):
     name = "realtime"
     description = "实时市场状态判断算法（价格行为+波动率）"
     
+    @classmethod
+    def get_default_config(cls) -> Dict:
+        """获取算法默认配置"""
+        return {
+            'name': cls.name,
+            'params': {
+                'lookback_period': 20,
+                'breakout_threshold': 0.02,
+                'consecutive_bars': 3,
+                'atr_period': 14,
+                'expansion_threshold': 1.5,
+                'contraction_threshold': 0.7,
+                'confirm_periods': 2,
+                'min_trend_signals': 4,
+                'status_inertia': True,
+                'min_trend_confidence': 0.8,
+                'min_range_duration': 5
+            }
+        }
+    
     def __init__(self, config: Dict = None):
-        self.config = config or {
-            'lookback_period': 20,
-            'breakout_threshold': 0.02,
-            'consecutive_bars': 3,
-            'atr_period': 14,
-            'expansion_threshold': 1.5,
-            'contraction_threshold': 0.7,
-            'confirm_periods': 2,
-            'min_trend_signals': 4,
-            'status_inertia': True,
-            'min_trend_confidence': 0.8,
-            'min_range_duration': 5,
+        if config is None:
+            config = self.get_default_config()['params']
+        elif 'params' in config:
+            config = config['params']
+        
+        self.config = {
+            'lookback_period': config.get('lookback_period', 20),
+            'breakout_threshold': config.get('breakout_threshold', 0.02),
+            'consecutive_bars': config.get('consecutive_bars', 3),
+            'atr_period': config.get('atr_period', 14),
+            'expansion_threshold': config.get('expansion_threshold', 1.5),
+            'contraction_threshold': config.get('contraction_threshold', 0.7),
+            'confirm_periods': config.get('confirm_periods', 2),
+            'min_trend_signals': config.get('min_trend_signals', 4),
+            'status_inertia': config.get('status_inertia', True),
+            'min_trend_confidence': config.get('min_trend_confidence', 0.8),
+            'min_range_duration': config.get('min_range_duration', 5),
         }
         
         self.price_detector = PriceActionDetector(self.config)
@@ -1557,126 +1683,52 @@ class MarketStatusDetector:
             'transitioning_count': statuses.count(MarketStatus.TRANSITIONING),
             'transitioning_pct': statuses.count(MarketStatus.TRANSITIONING) / len(statuses) * 100,
         }
-    
-    def save_report(self, symbol: str, interval: str = None, days: int = None, date_range_str: str = None):
-        interval = interval or getattr(self, '_interval', '1m')
-        
-        if date_range_str:
-            filename = f"binance_{symbol}_market_report_{interval}_{date_range_str}.md"
-        elif days:
-            filename = f"binance_{symbol}_market_report_{interval}_{days}d.md"
-        else:
-            filename = f"binance_{symbol}_market_report_{interval}.md"
-        
-        output_dir = "out/market_backtest"
-        os.makedirs(output_dir, exist_ok=True)
-        filepath = os.path.join(output_dir, filename)
-        
-        stats = self._calculate_statistics(self._history)
-        
-        start_time_str = datetime.fromtimestamp(self._start_time / 1000).strftime('%Y-%m-%d')
-        end_time_str = datetime.fromtimestamp(self._end_time / 1000).strftime('%Y-%m-%d')
-        
-        intervals = self.get_intervals()
-        intervals_content = ""
-        if intervals:
-            intervals_content = "\n## 区间划分\n\n| 开始时间 | 结束时间 | 状态 | 持续K线数 |\n|----------|----------|------|----------|\n"
-            for interval_item in intervals:
-                intervals_content += f"| {interval_item['start_time']} | {interval_item['end_time']} | {interval_item['status']} | {interval_item['duration']} |\n"
-        
-        content = f"""# {symbol} 市场行情分析报告
-
-## 基本信息
-
-| 项目 | 值 |
-|------|-----|
-| 交易对 | {symbol} |
-| K线周期 | {interval} |
-| 分析天数 | {days or '-'} |
-| 时间范围 | {start_time_str} ~ {end_time_str} |
-| K线数量 | {len(self._klines)} |
-| 分析算法 | {self.algorithm.name} |
-
-## 行情统计
-
-| 行情状态 | 数量 | 占比 |
-|----------|------|------|
-| 震荡行情 | {stats.get('ranging_count', 0)} | {stats.get('ranging_pct', 0):.2f}% |
-| 上涨趋势 | {stats.get('trending_up_count', 0)} | {stats.get('trending_up_pct', 0):.2f}% |
-| 下跌趋势 | {stats.get('trending_down_count', 0)} | {stats.get('trending_down_pct', 0):.2f}% |
-| 过渡状态 | {stats.get('transitioning_count', 0)} | {stats.get('transitioning_pct', 0):.2f}% |
-{intervals_content}
-## 行情时间线
-
-"""
-        prev_status = None
-        for r in self._history:
-            if r['status'] != prev_status:
-                content += f"- {r['time'].strftime('%Y-%m-%d %H:%M')}: {r['status'].value} ({r['reason']})\n"
-                prev_status = r['status']
-        
-        with open(filepath, 'w', encoding='utf-8') as f:
-            f.write(content)
-        
-        print(f"📄 行情报告已保存: {filepath}")
-    
-    def save_history(self, symbol: str, interval: str = None, days: int = None, date_range_str: str = None):
-        interval = interval or getattr(self, '_interval', '1m')
-        
-        filename = f"binance_{symbol}_market_history.md"
-        output_dir = "out/market_backtest"
-        os.makedirs(output_dir, exist_ok=True)
-        filepath = os.path.join(output_dir, filename)
-        
-        stats = self._calculate_statistics(self._history)
-        now = datetime.now().strftime('%Y-%m-%d %H:%M')
-        time_range = date_range_str or f"{days}d"
-        
-        if not os.path.exists(filepath):
-            header = f"""# {symbol} 市场行情分析历史记录
-
-| 分析时间 | K线周期 | 时间范围 | 天数 | 震荡占比 | 上涨占比 | 下跌占比 | 算法 |
-|----------|---------|----------|------|----------|----------|----------|------|
-"""
-            with open(filepath, 'w', encoding='utf-8') as f:
-                f.write(header)
-        
-        content = f"| {now} | {interval} | {time_range} | {days or '-'} | {stats.get('ranging_pct', 0):.1f}% | {stats.get('trending_up_pct', 0):.1f}% | {stats.get('trending_down_pct', 0):.1f}% | {self.algorithm.name} |\n"
-        
-        with open(filepath, 'a', encoding='utf-8') as f:
-            f.write(content)
-        
-        print(f"📊 历史记录已追加: {filepath}")
 
 
 async def main():
     parser = argparse.ArgumentParser(description="市场行情判断器")
     parser.add_argument("--symbol", type=str, default="BTCUSDT", help="交易对 (默认: BTCUSDT)")
-    parser.add_argument("--interval", type=str, default="1m", help="K线周期 (默认: 1m)")
-    parser.add_argument("--days", type=int, default=None, help="分析天数")
-    parser.add_argument("--date-range", type=str, default=None, help="时间范围 (格式: yyyymmdd-yyyymmdd)")
+    parser.add_argument("--interval", type=str, default="1d", help="K线周期 (默认: 1d)")
+    parser.add_argument("--date-range", type=str, required=True, help="时间范围 (格式: yyyymmdd-yyyymmdd)（必选）")
     parser.add_argument("--algorithm", type=str, default="improved", 
-                        choices=['realtime', 'adx', 'composite', 'always_ranging', 'improved'], help="算法 (默认: improved)")
-    parser.add_argument("--adx-threshold", type=int, default=25, help="ADX 阈值 (默认: 25)")
+                        choices=['realtime', 'adx', 'composite', 'always_ranging', 'improved', 'dual_thrust'], help="算法 (默认: improved)")
+    parser.add_argument("--algorithm-params", type=str, default=None, help="算法参数 (JSON格式，如: '{\"period\": 20, \"threshold\": 30}')")
     
     args = parser.parse_args()
     
-    if args.algorithm == 'realtime':
-        algorithm = RealTimeStatusAlgorithm()
-    elif args.algorithm == 'adx':
-        algorithm = ADXAlgorithm(threshold=args.adx_threshold)
-    elif args.algorithm == 'always_ranging':
-        algorithm = AlwaysRangingAlgorithm()
-    elif args.algorithm == 'improved':
-        algorithm = ImprovedStatusAlgorithm()
-    else:
-        algorithm = CompositeAlgorithm()
+    # 解析算法参数
+    algorithm_params = {}
+    if args.algorithm_params:
+        try:
+            algorithm_params = json.loads(args.algorithm_params)
+        except json.JSONDecodeError as e:
+            logger.error(f"[算法参数] JSON 解析失败: {e}")
+            return
+    
+    # 根据算法名称获取算法类
+    algorithm_classes = {
+        'realtime': RealTimeStatusAlgorithm,
+        'adx': ADXAlgorithm,
+        'composite': CompositeAlgorithm,
+        'always_ranging': AlwaysRangingAlgorithm,
+        'improved': ImprovedStatusAlgorithm,
+        'dual_thrust': DualThrustAlgorithm,
+    }
+    
+    algorithm_class = algorithm_classes.get(args.algorithm)
+    if not algorithm_class:
+        logger.error(f"[算法] 不支持的算法: {args.algorithm}")
+        return
+    
+    # 使用配置初始化算法（空参数时算法类会自动使用默认配置）
+    algorithm = algorithm_class(algorithm_params if algorithm_params else None)
     
     detector = MarketStatusDetector(algorithm=algorithm)
     
     start_time = None
     end_time = None
     date_range_str = None
+    days = None
     
     if args.date_range:
         try:
@@ -1694,8 +1746,6 @@ async def main():
         except ValueError as e:
             logger.error(f"[时间范围] 解析失败: {e}")
             return
-    else:
-        days = args.days
     
     print(f"\n{'='*60}")
     print(f"📊 市场行情分析")
@@ -1710,7 +1760,7 @@ async def main():
             interval=args.interval,
             start_time=start_time,
             end_time=end_time,
-            days=args.days
+            days=days
         )
         
         stats = result['statistics']
@@ -1728,37 +1778,9 @@ async def main():
             if len(intervals) > 10:
                 print(f"  ... 还有 {len(intervals) - 10} 个区间")
         
-        detector.save_report(args.symbol, days, date_range_str)
-        detector.save_history(args.symbol, days, date_range_str)
-        
     except Exception as e:
         logger.error(f"[分析] 失败: {e}")
         raise
-
-
-REALTIME_PRIORITY_CONFIG = {
-    'lookback_period': 15,
-    'breakout_threshold': 0.015,
-    'consecutive_bars': 2,
-    'atr_period': 10,
-    'expansion_threshold': 1.3,
-    'contraction_threshold': 0.8,
-    'confirm_periods': 1,
-    'min_interval_duration': 2,
-    'switch_threshold': 0.5,
-}
-
-RELIABILITY_PRIORITY_CONFIG = {
-    'lookback_period': 20,
-    'breakout_threshold': 0.02,
-    'consecutive_bars': 3,
-    'atr_period': 14,
-    'expansion_threshold': 1.5,
-    'contraction_threshold': 0.7,
-    'confirm_periods': 2,
-    'min_interval_duration': 3,
-    'switch_threshold': 0.6,
-}
 
 
 if __name__ == "__main__":

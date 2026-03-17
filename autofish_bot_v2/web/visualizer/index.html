@@ -260,9 +260,9 @@
                                             测试 #{{ index + 1 }}: {{ result.test_case.symbol }} {{ result.test_case.algorithm }}
                                         </span>
                                         <div class="compare-item-stats">
-                                            <span>震荡: {{ result.statistics?.ranging_days || 0 }}天</span>
-                                            <span>上涨: {{ result.statistics?.trending_up_days || 0 }}天</span>
-                                            <span>下跌: {{ result.statistics?.trending_down_days || 0 }}天</span>
+                                            <span>震荡: {{ result.statistics?.status_intervals?.ranging || 0 }}</span>
+                                            <span>上涨: {{ result.statistics?.status_intervals?.trending_up || 0 }}</span>
+                                            <span>下跌: {{ result.statistics?.status_intervals?.trending_down || 0 }}</span>
                                         </div>
                                     </div>
                                     <div :id="'compare-chart-' + index" class="compare-item-chart"></div>
@@ -285,20 +285,20 @@
                                 <div class="stats-sidebar">
                                     <h3>统计信息</h3>
                                     <div class="stat-item">
-                                        <span class="stat-label">总天数</span>
-                                        <span class="stat-value total">{{ statistics.total_days || 0 }}</span>
+                                        <span class="stat-label">总周期数</span>
+                                        <span class="stat-value total">{{ statistics.total_intervals || 0 }}</span>
                                     </div>
                                     <div class="stat-item">
                                         <span class="stat-label">震荡</span>
-                                        <span class="stat-value ranging">{{ statistics.ranging_days || 0 }} ({{ statistics.ranging_percent || 0 }}%)</span>
+                                        <span class="stat-value ranging">{{ statistics.status_intervals?.ranging || 0 }} ({{ statistics.status_percent?.ranging || 0 }}%)</span>
                                     </div>
                                     <div class="stat-item">
                                         <span class="stat-label">上涨</span>
-                                        <span class="stat-value up">{{ statistics.trending_up_days || 0 }} ({{ statistics.trending_up_percent || 0 }}%)</span>
+                                        <span class="stat-value up">{{ statistics.status_intervals?.trending_up || 0 }} ({{ statistics.status_percent?.trending_up || 0 }}%)</span>
                                     </div>
                                     <div class="stat-item">
                                         <span class="stat-label">下跌</span>
-                                        <span class="stat-value down">{{ statistics.trending_down_days || 0 }} ({{ statistics.trending_down_percent || 0 }}%)</span>
+                                        <span class="stat-value down">{{ statistics.status_intervals?.trending_down || 0 }} ({{ statistics.status_percent?.trending_down || 0 }}%)</span>
                                     </div>
                                 </div>
                                 
@@ -967,7 +967,7 @@
                             option = {
                                 animation: false,
                                 title: {
-                                    text: `${result.test_case.symbol} | ${result.test_case.algorithm} | 震${result.statistics?.ranging_days || 0} 涨${result.statistics?.trending_up_days || 0} 跌${result.statistics?.trending_down_days || 0}`,
+                                    text: `${result.test_case.symbol} | ${result.test_case.algorithm} | 震${result.statistics?.status_intervals?.ranging || 0} 涨${result.statistics?.status_intervals?.trending_up || 0} 跌${result.statistics?.status_intervals?.trending_down || 0}`,
                                     left: 'center',
                                     top: 5,
                                     textStyle: { fontSize: 12 },

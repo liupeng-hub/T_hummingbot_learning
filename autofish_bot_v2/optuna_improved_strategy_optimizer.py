@@ -15,6 +15,7 @@ Optuna Improved Strategy 参数优化器
 import optuna
 import pandas as pd
 from datetime import datetime
+from pathlib import Path
 import asyncio
 import json
 import os
@@ -50,13 +51,19 @@ class OptunaImprovedStrategyOptimizer:
     def __init__(self, symbol: str, date_range: str):
         self.symbol = symbol
         self.date_range = date_range
-        self.results_file = 'out/market_optimization/optuna_improved_results.csv'
-        self.report_file = 'out/market_optimization/optuna_improved_report.md'
+        
+        self.output_dir = Path('out/test_report/optimizer_Improved')
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+        
+        self.optimizer_id = f"OPT_{datetime.now().strftime('%Y%m%d%H%M%S')}_{symbol}"
+        self.results_file = self.output_dir / f"{self.optimizer_id}_results.csv"
+        self.report_file = self.output_dir / f"{self.optimizer_id}.md"
+        
         self.results: List[Dict] = []
         self.best_params: Optional[Dict] = None
         self.best_value: float = 0.0
         self._start_time: Optional[datetime] = None
-        self._end_time: Optional[datetime] = None
+        self._total_days: int = 0
         
         os.makedirs('out/market_optimization', exist_ok=True)
         
@@ -254,13 +261,33 @@ class OptunaImprovedStrategyOptimizer:
         return study
     
     def _save_results(self):
-        """保存结果到CSV"""
+        """保存结果到CSV和数据库"""
         if not self.results:
             return
         
         df = pd.DataFrame(self.results)
         df.to_csv(self.results_file, index=False)
         logger.info(f"结果已保存: {self.results_file}")
+        
+        try:
+            from database.test_results_db import TestResultsDB
+            db = TestResultsDB()
+            
+            for r in self.results:
+                db.save_optimizer_history(
+                    self.optimizer_id,
+                    r['trial'],
+                    r['score'],
+                    {
+                        'grid_spacing': r.get('grid_spacing'),
+                        'exit_profit': r.get('exit_profit'),
+                        'stop_loss': r.get('stop_loss'),
+                        'decay_factor': r.get('decay_factor'),
+                        'max_entries': r.get('max_entries'),
+                    }
+                )
+        except Exception as e:
+            logger.error(f"保存到数据库失败: {e}")
     
     def _generate_report(self, study: optuna.Study):
         """生成优化报告"""
@@ -352,6 +379,63 @@ python market_aware_backtest.py \\
         with open(self.report_file, 'w', encoding='utf-8') as f:
             f.write(report)
         print(f"📄 报告已保存: {self.report_file}")
+        
+        self._save_to_database(study)
+    
+    def _save_to_database(self, study: optuna.Study):
+        """保存优化结果到数据库"""
+        try:
+            from database.test_results_db import TestResultsDB
+            db = TestResultsDB()
+            
+            best_params = study.best_params
+            
+            param_ranges = {
+                'lookback_period': (40, 90),
+                'min_range_duration': (5, 20),
+                'max_range_pct': (0.10, 0.25),
+                'breakout_threshold': (0.02, 0.05),
+                'swing_window': (3, 7),
+                'merge_threshold': (0.02, 0.05),
+                'min_touches': (2, 5),
+                'grid_spacing': (0.005, 0.02),
+                'exit_profit': (0.005, 0.02),
+                'stop_loss': (0.05, 0.12),
+                'decay_factor': (0.3, 0.7),
+                'max_entries': (2, 6),
+            }
+            
+            optimization_history = [
+                {
+                    'trial': r['trial'],
+                    'value': r['score'],
+                    'params': r.get('params', {}),
+                }
+                for r in self.results
+            ]
+            
+            values = [r['score'] for r in self.results]
+            avg_value = sum(values) / len(values) if values else 0
+            std_value = (sum((v - avg_value) ** 2 for v in values) / len(values)) ** 0.5 if values else 0
+            
+            db.save_optimizer_result(
+                optimizer_id=self.optimizer_id,
+                symbol=self.symbol,
+                algorithm='Improved',
+                days=self._total_days,
+                n_trials=len(self.results),
+                best_value=study.best_value,
+                best_params=best_params,
+                param_ranges=param_ranges,
+                optimization_history=optimization_history,
+                avg_value=avg_value,
+                std_value=std_value,
+                status='completed'
+            )
+            
+            print(f"✅ 优化结果已保存到数据库: {self.optimizer_id}")
+        except Exception as e:
+            logger.error(f"保存优化结果到数据库失败: {e}")
 
 
 def main():

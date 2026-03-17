@@ -47,8 +47,16 @@ from market_status_detector import (
     DualThrustAlgorithm,
     ImprovedStatusAlgorithm,
     AlwaysRangingAlgorithm,
+    CompositeAlgorithm,
+    ADXAlgorithm,
+    RealTimeStatusAlgorithm,
     MarketStatus,
     StatusResult,
+)
+from database.test_results_db import (
+    TestResultsDB,
+    MarketVisualizerCase,
+    MarketVisualizerResult,
 )
 
 
@@ -86,525 +94,6 @@ class StatusChangeEvent:
     to_status: MarketStatus
     price: float
     reason: str
-
-
-@dataclass
-class TestCase:
-    """测试用例数据类"""
-    id: str
-    name: str
-    symbol: str
-    interval: str
-    start_date: str
-    end_date: str
-    algorithm: str
-    algorithm_config: Dict
-    description: str
-    created_at: str
-    updated_at: str
-    status: str = 'pending'
-
-
-@dataclass
-class TestResult:
-    """测试结果数据类"""
-    id: str
-    test_case_id: str
-    total_days: int
-    ranging_days: int
-    trending_up_days: int
-    trending_down_days: int
-    ranging_count: int
-    trending_up_count: int
-    trending_down_count: int
-    status_ranges: List[Dict]
-    executed_at: str
-    duration_ms: int
-
-
-@dataclass
-class DailyStatusDB:
-    """每日状态数据类(数据库存储)"""
-    id: str
-    test_result_id: str
-    date: str
-    status: str
-    confidence: float
-    reason: str
-    open_price: float
-    close_price: float
-    high_price: float
-    low_price: float
-    volume: float
-
-
-class MarketVisualizerDB:
-    """行情可视化数据库管理类"""
-    
-    def __init__(self, db_path: str = None):
-        if db_path is None:
-            base_dir = os.path.dirname(os.path.abspath(__file__))
-            output_dir = os.path.join(base_dir, 'out/market_visualizer')
-            os.makedirs(output_dir, exist_ok=True)
-            db_path = os.path.join(base_dir, 'database/market_visualizer.db')
-        
-        self.db_path = db_path
-        self._init_db()
-    
-    def _get_connection(self) -> sqlite3.Connection:
-        """获取数据库连接"""
-        conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row
-        return conn
-    
-    def _init_db(self):
-        """初始化数据库表结构"""
-        conn = self._get_connection()
-        cursor = conn.cursor()
-        
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS test_cases (
-                id TEXT PRIMARY KEY,
-                name TEXT NOT NULL,
-                symbol TEXT NOT NULL,
-                interval TEXT NOT NULL DEFAULT '1d',
-                start_date TEXT NOT NULL,
-                end_date TEXT NOT NULL,
-                algorithm TEXT NOT NULL,
-                algorithm_config TEXT,
-                description TEXT,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL,
-                status TEXT DEFAULT 'pending'
-            )
-        ''')
-        
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS test_results (
-                id TEXT PRIMARY KEY,
-                test_case_id TEXT NOT NULL,
-                total_days INTEGER,
-                ranging_days INTEGER,
-                trending_up_days INTEGER,
-                trending_down_days INTEGER,
-                ranging_count INTEGER,
-                trending_up_count INTEGER,
-                trending_down_count INTEGER,
-                status_ranges TEXT,
-                executed_at TEXT NOT NULL,
-                duration_ms INTEGER,
-                FOREIGN KEY (test_case_id) REFERENCES test_cases(id)
-            )
-        ''')
-        
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS daily_statuses (
-                id TEXT PRIMARY KEY,
-                test_result_id TEXT NOT NULL,
-                date TEXT NOT NULL,
-                status TEXT NOT NULL,
-                confidence REAL,
-                reason TEXT,
-                open_price REAL,
-                close_price REAL,
-                high_price REAL,
-                low_price REAL,
-                volume REAL,
-                FOREIGN KEY (test_result_id) REFERENCES test_results(id)
-            )
-        ''')
-        
-        cursor.execute('''
-            CREATE INDEX IF NOT EXISTS idx_daily_statuses_result 
-            ON daily_statuses(test_result_id)
-        ''')
-        
-        cursor.execute('''
-            CREATE INDEX IF NOT EXISTS idx_daily_statuses_date 
-            ON daily_statuses(date)
-        ''')
-        
-        conn.commit()
-        conn.close()
-    
-    @staticmethod
-    def _generate_uuid() -> str:
-        """生成UUID"""
-        return str(uuid.uuid4())
-    
-    @staticmethod
-    def _get_now() -> str:
-        """获取当前时间字符串"""
-        return datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    
-    def create_test_case(
-        self,
-        name: str,
-        symbol: str,
-        interval: str,
-        start_date: str,
-        end_date: str,
-        algorithm: str,
-        algorithm_config: Dict = None,
-        description: str = '',
-    ) -> TestCase:
-        """创建测试用例"""
-        now = self._get_now()
-        test_case = TestCase(
-            id=self._generate_uuid(),
-            name=name,
-            symbol=symbol,
-            interval=interval,
-            start_date=start_date,
-            end_date=end_date,
-            algorithm=algorithm,
-            algorithm_config=algorithm_config or {},
-            description=description,
-            created_at=now,
-            updated_at=now,
-            status='pending',
-        )
-        
-        conn = self._get_connection()
-        cursor = conn.cursor()
-        
-        cursor.execute('''
-            INSERT INTO test_cases 
-            (id, name, symbol, interval, start_date, end_date, algorithm, 
-             algorithm_config, description, created_at, updated_at, status)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ''', (
-            test_case.id,
-            test_case.name,
-            test_case.symbol,
-            test_case.interval,
-            test_case.start_date,
-            test_case.end_date,
-            test_case.algorithm,
-            json.dumps(test_case.algorithm_config),
-            test_case.description,
-            test_case.created_at,
-            test_case.updated_at,
-            test_case.status,
-        ))
-        
-        conn.commit()
-        conn.close()
-        
-        return test_case
-    
-    def get_test_case(self, test_case_id: str) -> Optional[TestCase]:
-        """获取单个测试用例"""
-        conn = self._get_connection()
-        cursor = conn.cursor()
-        
-        cursor.execute('SELECT * FROM test_cases WHERE id = ?', (test_case_id,))
-        row = cursor.fetchone()
-        conn.close()
-        
-        if row is None:
-            return None
-        
-        return self._row_to_test_case(row)
-    
-    def get_test_cases(
-        self,
-        symbol: str = None,
-        algorithm: str = None,
-        status: str = None,
-        limit: int = 100,
-        offset: int = 0,
-    ) -> List[TestCase]:
-        """获取测试用例列表"""
-        conn = self._get_connection()
-        cursor = conn.cursor()
-        
-        sql = 'SELECT * FROM test_cases WHERE 1=1'
-        params = []
-        
-        if symbol:
-            sql += ' AND symbol = ?'
-            params.append(symbol)
-        
-        if algorithm:
-            sql += ' AND algorithm = ?'
-            params.append(algorithm)
-        
-        if status:
-            sql += ' AND status = ?'
-            params.append(status)
-        
-        sql += ' ORDER BY created_at DESC LIMIT ? OFFSET ?'
-        params.extend([limit, offset])
-        
-        cursor.execute(sql, params)
-        rows = cursor.fetchall()
-        conn.close()
-        
-        return [self._row_to_test_case(row) for row in rows]
-    
-    def update_test_case_status(self, test_case_id: str, status: str):
-        """更新测试用例状态"""
-        conn = self._get_connection()
-        cursor = conn.cursor()
-        
-        cursor.execute('''
-            UPDATE test_cases 
-            SET status = ?, updated_at = ? 
-            WHERE id = ?
-        ''', (status, self._get_now(), test_case_id))
-        
-        conn.commit()
-        conn.close()
-    
-    def delete_test_case(self, test_case_id: str):
-        """删除测试用例及其关联数据"""
-        conn = self._get_connection()
-        cursor = conn.cursor()
-        
-        cursor.execute('''
-            DELETE FROM daily_statuses 
-            WHERE test_result_id IN 
-            (SELECT id FROM test_results WHERE test_case_id = ?)
-        ''', (test_case_id,))
-        
-        cursor.execute('DELETE FROM test_results WHERE test_case_id = ?', (test_case_id,))
-        cursor.execute('DELETE FROM test_cases WHERE id = ?', (test_case_id,))
-        
-        conn.commit()
-        conn.close()
-    
-    def _row_to_test_case(self, row: sqlite3.Row) -> TestCase:
-        """将数据库行转换为TestCase对象"""
-        return TestCase(
-            id=row['id'],
-            name=row['name'],
-            symbol=row['symbol'],
-            interval=row['interval'],
-            start_date=row['start_date'],
-            end_date=row['end_date'],
-            algorithm=row['algorithm'],
-            algorithm_config=json.loads(row['algorithm_config']) if row['algorithm_config'] else {},
-            description=row['description'] or '',
-            created_at=row['created_at'],
-            updated_at=row['updated_at'],
-            status=row['status'],
-        )
-    
-    def create_test_result(
-        self,
-        test_case_id: str,
-        total_days: int,
-        ranging_days: int,
-        trending_up_days: int,
-        trending_down_days: int,
-        ranging_count: int,
-        trending_up_count: int,
-        trending_down_count: int,
-        status_ranges: List[Dict],
-        duration_ms: int,
-    ) -> TestResult:
-        """创建测试结果"""
-        test_result = TestResult(
-            id=self._generate_uuid(),
-            test_case_id=test_case_id,
-            total_days=total_days,
-            ranging_days=ranging_days,
-            trending_up_days=trending_up_days,
-            trending_down_days=trending_down_days,
-            ranging_count=ranging_count,
-            trending_up_count=trending_up_count,
-            trending_down_count=trending_down_count,
-            status_ranges=status_ranges,
-            executed_at=self._get_now(),
-            duration_ms=duration_ms,
-        )
-        
-        conn = self._get_connection()
-        cursor = conn.cursor()
-        
-        cursor.execute('''
-            INSERT INTO test_results 
-            (id, test_case_id, total_days, ranging_days, trending_up_days, 
-             trending_down_days, ranging_count, trending_up_count, trending_down_count,
-             status_ranges, executed_at, duration_ms)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ''', (
-            test_result.id,
-            test_result.test_case_id,
-            test_result.total_days,
-            test_result.ranging_days,
-            test_result.trending_up_days,
-            test_result.trending_down_days,
-            test_result.ranging_count,
-            test_result.trending_up_count,
-            test_result.trending_down_count,
-            json.dumps(test_result.status_ranges),
-            test_result.executed_at,
-            test_result.duration_ms,
-        ))
-        
-        conn.commit()
-        conn.close()
-        
-        return test_result
-    
-    def get_test_result(self, test_result_id: str) -> Optional[TestResult]:
-        """获取单个测试结果"""
-        conn = self._get_connection()
-        cursor = conn.cursor()
-        
-        cursor.execute('SELECT * FROM test_results WHERE id = ?', (test_result_id,))
-        row = cursor.fetchone()
-        conn.close()
-        
-        if row is None:
-            return None
-        
-        return self._row_to_test_result(row)
-    
-    def get_test_result_by_case(self, test_case_id: str) -> Optional[TestResult]:
-        """根据测试用例ID获取最新的测试结果"""
-        conn = self._get_connection()
-        cursor = conn.cursor()
-        
-        cursor.execute('''
-            SELECT * FROM test_results 
-            WHERE test_case_id = ? 
-            ORDER BY executed_at DESC 
-            LIMIT 1
-        ''', (test_case_id,))
-        row = cursor.fetchone()
-        conn.close()
-        
-        if row is None:
-            return None
-        
-        return self._row_to_test_result(row)
-    
-    def _row_to_test_result(self, row: sqlite3.Row) -> TestResult:
-        """将数据库行转换为TestResult对象"""
-        return TestResult(
-            id=row['id'],
-            test_case_id=row['test_case_id'],
-            total_days=row['total_days'],
-            ranging_days=row['ranging_days'],
-            trending_up_days=row['trending_up_days'],
-            trending_down_days=row['trending_down_days'],
-            ranging_count=row['ranging_count'],
-            trending_up_count=row['trending_up_count'],
-            trending_down_count=row['trending_down_count'],
-            status_ranges=json.loads(row['status_ranges']) if row['status_ranges'] else [],
-            executed_at=row['executed_at'],
-            duration_ms=row['duration_ms'],
-        )
-    
-    def create_daily_statuses(self, test_result_id: str, daily_statuses: List[Dict]):
-        """批量创建每日状态"""
-        conn = self._get_connection()
-        cursor = conn.cursor()
-        
-        for ds in daily_statuses:
-            cursor.execute('''
-                INSERT INTO daily_statuses 
-                (id, test_result_id, date, status, confidence, reason,
-                 open_price, close_price, high_price, low_price, volume)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ''', (
-                self._generate_uuid(),
-                test_result_id,
-                ds['date'],
-                ds['status'],
-                ds.get('confidence', 1.0),
-                ds.get('reason', ''),
-                ds['open_price'],
-                ds['close_price'],
-                ds['high_price'],
-                ds['low_price'],
-                ds['volume'],
-            ))
-        
-        conn.commit()
-        conn.close()
-    
-    def get_daily_statuses(self, test_result_id: str) -> List[DailyStatusDB]:
-        """获取测试结果的所有每日状态"""
-        conn = self._get_connection()
-        cursor = conn.cursor()
-        
-        cursor.execute('''
-            SELECT * FROM daily_statuses 
-            WHERE test_result_id = ? 
-            ORDER BY date ASC
-        ''', (test_result_id,))
-        rows = cursor.fetchall()
-        conn.close()
-        
-        return [self._row_to_daily_status(row) for row in rows]
-    
-    def _row_to_daily_status(self, row: sqlite3.Row) -> DailyStatusDB:
-        """将数据库行转换为DailyStatusDB对象"""
-        return DailyStatusDB(
-            id=row['id'],
-            test_result_id=row['test_result_id'],
-            date=row['date'],
-            status=row['status'],
-            confidence=row['confidence'],
-            reason=row['reason'],
-            open_price=row['open_price'],
-            close_price=row['close_price'],
-            high_price=row['high_price'],
-            low_price=row['low_price'],
-            volume=row['volume'],
-        )
-    
-    def get_statistics(self, test_result_id: str) -> Dict:
-        """获取测试结果的统计信息"""
-        result = self.get_test_result(test_result_id)
-        if result is None:
-            return {}
-        
-        total = result.total_days
-        return {
-            'total_days': total,
-            'ranging_days': result.ranging_days,
-            'ranging_percent': round(result.ranging_days / total * 100, 1) if total > 0 else 0,
-            'trending_up_days': result.trending_up_days,
-            'trending_up_percent': round(result.trending_up_days / total * 100, 1) if total > 0 else 0,
-            'trending_down_days': result.trending_down_days,
-            'trending_down_percent': round(result.trending_down_days / total * 100, 1) if total > 0 else 0,
-            'ranging_count': result.ranging_count,
-            'trending_up_count': result.trending_up_count,
-            'trending_down_count': result.trending_down_count,
-            'duration_ms': result.duration_ms,
-            'executed_at': result.executed_at,
-        }
-    
-    def count_test_cases(self, symbol: str = None, algorithm: str = None, status: str = None) -> int:
-        """统计测试用例数量"""
-        conn = self._get_connection()
-        cursor = conn.cursor()
-        
-        sql = 'SELECT COUNT(*) FROM test_cases WHERE 1=1'
-        params = []
-        
-        if symbol:
-            sql += ' AND symbol = ?'
-            params.append(symbol)
-        
-        if algorithm:
-            sql += ' AND algorithm = ?'
-            params.append(algorithm)
-        
-        if status:
-            sql += ' AND status = ?'
-            params.append(status)
-        
-        cursor.execute(sql, params)
-        count = cursor.fetchone()[0]
-        conn.close()
-        
-        return count
 
 
 class DataProvider:
@@ -664,6 +153,9 @@ class AlgorithmRunner:
         'dual_thrust': DualThrustAlgorithm,
         'improved': ImprovedStatusAlgorithm,
         'always_ranging': AlwaysRangingAlgorithm,
+        'composite': CompositeAlgorithm,
+        'adx': ADXAlgorithm,
+        'realtime': RealTimeStatusAlgorithm,
     }
     
     def __init__(self, algorithm_name: str, algorithm_config: Dict):
@@ -672,9 +164,9 @@ class AlgorithmRunner:
         self.algorithm = self._create_algorithm()
     
     def _create_algorithm(self):
-        """创建算法实例"""
-        algo_class = self.ALGORITHMS.get(self.algorithm_name, DualThrustAlgorithm)
-        return algo_class(self.algorithm_config)
+        """创建算法实例（空配置时算法类会自动使用默认配置）"""
+        algo_class = self.ALGORITHMS.get(self.algorithm_name, AlwaysRangingAlgorithm)
+        return algo_class(self.algorithm_config if self.algorithm_config else None)
     
     def run(self, klines: List[Dict]) -> List[DailyStatus]:
         """运行算法，获取每日状态"""
@@ -767,17 +259,17 @@ class StatusIntegrator:
         if not daily_statuses or not ranges:
             return {}
         
-        total_days = len(daily_statuses)
+        total_intervals = len(daily_statuses)
         
-        status_days = {
+        status_intervals = {
             MarketStatus.RANGING: 0,
             MarketStatus.TRENDING_UP: 0,
             MarketStatus.TRENDING_DOWN: 0,
         }
         
         for ds in daily_statuses:
-            if ds.status in status_days:
-                status_days[ds.status] += 1
+            if ds.status in status_intervals:
+                status_intervals[ds.status] += 1
         
         status_counts = {
             MarketStatus.RANGING: 0,
@@ -790,11 +282,11 @@ class StatusIntegrator:
                 status_counts[r.status] += 1
         
         return {
-            'total_days': total_days,
-            'status_days': status_days,
+            'total_intervals': total_intervals,
+            'status_intervals': status_intervals,
             'status_percent': {
-                k: (v / total_days * 100) if total_days > 0 else 0
-                for k, v in status_days.items()
+                k: (v / total_intervals * 100) if total_intervals > 0 else 0
+                for k, v in status_intervals.items()
             },
             'status_counts': status_counts,
             'total_ranges': len(ranges),
@@ -848,20 +340,20 @@ class ReportGenerator:
         
         lines.append("## 统计摘要")
         lines.append("")
-        lines.append("| 状态 | 天数 | 占比 | 区间数 |")
-        lines.append("|------|------|------|--------|")
+        lines.append("| 状态 | 周期数 | 占比 | 区间数 |")
+        lines.append("|------|--------|------|--------|")
         
         for status in [MarketStatus.RANGING, MarketStatus.TRENDING_UP, MarketStatus.TRENDING_DOWN]:
             name = self.STATUS_NAMES.get(status, '未知')
-            days = statistics['status_days'].get(status, 0)
+            intervals = statistics['status_intervals'].get(status, 0)
             percent = statistics['status_percent'].get(status, 0)
             counts = statistics['status_counts'].get(status, 0)
-            lines.append(f"| {name} | {days} | {percent:.1f}% | {counts} |")
+            lines.append(f"| {name} | {intervals} | {percent:.1f}% | {counts} |")
         lines.append("")
         
         lines.append("## 区间行情状态")
         lines.append("")
-        lines.append("| 序号 | 开始日期 | 结束日期 | 状态 | 持续天数 | 起始价 | 结束价 | 涨跌幅 |")
+        lines.append("| 序号 | 开始日期 | 结束日期 | 状态 | 持续周期 | 起始价 | 结束价 | 涨跌幅 |")
         lines.append("|------|----------|----------|------|----------|--------|--------|--------|")
         
         for i, r in enumerate(ranges, 1):
@@ -1092,7 +584,7 @@ class WebChartVisualizer:
                     }
                 ])
         
-        status_days = statistics.get('status_days', {})
+        status_intervals = statistics.get('status_intervals', {})
         status_percent = statistics.get('status_percent', {})
         
         config_str = ", ".join([f"{k}={v}" for k, v in algorithm_config.items() if v is not None])
@@ -1154,20 +646,20 @@ class WebChartVisualizer:
         
         <div class="stats">
             <div class="stat-card">
-                <h3>总天数</h3>
-                <div class="value">{statistics.get('total_days', 0)}</div>
+                <h3>总周期数</h3>
+                <div class="value">{statistics.get('total_intervals', 0)}</div>
             </div>
             <div class="stat-card ranging">
-                <h3>震荡天数</h3>
-                <div class="value">{status_days.get(MarketStatus.RANGING, 0)} ({status_percent.get(MarketStatus.RANGING, 0):.1f}%)</div>
+                <h3>震荡周期</h3>
+                <div class="value">{status_intervals.get('ranging', 0)} ({status_percent.get('ranging', 0):.1f}%)</div>
             </div>
             <div class="stat-card up">
-                <h3>上涨天数</h3>
-                <div class="value">{status_days.get(MarketStatus.TRENDING_UP, 0)} ({status_percent.get(MarketStatus.TRENDING_UP, 0):.1f}%)</div>
+                <h3>上涨周期</h3>
+                <div class="value">{status_intervals.get('trending_up', 0)} ({status_percent.get('trending_up', 0):.1f}%)</div>
             </div>
             <div class="stat-card down">
-                <h3>下跌天数</h3>
-                <div class="value">{status_days.get(MarketStatus.TRENDING_DOWN, 0)} ({status_percent.get(MarketStatus.TRENDING_DOWN, 0):.1f}%)</div>
+                <h3>下跌周期</h3>
+                <div class="value">{status_intervals.get('trending_down', 0)} ({status_percent.get('trending_down', 0):.1f}%)</div>
             </div>
         </div>
         
@@ -1381,7 +873,7 @@ class MarketStatusVisualizer:
     
     def __init__(self, args):
         self.args = args
-        self.output_dir = args.output_dir or 'out/market_visualizer'
+        self.output_dir = args.output_dir or 'out/test_report/visualizer'
         
         os.makedirs(self.output_dir, exist_ok=True)
         
@@ -1389,7 +881,7 @@ class MarketStatusVisualizer:
         self.report_generator = ReportGenerator(self.output_dir)
         self.chart_visualizer = ChartVisualizer(self.output_dir)
         self.web_chart_visualizer = WebChartVisualizer(self.output_dir)
-        self.db = MarketVisualizerDB('database/market_visualizer.db')
+        self.db = TestResultsDB()
     
     def _parse_date_range(self, date_range: str) -> Tuple[datetime, datetime]:
         """解析日期范围"""
@@ -1404,23 +896,18 @@ class MarketStatusVisualizer:
     
     def _build_algorithm_config(self) -> Dict:
         """构建算法配置"""
-        config = {}
+        # 优先使用 --algorithm-params JSON 参数
+        if self.args.algorithm_params:
+            try:
+                params = json.loads(self.args.algorithm_params)
+                if 'params' in params:
+                    return params['params']
+                return params
+            except json.JSONDecodeError as e:
+                print(f"[警告] 算法参数 JSON 解析失败: {e}")
         
-        if self.args.algorithm == 'dual_thrust':
-            if self.args.n_days:
-                config['n_days'] = self.args.n_days
-            if self.args.k1:
-                config['k1'] = self.args.k1
-            if self.args.k2:
-                config['k2'] = self.args.k2
-            if self.args.k2_down_factor:
-                config['k2_down_factor'] = self.args.k2_down_factor
-            if self.args.down_confirm_days:
-                config['down_confirm_days'] = self.args.down_confirm_days
-            if self.args.cooldown_days:
-                config['cooldown_days'] = self.args.cooldown_days
-        
-        return config
+        # 使用默认配置
+        return {}
     
     def _get_next_seq(self, symbol: str, interval: str, date_range: str, algorithm: str) -> int:
         """获取下一个序列号"""
@@ -1478,11 +965,9 @@ class MarketStatusVisualizer:
         
         seq = self._get_next_seq(self.args.symbol, self.args.interval, self.args.date_range, self.args.algorithm)
         
-        generate_md = self.args.generate_md or self.args.generate_all
-        generate_png = self.args.generate_png or self.args.generate_all
-        generate_html = self.args.generate_html or self.args.generate_all
+        generate_all = getattr(self.args, 'generate_all', True)  # 默认生成所有文件
         
-        if generate_md:
+        if generate_all:
             print("\n📝 生成MD报告...")
             report_path = self.report_generator.generate(
                 symbol=self.args.symbol,
@@ -1497,8 +982,7 @@ class MarketStatusVisualizer:
                 seq=seq,
             )
             print(f"  报告已保存: {report_path}")
-        
-        if generate_png:
+            
             print("\n📈 生成K线图...")
             df = self.data_provider.klines_to_dataframe(klines)
             chart_path = self.chart_visualizer.plot(
@@ -1512,8 +996,7 @@ class MarketStatusVisualizer:
                 seq=seq,
             )
             print(f"  图表已保存: {chart_path}")
-        
-        if generate_html:
+            
             print("\n🌐 生成Web可视化...")
             df = self.data_provider.klines_to_dataframe(klines)
             html_path = self.web_chart_visualizer.generate_html(
@@ -1530,29 +1013,28 @@ class MarketStatusVisualizer:
             )
             print(f"  HTML已保存: {html_path}")
         
-        if not (generate_md or generate_png or generate_html):
-            print("\nℹ️  文件生成已关闭 (使用 --generate-md/--generate-png/--generate-html/--generate-all 开启)")
-        
         print(f"\n{'='*60}")
         print("统计摘要")
         print(f"{'='*60}")
-        print(f"  总天数: {statistics['total_days']}")
-        print(f"  震荡: {statistics['status_days'][MarketStatus.RANGING]} 天 ({statistics['status_percent'][MarketStatus.RANGING]:.1f}%)")
-        print(f"  上涨: {statistics['status_days'][MarketStatus.TRENDING_UP]} 天 ({statistics['status_percent'][MarketStatus.TRENDING_UP]:.1f}%)")
-        print(f"  下跌: {statistics['status_days'][MarketStatus.TRENDING_DOWN]} 天 ({statistics['status_percent'][MarketStatus.TRENDING_DOWN]:.1f}%)")
+        print(f"  总周期数: {statistics['total_intervals']}")
+        print(f"  震荡: {statistics['status_intervals'][MarketStatus.RANGING]} 周期 ({statistics['status_percent'][MarketStatus.RANGING]:.1f}%)")
+        print(f"  上涨: {statistics['status_intervals'][MarketStatus.TRENDING_UP]} 周期 ({statistics['status_percent'][MarketStatus.TRENDING_UP]:.1f}%)")
+        print(f"  下跌: {statistics['status_intervals'][MarketStatus.TRENDING_DOWN]} 周期 ({statistics['status_percent'][MarketStatus.TRENDING_DOWN]:.1f}%)")
         print(f"{'='*60}\n")
         
         print("\n💾 保存到数据库...")
-        test_case = self.db.create_test_case(
+        case = MarketVisualizerCase(
+            case_id='',
             name=f"{self.args.symbol}_{self.args.algorithm}_{self.args.date_range}",
             symbol=self.args.symbol,
             interval=self.args.interval,
             start_date=start_date.strftime('%Y-%m-%d'),
             end_date=end_date.strftime('%Y-%m-%d'),
             algorithm=self.args.algorithm,
-            algorithm_config=algorithm_config,
+            algorithm_config=json.dumps(algorithm_config),
             description=f"命令行执行: {self.args.date_range}",
         )
+        case_id = self.db.create_visualizer_case(case)
         
         status_ranges = []
         for r in ranges:
@@ -1566,18 +1048,20 @@ class MarketStatusVisualizer:
                 'price_change': r.price_change,
             })
         
-        test_result = self.db.create_test_result(
-            test_case_id=test_case.id,
-            total_days=statistics['total_days'],
-            ranging_days=statistics['status_days'][MarketStatus.RANGING],
-            trending_up_days=statistics['status_days'][MarketStatus.TRENDING_UP],
-            trending_down_days=statistics['status_days'][MarketStatus.TRENDING_DOWN],
+        result = MarketVisualizerResult(
+            result_id='',
+            case_id=case_id,
+            total_intervals=statistics['total_intervals'],
+            ranging_intervals=statistics['status_intervals'][MarketStatus.RANGING],
+            trending_up_intervals=statistics['status_intervals'][MarketStatus.TRENDING_UP],
+            trending_down_intervals=statistics['status_intervals'][MarketStatus.TRENDING_DOWN],
             ranging_count=statistics['status_counts'][MarketStatus.RANGING],
             trending_up_count=statistics['status_counts'][MarketStatus.TRENDING_UP],
             trending_down_count=statistics['status_counts'][MarketStatus.TRENDING_DOWN],
-            status_ranges=status_ranges,
+            status_ranges=json.dumps(status_ranges),
             duration_ms=int((time.time() - start_time) * 1000),
         )
+        result_id = self.db.create_visualizer_result(result)
         
         daily_statuses_db = []
         for ds in daily_statuses:
@@ -1593,11 +1077,10 @@ class MarketStatusVisualizer:
                 'volume': 0,
             })
         
-        self.db.create_daily_statuses(test_result.id, daily_statuses_db)
-        self.db.update_test_case_status(test_case.id, 'completed')
+        self.db.create_visualizer_details(result_id, daily_statuses_db)
         
-        print(f"  测试用例ID: {test_case.id}")
-        print(f"  测试结果ID: {test_result.id}")
+        print(f"  测试用例ID: {case_id}")
+        print(f"  测试结果ID: {result_id}")
         print(f"  已保存到数据库")
 
 
@@ -1630,60 +1113,60 @@ ALGORITHMS = {
 SYMBOLS = ['BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'SOLUSDT', 'XRPUSDT', 'DOGEUSDT']
 
 
-def case_to_dict(case: TestCase) -> Dict:
-    """将TestCase转换为字典"""
+def visualizer_case_to_dict(case: Dict) -> Dict:
+    """将行情可视化用例转换为字典"""
     return {
-        'id': case.id,
-        'name': case.name,
-        'symbol': case.symbol,
-        'interval': case.interval,
-        'start_date': case.start_date,
-        'end_date': case.end_date,
-        'algorithm': case.algorithm,
-        'algorithm_config': case.algorithm_config,
-        'description': case.description,
-        'created_at': case.created_at,
-        'updated_at': case.updated_at,
-        'status': case.status,
+        'id': case.get('case_id'),
+        'name': case.get('name'),
+        'symbol': case.get('symbol'),
+        'interval': case.get('interval'),
+        'start_date': case.get('start_date'),
+        'end_date': case.get('end_date'),
+        'algorithm': case.get('algorithm'),
+        'algorithm_config': case.get('algorithm_config', {}),
+        'description': case.get('description', ''),
+        'created_at': case.get('created_at'),
+        'updated_at': case.get('updated_at'),
+        'status': case.get('status'),
     }
 
 
-def result_to_dict(result: TestResult) -> Dict:
-    """将TestResult转换为字典"""
+def visualizer_result_to_dict(result: Dict) -> Dict:
+    """将行情可视化结果转换为字典"""
     return {
-        'id': result.id,
-        'test_case_id': result.test_case_id,
-        'total_days': result.total_days,
-        'ranging_days': result.ranging_days,
-        'trending_up_days': result.trending_up_days,
-        'trending_down_days': result.trending_down_days,
-        'ranging_count': result.ranging_count,
-        'trending_up_count': result.trending_up_count,
-        'trending_down_count': result.trending_down_count,
-        'status_ranges': result.status_ranges,
-        'executed_at': result.executed_at,
-        'duration_ms': result.duration_ms,
+        'id': result.get('result_id'),
+        'test_case_id': result.get('case_id'),
+        'total_intervals': result.get('total_intervals'),
+        'ranging_intervals': result.get('ranging_intervals'),
+        'trending_up_intervals': result.get('trending_up_intervals'),
+        'trending_down_intervals': result.get('trending_down_intervals'),
+        'ranging_count': result.get('ranging_count'),
+        'trending_up_count': result.get('trending_up_count'),
+        'trending_down_count': result.get('trending_down_count'),
+        'status_ranges': result.get('status_ranges', []),
+        'executed_at': result.get('executed_at'),
+        'duration_ms': result.get('duration_ms'),
     }
 
 
-def daily_status_to_dict(status: DailyStatusDB) -> Dict:
-    """将DailyStatusDB转换为字典"""
+def visualizer_detail_to_dict(status: Dict) -> Dict:
+    """将行情可视化详情转换为字典"""
     amplitude = 0
-    if status.open_price and status.open_price > 0:
-        amplitude = (status.high_price - status.low_price) / status.open_price * 100
+    if status.get('open_price') and status['open_price'] > 0:
+        amplitude = (status['high_price'] - status['low_price']) / status['open_price'] * 100
     
     return {
-        'id': status.id,
-        'test_result_id': status.test_result_id,
-        'date': status.date,
-        'status': status.status,
-        'confidence': status.confidence,
-        'reason': status.reason,
-        'open_price': status.open_price,
-        'close_price': status.close_price,
-        'high_price': status.high_price,
-        'low_price': status.low_price,
-        'volume': status.volume,
+        'id': status.get('id'),
+        'test_result_id': status.get('result_id'),
+        'date': status.get('date'),
+        'status': status.get('status'),
+        'confidence': status.get('confidence'),
+        'reason': status.get('reason'),
+        'open_price': status.get('open_price'),
+        'close_price': status.get('close_price'),
+        'high_price': status.get('high_price'),
+        'low_price': status.get('low_price'),
+        'volume': status.get('volume'),
         'amplitude': round(amplitude, 2),
     }
 
@@ -1740,10 +1223,10 @@ class MarketVisualizerServer:
     def __init__(self, port: int = 5001, output_dir: str = None):
         self.port = port
         base_dir = os.path.dirname(os.path.abspath(__file__))
-        self.output_dir = output_dir or os.path.join(base_dir, 'out/market_visualizer')
+        self.output_dir = output_dir or os.path.join(base_dir, 'out/test_report/visualizer')
         os.makedirs(self.output_dir, exist_ok=True)
         
-        self.db = MarketVisualizerDB(os.path.join(base_dir, 'database/market_visualizer.db'))
+        self.db = TestResultsDB()
         
         self._setup_logging()
         self.app = self._create_app()
@@ -1769,7 +1252,7 @@ class MarketVisualizerServer:
         """创建Flask应用"""
         base_dir = os.path.dirname(os.path.abspath(__file__))
         app = Flask(__name__, 
-                    template_folder=os.path.join(base_dir, 'templates'))
+                    template_folder=os.path.join(base_dir, 'web/visualizer'))
         CORS(app)
         
         self.logger.info("服务器初始化完成")
@@ -1777,7 +1260,7 @@ class MarketVisualizerServer:
         @app.route('/')
         def index():
             self.logger.info("访问主页")
-            return send_from_directory(os.path.join(base_dir, 'templates'), 'index.html')
+            return send_from_directory(os.path.join(base_dir, 'web/visualizer'), 'index.html')
         
         @app.route('/api/test-cases', methods=['GET'])
         def get_test_cases():
@@ -1789,20 +1272,18 @@ class MarketVisualizerServer:
             
             self.logger.info(f"获取测试用例列表: symbol={symbol}, algorithm={algorithm}, status={status}")
             
-            cases = self.db.get_test_cases(
-                symbol=symbol,
-                algorithm=algorithm,
-                status=status,
+            cases = self.db.list_visualizer_cases(
+                filters={'symbol': symbol, 'algorithm': algorithm, 'status': status} if any([symbol, algorithm, status]) else None,
                 limit=limit,
                 offset=offset
             )
             
-            total = self.db.count_test_cases(symbol=symbol, algorithm=algorithm, status=status)
+            total = self.db.count_visualizer_cases({'symbol': symbol, 'algorithm': algorithm, 'status': status} if any([symbol, algorithm, status]) else None)
             
             return jsonify({
                 'success': True,
                 'data': {
-                    'items': [case_to_dict(c) for c in cases],
+                    'items': [visualizer_case_to_dict(c) for c in cases],
                     'total': total,
                     'limit': limit,
                     'offset': offset
@@ -1813,14 +1294,14 @@ class MarketVisualizerServer:
         def get_test_case(test_case_id: str):
             self.logger.info(f"获取测试用例详情: {test_case_id}")
             
-            case = self.db.get_test_case(test_case_id)
+            case = self.db.get_visualizer_case(test_case_id)
             if case is None:
                 return jsonify({'success': False, 'error': '测试用例不存在'}), 404
             
-            result = self.db.get_test_result_by_case(test_case_id)
+            result = self.db.get_visualizer_result_by_case(test_case_id)
             
-            data = case_to_dict(case)
-            data['result'] = result_to_dict(result) if result else None
+            data = visualizer_case_to_dict(case)
+            data['result'] = visualizer_result_to_dict(result) if result else None
             
             return jsonify({'success': True, 'data': data})
         
@@ -1839,18 +1320,20 @@ class MarketVisualizerServer:
             if algorithm not in ALGORITHMS:
                 return jsonify({'success': False, 'error': f'不支持的算法: {algorithm}'}), 400
             
-            test_case = self.db.create_test_case(
+            case = MarketVisualizerCase(
+                case_id='',
                 name=data['name'],
                 symbol=data['symbol'],
                 interval=data.get('interval', '1d'),
                 start_date=data['start_date'],
                 end_date=data['end_date'],
                 algorithm=algorithm,
-                algorithm_config=data.get('algorithm_config', {}),
+                algorithm_config=json.dumps(data.get('algorithm_config', {})),
                 description=data.get('description', ''),
             )
+            case_id = self.db.create_visualizer_case(case)
             
-            self.logger.info(f"测试用例已创建: {test_case.id} - {test_case.name}")
+            self.logger.info(f"测试用例已创建: {case_id} - {case.name}")
             
             generate_files = {
                 'md': data.get('generate_md', False),
@@ -1860,13 +1343,26 @@ class MarketVisualizerServer:
             
             thread = threading.Thread(
                 target=self._execute_test_async,
-                args=(test_case.id, generate_files)
+                args=(case_id, generate_files)
             )
             thread.start()
             
+            case_dict = {
+                'case_id': case_id,
+                'name': case.name,
+                'symbol': case.symbol,
+                'interval': case.interval,
+                'start_date': case.start_date,
+                'end_date': case.end_date,
+                'algorithm': case.algorithm,
+                'algorithm_config': json.loads(case.algorithm_config) if case.algorithm_config else {},
+                'description': case.description,
+                'status': case.status,
+            }
+            
             return jsonify({
                 'success': True,
-                'data': case_to_dict(test_case),
+                'data': case_dict,
                 'message': '测试已开始执行'
             })
         
@@ -1874,11 +1370,11 @@ class MarketVisualizerServer:
         def re_run_test(test_case_id: str):
             self.logger.info(f"重新执行测试: {test_case_id}")
             
-            case = self.db.get_test_case(test_case_id)
+            case = self.db.get_visualizer_case(test_case_id)
             if case is None:
                 return jsonify({'success': False, 'error': '测试用例不存在'}), 404
             
-            self.db.update_test_case_status(test_case_id, 'pending')
+            self.db.update_visualizer_case_status(test_case_id, 'pending')
             
             thread = threading.Thread(
                 target=self._execute_test_async,
@@ -1895,11 +1391,11 @@ class MarketVisualizerServer:
         def delete_test_case(test_case_id: str):
             self.logger.info(f"删除测试用例: {test_case_id}")
             
-            case = self.db.get_test_case(test_case_id)
+            case = self.db.get_visualizer_case(test_case_id)
             if case is None:
                 return jsonify({'success': False, 'error': '测试用例不存在'}), 404
             
-            self.db.delete_test_case(test_case_id)
+            self.db.delete_visualizer_case(test_case_id)
             
             return jsonify({'success': True, 'message': '删除成功'})
         
@@ -1907,28 +1403,28 @@ class MarketVisualizerServer:
         def get_test_result(test_result_id: str):
             self.logger.info(f"获取测试结果: {test_result_id}")
             
-            result = self.db.get_test_result(test_result_id)
+            result = self.db.get_visualizer_result(test_result_id)
             if result is None:
                 return jsonify({'success': False, 'error': '测试结果不存在'}), 404
             
-            return jsonify({'success': True, 'data': result_to_dict(result)})
+            return jsonify({'success': True, 'data': visualizer_result_to_dict(result)})
         
         @app.route('/api/daily-statuses/<test_result_id>', methods=['GET'])
         def get_daily_statuses(test_result_id: str):
             self.logger.info(f"获取每日状态数据: {test_result_id}")
             
-            statuses = self.db.get_daily_statuses(test_result_id)
+            statuses = self.db.get_visualizer_details(test_result_id)
             
             return jsonify({
                 'success': True,
-                'data': [daily_status_to_dict(s) for s in statuses]
+                'data': [visualizer_detail_to_dict(s) for s in statuses]
             })
         
         @app.route('/api/statistics/<test_result_id>', methods=['GET'])
         def get_statistics(test_result_id: str):
             self.logger.info(f"获取统计信息: {test_result_id}")
             
-            stats = self.db.get_statistics(test_result_id)
+            stats = self.db.get_visualizer_statistics(test_result_id)
             
             return jsonify({'success': True, 'data': stats})
         
@@ -1992,19 +1488,20 @@ class MarketVisualizerServer:
                 
                 results = []
                 for tc_id in test_case_ids:
-                    case = self.db.get_test_case(tc_id)
+                    case = self.db.get_visualizer_case(tc_id)
                     if case is None:
                         continue
                     
-                    result = self.db.get_test_result_by_case(tc_id)
-                    stats = self.db.get_statistics(result.id) if result else None
-                    daily_statuses = self.db.get_daily_statuses(result.id) if result else []
+                    result = self.db.get_visualizer_result_by_case(tc_id)
+                    result_id = result.get('result_id') if result else None
+                    stats = self.db.get_visualizer_statistics(result_id) if result_id else None
+                    daily_statuses = self.db.get_visualizer_details(result_id) if result_id else []
                     
                     results.append({
-                        'test_case': case_to_dict(case),
-                        'result': result_to_dict(result) if result else None,
+                        'test_case': visualizer_case_to_dict(case),
+                        'result': visualizer_result_to_dict(result) if result else None,
                         'statistics': stats,
-                        'daily_statuses': [daily_status_to_dict(s) for s in daily_statuses],
+                        'daily_statuses': [visualizer_detail_to_dict(s) for s in daily_statuses],
                     })
                 
                 return jsonify({'success': True, 'data': results})
@@ -2021,9 +1518,9 @@ class MarketVisualizerServer:
         
         try:
             self.logger.info(f"[{test_case_id}] 开始执行测试")
-            self.db.update_test_case_status(test_case_id, 'running')
+            self.db.update_visualizer_case_status(test_case_id, 'running')
             
-            case = self.db.get_test_case(test_case_id)
+            case = self.db.get_visualizer_case(test_case_id)
             if case is None:
                 self.logger.error(f"[{test_case_id}] 测试用例不存在")
                 return
@@ -2037,31 +1534,31 @@ class MarketVisualizerServer:
                 loop = asyncio.new_event_loop()
                 asyncio.set_event_loop(loop)
                 
-                start_ts = int(datetime.strptime(case.start_date, '%Y-%m-%d').timestamp() * 1000)
-                end_ts = int(datetime.strptime(case.end_date, '%Y-%m-%d').timestamp() * 1000) + 86400000 - 1
+                start_ts = int(datetime.strptime(case['start_date'], '%Y-%m-%d').timestamp() * 1000)
+                end_ts = int(datetime.strptime(case['end_date'], '%Y-%m-%d').timestamp() * 1000) + 86400000 - 1
                 
                 klines = loop.run_until_complete(fetcher.fetch_and_cache(
-                    symbol=case.symbol,
-                    interval=case.interval,
+                    symbol=case['symbol'],
+                    interval=case['interval'],
                     start_time=start_ts,
                     end_time=end_ts
                 ))
                 loop.close()
             except Exception as e:
                 self.logger.error(f"[{test_case_id}] 获取K线数据异常: {e}")
-                self.db.update_test_case_status(test_case_id, 'failed')
+                self.db.update_visualizer_case_status(test_case_id, 'failed')
                 return
             
             if not klines:
                 self.logger.error(f"[{test_case_id}] 获取K线数据失败或数据为空")
-                self.db.update_test_case_status(test_case_id, 'failed')
+                self.db.update_visualizer_case_status(test_case_id, 'failed')
                 return
             
             self.logger.info(f"[{test_case_id}] 获取到 {len(klines)} 条K线数据")
             
-            self.logger.info(f"[{test_case_id}] 开始运行算法: {case.algorithm}")
-            config = case.algorithm_config or {}
-            runner = AlgorithmRunner(case.algorithm, config)
+            self.logger.info(f"[{test_case_id}] 开始运行算法: {case['algorithm']}")
+            config = case.get('algorithm_config', {}) or {}
+            runner = AlgorithmRunner(case['algorithm'], config)
             
             daily_results = runner.run(klines)
             self.logger.info(f"[{test_case_id}] 算法运行完成, 得到 {len(daily_results)} 条每日状态")
@@ -2075,7 +1572,7 @@ class MarketVisualizerServer:
             self.logger.info(f"[{test_case_id}] 整合得到 {len(status_ranges)} 个状态区间")
             
             daily_statuses = []
-            ranging_days = trending_up_days = trending_down_days = 0
+            ranging_intervals = trending_up_intervals = trending_down_intervals = 0
             ranging_count = trending_up_count = trending_down_count = 0
             
             for dr in daily_results:
@@ -2092,11 +1589,11 @@ class MarketVisualizerServer:
                 })
                 
                 if dr.status.value == 'ranging':
-                    ranging_days += 1
+                    ranging_intervals += 1
                 elif dr.status.value == 'trending_up':
-                    trending_up_days += 1
+                    trending_up_intervals += 1
                 else:
-                    trending_down_days += 1
+                    trending_down_intervals += 1
             
             for sr in status_ranges:
                 if sr['status'] == 'ranging':
@@ -2108,20 +1605,22 @@ class MarketVisualizerServer:
             
             duration_ms = int((time.time() - start_time) * 1000)
             
-            test_result = self.db.create_test_result(
-                test_case_id=test_case_id,
-                total_days=len(daily_results),
-                ranging_days=ranging_days,
-                trending_up_days=trending_up_days,
-                trending_down_days=trending_down_days,
+            result = MarketVisualizerResult(
+                result_id='',
+                case_id=test_case_id,
+                total_intervals=len(daily_results),
+                ranging_intervals=ranging_intervals,
+                trending_up_intervals=trending_up_intervals,
+                trending_down_intervals=trending_down_intervals,
                 ranging_count=ranging_count,
                 trending_up_count=trending_up_count,
                 trending_down_count=trending_down_count,
-                status_ranges=status_ranges,
+                status_ranges=json.dumps(status_ranges),
                 duration_ms=duration_ms,
             )
+            result_id = self.db.create_visualizer_result(result)
             
-            self.db.create_daily_statuses(test_result.id, daily_statuses)
+            self.db.create_visualizer_details(result_id, daily_statuses)
             
             self.logger.info(f"[{test_case_id}] 生成输出文件...")
             try:
@@ -2141,16 +1640,16 @@ class MarketVisualizerServer:
                     viz_ranges.append(viz_r)
                 
                 statistics = {
-                    'total_days': len(daily_results),
-                    'status_days': {
-                        MarketStatus.RANGING: ranging_days,
-                        MarketStatus.TRENDING_UP: trending_up_days,
-                        MarketStatus.TRENDING_DOWN: trending_down_days,
+                    'total_intervals': len(daily_results),
+                    'status_intervals': {
+                        MarketStatus.RANGING: ranging_intervals,
+                        MarketStatus.TRENDING_UP: trending_up_intervals,
+                        MarketStatus.TRENDING_DOWN: trending_down_intervals,
                     },
                     'status_percent': {
-                        MarketStatus.RANGING: round(ranging_days / len(daily_results) * 100, 1) if daily_results else 0,
-                        MarketStatus.TRENDING_UP: round(trending_up_days / len(daily_results) * 100, 1) if daily_results else 0,
-                        MarketStatus.TRENDING_DOWN: round(trending_down_days / len(daily_results) * 100, 1) if daily_results else 0,
+                        MarketStatus.RANGING: round(ranging_intervals / len(daily_results) * 100, 1) if daily_results else 0,
+                        MarketStatus.TRENDING_UP: round(trending_up_intervals / len(daily_results) * 100, 1) if daily_results else 0,
+                        MarketStatus.TRENDING_DOWN: round(trending_down_intervals / len(daily_results) * 100, 1) if daily_results else 0,
                     },
                     'status_counts': {
                         MarketStatus.RANGING: ranging_count,
@@ -2159,18 +1658,18 @@ class MarketVisualizerServer:
                     },
                 }
                 
-                date_range_str = f"{case.start_date.replace('-', '')}-{case.end_date.replace('-', '')}"
+                date_range_str = f"{case['start_date'].replace('-', '')}-{case['end_date'].replace('-', '')}"
                 
-                existing_files = [f for f in os.listdir(self.output_dir) if f.startswith(f"market_visualizer_{case.symbol}_{case.interval}_{date_range_str}_{case.algorithm}")]
+                existing_files = [f for f in os.listdir(self.output_dir) if f.startswith(f"market_visualizer_{case['symbol']}_{case['interval']}_{date_range_str}_{case['algorithm']}")]
                 seq = len([f for f in existing_files if f.endswith('.md')]) + 1
                 
                 if generate_files.get('md', False):
                     report_gen = ReportGenerator(self.output_dir)
                     report_path = report_gen.generate(
-                        symbol=case.symbol,
-                        interval=case.interval,
+                        symbol=case['symbol'],
+                        interval=case['interval'],
                         date_range=date_range_str,
-                        algorithm=case.algorithm,
+                        algorithm=case['algorithm'],
                         algorithm_config=config,
                         daily_statuses=viz_daily_statuses,
                         ranges=viz_ranges,
@@ -2201,10 +1700,10 @@ class MarketVisualizerServer:
                             df=df,
                             daily_statuses=viz_daily_statuses,
                             ranges=viz_ranges,
-                            symbol=case.symbol,
-                            interval=case.interval,
+                            symbol=case['symbol'],
+                            interval=case['interval'],
                             date_range=date_range_str,
-                            algorithm=case.algorithm,
+                            algorithm=case['algorithm'],
                             seq=seq,
                         )
                         self.logger.info(f"[{test_case_id}] PNG图表已生成: {chart_path}")
@@ -2230,14 +1729,14 @@ class MarketVisualizerServer:
                 import traceback
                 traceback.print_exc()
             
-            self.db.update_test_case_status(test_case_id, 'completed')
+            self.db.update_visualizer_case_status(test_case_id, 'completed')
             self.logger.info(f"[{test_case_id}] 测试完成")
             
         except Exception as e:
             print(f"执行测试失败: {e}")
             import traceback
             traceback.print_exc()
-            self.db.update_test_case_status(test_case_id, 'failed')
+            self.db.update_visualizer_case_status(test_case_id, 'failed')
     
     def run(self):
         """启动服务器"""
@@ -2256,21 +1755,11 @@ def main():
     parser.add_argument('--date-range', help='时间范围 (格式: yyyymmdd-yyyymmdd)')
     parser.add_argument('--interval', default='1d', help='K线周期 (默认: 1d)')
     parser.add_argument('--algorithm', default='dual_thrust', 
-                        choices=['dual_thrust', 'improved', 'always_ranging'],
+                        choices=['dual_thrust', 'improved', 'always_ranging', 'composite', 'adx', 'realtime'],
                         help='行情判断算法')
+    parser.add_argument('--algorithm-params', type=str, default=None, help='算法参数 (JSON格式)')
     parser.add_argument('--output-dir', default='out/market_visualizer', help='输出目录')
-    
-    parser.add_argument('--generate-md', action='store_true', help='生成MD报告文件')
-    parser.add_argument('--generate-png', action='store_true', help='生成PNG图表文件')
-    parser.add_argument('--generate-html', action='store_true', help='生成HTML可视化文件')
     parser.add_argument('--generate-all', action='store_true', help='生成所有文件(MD+PNG+HTML)')
-    
-    parser.add_argument('--n-days', type=int, help='Dual Thrust 参数: 回看天数')
-    parser.add_argument('--k1', type=float, help='Dual Thrust 参数: 上轨系数')
-    parser.add_argument('--k2', type=float, help='Dual Thrust 参数: 下轨系数')
-    parser.add_argument('--k2-down-factor', type=float, help='Dual Thrust 参数: 下跌敏感系数')
-    parser.add_argument('--down-confirm-days', type=int, help='Dual Thrust 参数: 下跌确认天数')
-    parser.add_argument('--cooldown-days', type=int, help='Dual Thrust 参数: 状态切换冷却期')
     
     args = parser.parse_args()
     
@@ -2280,7 +1769,6 @@ def main():
     else:
         if not args.date_range:
             parser.error("命令行模式需要指定 --date-range 参数")
-        
         visualizer = MarketStatusVisualizer(args)
         asyncio.run(visualizer.run())
 
