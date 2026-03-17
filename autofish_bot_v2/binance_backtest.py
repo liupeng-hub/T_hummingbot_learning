@@ -1,12 +1,13 @@
+#!/usr/bin/env python3
 """
-Autofish V1 Binance 回测模块
+行情感知回测模块
 
-使用历史 K 线数据进行策略回测
+将行情分析与回测结合，根据市场状态动态控制交易：
+- 震荡行情：正常进行链式挂单交易
+- 趋势行情：平仓所有订单，停止交易
 
 运行方式：
-    cd hummingbot_learning
-    source autofish_bot/venv/bin/activate
-    python3 -m autofish_bot.binance_backtest --symbol BTCUSDT
+    python binance_backtest.py --symbol BTCUSDT --date-range 20200101-20260310
 """
 
 import asyncio
@@ -14,9 +15,10 @@ import json
 import logging
 import os
 import argparse
+from dataclasses import dataclass, field
+from datetime import datetime, date
 from decimal import Decimal
 from typing import List, Optional, Dict, Any
-from datetime import datetime
 import aiohttp
 from dotenv import load_dotenv
 
@@ -26,6 +28,17 @@ from autofish_core import (
     Autofish_WeightCalculator,
     Autofish_OrderCalculator,
     Autofish_AmplitudeConfig,
+)
+from market_status_detector import (
+    MarketStatus,
+    MarketStatusDetector,
+    RealTimeStatusAlgorithm,
+    AlwaysRangingAlgorithm,
+    ImprovedStatusAlgorithm,
+    DualThrustAlgorithm,
+    ADXAlgorithm,
+    CompositeAlgorithm,
+    StatusAlgorithm,
 )
 
 
@@ -39,11 +52,13 @@ LOG_FILE = os.path.join(LOG_DIR, "binance_backtest.log")
 HTTP_PROXY = os.getenv("HTTP_PROXY", "")
 HTTPS_PROXY = os.getenv("HTTPS_PROXY", "")
 
+
 class FlushFileHandler(logging.FileHandler):
     """每次写入后自动刷新的 FileHandler"""
     def emit(self, record):
         super().emit(record)
         self.flush()
+
 
 file_handler = FlushFileHandler(LOG_FILE, mode='a', encoding='utf-8')
 file_handler.setLevel(logging.INFO)
@@ -89,7 +104,7 @@ class BacktestEngine:
     def __init__(self, config: dict):
         self.config = config
         self.interval = None
-        self.days = None  # 回测天数
+        self.days = None
         
         self.a1_timeout_minutes = config.get('a1_timeout_minutes', 10)
         
@@ -103,11 +118,11 @@ class BacktestEngine:
             "total_loss": Decimal("0"),
             "trades": [],
             "simultaneous_triggers": 0,
-            "first_price": None,      # 第一根 K 线价格
-            "last_price": None,       # 最后一根 K 线价格
-            "trade_returns": [],      # 每笔交易的收益率列表
-            "max_profit": Decimal("0"),   # 最大单笔盈利
-            "max_loss": Decimal("0"),     # 最大单笔亏损
+            "first_price": None,
+            "last_price": None,
+            "trade_returns": [],
+            "max_profit": Decimal("0"),
+            "max_loss": Decimal("0"),
         }
         self.kline_count = 0
         self.start_time = None
@@ -145,12 +160,14 @@ class BacktestEngine:
         stop_loss = self.config.get("stop_loss", Decimal("0.08"))
         total_amount = self.config.get("total_amount_quote", Decimal("1200"))
         
-        # 从配置创建入场价格策略
         strategy_config = self.config.get("entry_price_strategy", {"name": "fixed"})
-        strategy = EntryPriceStrategyFactory.create(
-            strategy_config.get("name", "fixed"),
-            **strategy_config.get("params", {})
-        )
+        if "strategy" in strategy_config:
+            strategy_name = strategy_config.get("strategy", "fixed")
+            strategy_params = strategy_config.get(strategy_name, {})
+        else:
+            strategy_name = strategy_config.get("name", "fixed")
+            strategy_params = strategy_config.get("params", {})
+        strategy = EntryPriceStrategyFactory.create(strategy_name, **strategy_params)
         
         order_calculator = Autofish_OrderCalculator(
             grid_spacing=grid_spacing,
@@ -164,7 +181,6 @@ class BacktestEngine:
             weight = weights[level]
             stake_amount = total_amount * weight
             
-            # 使用策略计算入场价格（仅 A1 使用策略）
             if level == 1:
                 entry_price = strategy.calculate_entry_price(
                     current_price=base_price,
@@ -197,7 +213,6 @@ class BacktestEngine:
             
             return order
         
-        # fallback: 使用默认权重
         weights_list = [Decimal(str(w)) for w in self.config.get("weights", [])]
         max_entries = self.config.get('max_entries', 4)
         return order_calculator.create_order(
@@ -324,12 +339,10 @@ class BacktestEngine:
         order.close_price = close_price
         order.profit = Autofish_OrderCalculator(leverage=leverage).calculate_profit(order, close_price)
         
-        # 计算并记录交易收益率
         if order.stake_amount and order.stake_amount > 0:
             trade_return = order.profit / order.stake_amount
             self.results["trade_returns"].append(trade_return)
         
-        # 更新最大盈亏
         if order.profit > self.results["max_profit"]:
             self.results["max_profit"] = order.profit
         if order.profit < self.results["max_loss"]:
@@ -436,7 +449,6 @@ class BacktestEngine:
         
         fetcher = KlineFetcher()
         
-        # 1. 请求 binance_kline_fetcher 准备数据
         success = await fetcher.ensure_klines(
             symbol=symbol,
             interval=interval,
@@ -453,7 +465,6 @@ class BacktestEngine:
             print(f"   python binance_kline_fetcher.py --symbol {symbol} --interval {interval}")
             return []
         
-        # 2. 从 DB 获取数据
         actual_start, actual_end = fetcher.get_time_range()
         klines = fetcher.query_cache(symbol, interval, actual_start, actual_end)
         
@@ -486,7 +497,7 @@ class BacktestEngine:
             auto_fetch: 是否自动获取缺失数据
         """
         self.interval = interval
-        self.days = days  # 保存回测天数
+        self.days = days
         logger.info("=" * 60)
         logger.info("Autofish V1 回测开始")
         logger.info("=" * 60)
@@ -522,7 +533,6 @@ class BacktestEngine:
         self.start_time = datetime.fromtimestamp(klines[0]["timestamp"] / 1000)
         self.end_time = datetime.fromtimestamp(klines[-1]["timestamp"] / 1000)
         
-        # 记录首尾价格（用于计算标的涨跌幅）
         self.results["first_price"] = Decimal(klines[0]["open"])
         self.results["last_price"] = Decimal(klines[-1]["close"])
         
@@ -585,27 +595,23 @@ class BacktestEngine:
         返回:
             包含各项指标的字典
         """
-        # 标的涨跌幅
         if self.results["first_price"] and self.results["last_price"]:
             price_change = (self.results["last_price"] - self.results["first_price"]) / self.results["first_price"] * 100
         else:
             price_change = Decimal("0")
         
-        # 盈亏比
         if self.results["loss_trades"] > 0 and self.results["win_trades"] > 0:
             avg_profit = self.results["total_profit"] / self.results["win_trades"]
             avg_loss = self.results["total_loss"] / self.results["loss_trades"]
             profit_loss_ratio = avg_profit / avg_loss
         else:
-            profit_loss_ratio = None  # 无亏损或无盈利
+            profit_loss_ratio = None
         
-        # 夏普比率
         if len(self.results["trade_returns"]) >= 2:
             returns = [float(r) for r in self.results["trade_returns"]]
             avg_return = sum(returns) / len(returns)
             variance = sum((r - avg_return) ** 2 for r in returns) / len(returns)
             std_dev = variance ** 0.5
-            # 当标准差接近 0 时（所有收益相同），夏普比率无意义
             if std_dev < 1e-10:
                 sharpe_ratio = Decimal("0")
             else:
@@ -619,239 +625,579 @@ class BacktestEngine:
             "sharpe_ratio": sharpe_ratio,
         }
     
-    def save_report(self, symbol: str, days: int = None, date_range: str = None):
-        """保存回测报告到 Markdown 文件
-        
-        生成包含以下内容的报告：
-        1. 回测区间信息
-        2. 振幅配置参数
-        3. 回测结果统计
-        4. 交易明细
-        
-        参数:
-            symbol: 交易对
-            days: 回测天数（可选，用于文件名）
-            date_range: 时间范围字符串（可选，用于文件名，格式: yyyymmdd-yyyymmdd）
-        """
-        import os
-        
-        output_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "out/autofish")
-        os.makedirs(output_dir, exist_ok=True)
-        
-        if date_range:
-            filepath = os.path.join(output_dir, f"binance_{symbol}_backtest_report_{date_range}.md")
-        elif days:
-            filepath = os.path.join(output_dir, f"binance_{symbol}_backtest_report_{days}d.md")
-        else:
-            filepath = os.path.join(output_dir, f"binance_{symbol}_backtest_report.md")
-        
-        net_profit = self.results["total_profit"] - self.results["total_loss"]
-        win_rate = (self.results["win_trades"] / self.results["total_trades"] * 100 
-                   if self.results["total_trades"] > 0 else 0)
-        
-        lines = []
-        lines.append(f"# Autofish V2 回测报告 (Binance: {symbol})")
-        lines.append(f"")
-        lines.append(f"**回测时间**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-        lines.append(f"")
-        
-        lines.append(f"## 回测区间")
-        lines.append(f"")
-        lines.append(f"| 项目 | 值 |")
-        lines.append(f"|------|-----|")
-        lines.append(f"| 交易对 | {symbol} |")
-        lines.append(f"| K线周期 | {self.interval} |")
-        lines.append(f"| 开始时间 | {self.start_time.strftime('%Y-%m-%d %H:%M') if self.start_time else '-'} |")
-        lines.append(f"| 结束时间 | {self.end_time.strftime('%Y-%m-%d %H:%M') if self.end_time else '-'} |")
-        lines.append(f"| K线数量 | {self.kline_count} |")
-        lines.append(f"")
-        
-        lines.append(f"## 振幅配置参数")
-        lines.append(f"")
-        weights_list = self.config.get("weights", [])
-        if weights_list:
-            weights_dict = {i+1: w for i, w in enumerate(weights_list)}
-            valid_amplitudes = self.config.get("valid_amplitudes", [])
-            total_expected_return = self.config.get("total_expected_return", 0)
-            
-            lines.append(f"| 参数 | 值 | 说明 |")
-            lines.append(f"|------|-----|------|")
-            lines.append(f"| 杠杆 | {self.config.get('leverage', 10)}x | - |")
-            lines.append(f"| 总投入 | {self.config.get('total_amount_quote', 1200)} USDT | - |")
-            lines.append(f"| 网格间距 | {float(self.config.get('grid_spacing', 0.01))*100:.1f}% | 入场价 = 基准价 × (1 - 网格间距) |")
-            lines.append(f"| 止盈比例 | {float(self.config.get('exit_profit', 0.01))*100:.1f}% | 止盈价 = 入场价 × (1 + 止盈比例) |")
-            lines.append(f"| 止损比例 | {float(self.config.get('stop_loss', 0.08))*100:.1f}% | 止损价 = 入场价 × (1 - 止损比例) |")
-            lines.append(f"| 衰减因子 | {self.config.get('decay_factor', 0.5)} | 权重计算参数 |")
-            lines.append(f"| 最大层级 | {self.config.get('max_entries', 4)} | 最多挂单层数 |")
-            lines.append(f"| 有效振幅 | {valid_amplitudes} | 正收益区间 |")
-            weight_items = [f"A{k}: {v*100:.2f}%" for k, v in sorted(weights_dict.items())]
-            weight_lines = []
-            for i in range(0, len(weight_items), 3):
-                weight_lines.append(", ".join(weight_items[i:i+3]))
-            lines.append(f"| 权重 | {'<br>'.join(weight_lines)} | 各层级资金分配比例 |")
-            lines.append(f"| 总预期收益 | {float(total_expected_return)*100:.2f}% | 振幅分析预期 |")
-        else:
-            lines.append(f"未使用振幅配置，使用默认参数")
-        lines.append(f"")
-        
-        lines.append(f"## 回测结果")
-        lines.append(f"")
-        lines.append(f"| 指标 | 值 |")
-        lines.append(f"|------|-----|")
-        lines.append(f"| 总交易次数 | {self.results['total_trades']} |")
-        lines.append(f"| 盈利次数 | {self.results['win_trades']} |")
-        lines.append(f"| 亏损次数 | {self.results['loss_trades']} |")
-        lines.append(f"| 胜率 | {win_rate:.2f}% |")
-        lines.append(f"| 总盈利 | {float(self.results['total_profit']):.2f} USDT |")
-        lines.append(f"| 总亏损 | {float(self.results['total_loss']):.2f} USDT |")
-        lines.append(f"| 净收益 | {float(net_profit):.2f} USDT |")
-        if self.config.get('total_amount_quote'):
-            roi = float(net_profit) / float(self.config.get('total_amount_quote', 1200)) * 100
-            lines.append(f"| 收益率 | {roi:.2f}% | 净收益 / 总投入 |")
-        
-        if self.results.get('simultaneous_triggers', 0) > 0:
-            lines.append(f"| 同时触及止盈止损 | {self.results['simultaneous_triggers']} 次 | K线同时触及止盈止损，根据K线形态判断 |")
-        lines.append(f"")
-        
-        # 计算指标
-        metrics = self.calculate_metrics()
-        
-        # 对比分析
-        lines.append(f"## 对比分析")
-        lines.append(f"")
-        lines.append(f"| 指标 | 值 | 说明 |")
-        lines.append(f"|------|-----|------|")
-        
-        price_change = float(metrics["price_change"])
-        roi = float(net_profit) / float(self.config.get('total_amount_quote', 1200)) * 100
-        excess_return = roi - price_change
-        
-        lines.append(f"| 标的涨跌幅 | {price_change:.2f}% | 同期 {symbol} 涨跌 |")
-        lines.append(f"| 策略收益率 | {roi:.2f}% | 策略净收益率 |")
-        lines.append(f"| 超额收益 | {excess_return:.2f}% | 策略收益 - 标的涨跌 |")
-        lines.append(f"")
-        
-        # 风险指标
-        lines.append(f"## 风险指标")
-        lines.append(f"")
-        lines.append(f"| 指标 | 值 | 说明 |")
-        lines.append(f"|------|-----|------|")
-        
-        plr = f"{float(metrics['profit_loss_ratio']):.2f}" if metrics['profit_loss_ratio'] else "N/A"
-        sharpe = float(metrics["sharpe_ratio"])
-        
-        lines.append(f"| 盈亏比 | {plr} | 平均盈利 / 平均亏损 |")
-        lines.append(f"| 夏普比率 | {sharpe:.2f} | 风险调整后收益 |")
-        lines.append(f"| 最大单笔盈利 | {float(self.results['max_profit']):.2f} USDT | - |")
-        lines.append(f"| 最大单笔亏损 | {float(self.results['max_loss']):.2f} USDT | - |")
-        lines.append(f"")
-        
-        if self.results['trades']:
-            lines.append(f"## 交易明细")
-            lines.append(f"")
-            lines.append(f"| 层级 | 入场价 | 出场价 | 类型 | 盈亏 |")
-            lines.append(f"|------|--------|--------|------|------|")
-            for trade in self.results['trades'][-50:]:
-                lines.append(f"| A{trade['level']} | {trade['entry_price']:.2f} | {trade['close_price']:.2f} | {trade['reason']} | {float(trade['profit']):.2f} USDT |")
-            if len(self.results['trades']) > 50:
-                lines.append(f"| ... | ... | ... | ... | ... |")
-                lines.append(f"*共 {len(self.results['trades'])} 笔交易，仅显示最近 50 笔*")
-            lines.append(f"")
-        
-        with open(filepath, 'w', encoding='utf-8') as f:
-            f.write('\n'.join(lines))
-        
-        logger.info(f"[保存报告] 成功保存到: {filepath}")
-        print(f"\n📄 回测报告已保存: {filepath}")
+    def get_closed_orders(self) -> List[Dict]:
+        """获取已平仓订单"""
+        return self.closed_orders
+
+
+@dataclass
+class MarketStatusEvent:
+    """行情状态事件"""
+    timestamp: int
+    time: datetime
+    status: MarketStatus
+    confidence: float
+    reason: str
+    action: str
+    price: Decimal
     
-    def save_history(self, symbol: str, days: int = None, date_range: str = None):
-        """保存回测历史记录
+    def to_dict(self) -> Dict:
+        return {
+            'timestamp': self.timestamp,
+            'time': self.time.strftime('%Y-%m-%d %H:%M'),
+            'status': self.status.value,
+            'confidence': self.confidence,
+            'reason': self.reason,
+            'action': self.action,
+            'price': float(self.price),
+        }
+
+
+@dataclass
+class TradingPeriod:
+    """交易时段"""
+    start_time: datetime
+    end_time: datetime
+    status: MarketStatus
+    trades: int = 0
+    profit: Decimal = Decimal("0")
+    
+    def to_dict(self) -> Dict:
+        return {
+            'start_time': self.start_time.strftime('%Y-%m-%d %H:%M'),
+            'end_time': self.end_time.strftime('%Y-%m-%d %H:%M'),
+            'status': self.status.value,
+            'trades': self.trades,
+            'profit': float(self.profit),
+        }
+
+
+class MarketAwareBacktestEngine(BacktestEngine):
+    """行情感知回测引擎
+    
+    继承自 BacktestEngine，添加行情感知能力：
+    - 震荡行情：正常交易
+    - 趋势行情：平仓停止
+    
+    Attributes:
+        market: 行情算法配置
+        market_detector: 行情判断器
+        trading_enabled: 是否允许交易
+        current_market_status: 当前行情状态
+        market_status_events: 行情状态变化事件列表
+        daily_klines_cache: 1d K线缓存
+    """
+    
+    ALGORITHMS = {
+        'realtime': RealTimeStatusAlgorithm,
+        'always_ranging': AlwaysRangingAlgorithm,
+        'improved': ImprovedStatusAlgorithm,
+        'dual_thrust': DualThrustAlgorithm,
+        'adx': ADXAlgorithm,
+        'composite': CompositeAlgorithm,
+    }
+    
+    def __init__(
+        self,
+        amplitude: Dict,
+        market: Dict,
+        entry: Dict,
+        timeout: Dict,
+    ):
+        config = amplitude.copy()
+        config['a1_timeout_minutes'] = timeout.get('a1_timeout_minutes', 0)
         
-        追加记录每次回测的关键指标，方便对比不同回测结果
+        if entry:
+            config['entry_price_strategy'] = entry
         
-        参数:
-            symbol: 交易对
-            days: 回测天数（可选）
-            date_range: 时间范围字符串（可选，格式: yyyymmdd-yyyymmdd）
+        super().__init__(config)
+        
+        self.market = market or {}
+        self.trading_statuses = market.get('trading_statuses', ['ranging']) if market else ['ranging']
+        
+        algorithm = self._create_algorithm()
+        self.market_detector = MarketStatusDetector(algorithm=algorithm)
+        
+        self.trading_enabled = True
+        self.current_market_status = MarketStatus.UNKNOWN
+        self.market_status_events: List[MarketStatusEvent] = []
+        self.trading_periods: List[TradingPeriod] = []
+        self._current_trading_period: Optional[TradingPeriod] = None
+        
+        self.daily_klines_cache: List[Dict] = []
+        self._last_check_date: Optional[date] = None
+        
+        self.results['market_status_events'] = []
+        self.results['trading_periods'] = []
+        self.results['total_trading_minutes'] = 0
+        self.results['total_stopped_minutes'] = 0
+        self.results['market_statistics'] = {}
+        
+    def _create_algorithm(self) -> StatusAlgorithm:
+        """创建行情判断算法"""
+        algo_name = self.market.get('algorithm', 'always_ranging')
+        algo_params = self.market.get(algo_name, {})
+        
+        algo_class = self.ALGORITHMS.get(algo_name)
+        if algo_class:
+            return algo_class(algo_params if algo_params else None)
+        
+        logger.warning(f"未找到算法 {algo_name}，使用默认 AlwaysRangingAlgorithm")
+        return AlwaysRangingAlgorithm()
+    
+    async def _fetch_multi_interval_klines(
+        self, 
+        symbol: str, 
+        interval: str, 
+        limit: int = 1000,
+        days: int = None,
+        start_time: int = None, 
+        end_time: int = None,
+        auto_fetch: bool = True
+    ) -> tuple:
+        """获取多周期 K线数据
+        
+        返回:
+            (1m_klines, 1d_klines)
         """
-        import os
+        from binance_kline_fetcher import KlineFetcher
         
-        output_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "autofish_output")
-        os.makedirs(output_dir, exist_ok=True)
+        fetcher = KlineFetcher()
         
-        filepath = os.path.join(output_dir, f"binance_{symbol}_backtest_history.md")
-        
-        # 计算指标
-        metrics = self.calculate_metrics()
-        net_profit = self.results["total_profit"] - self.results["total_loss"]
-        roi = float(net_profit) / float(self.config.get('total_amount_quote', 1200)) * 100
-        win_rate = (self.results["win_trades"] / self.results["total_trades"] * 100 
-                   if self.results["total_trades"] > 0 else 0)
-        
-        # 超额收益
-        price_change = float(metrics["price_change"])
-        excess_return = roi - price_change
-        
-        # 盈亏比显示
-        plr = f"{float(metrics['profit_loss_ratio']):.2f}" if metrics['profit_loss_ratio'] else "N/A"
-        sharpe = float(metrics["sharpe_ratio"])
-        
-        # 检查文件是否存在
-        if not os.path.exists(filepath):
-            # 创建新文件，写入表头
-            header = [
-                f"# {symbol} 回测历史记录",
-                "",
-                "| 回测时间 | 日期范围 | 天数 | 交易次数 | 胜率 | 收益率 | 标的涨跌 | 超额收益 | 盈亏比 | 夏普比率 |",
-                "|----------|----------|------|----------|------|--------|----------|----------|--------|----------|",
-            ]
-            with open(filepath, 'w', encoding='utf-8') as f:
-                f.write('\n'.join(header) + '\n')
-        
-        # 追加数据行
-        date_range_str = f"{self.start_time.strftime('%Y-%m-%d')} ~ {self.end_time.strftime('%Y-%m-%d')}" if self.start_time and self.end_time else "-"
-        
-        # 计算天数（根据实际回测时间范围）
-        if self.start_time and self.end_time:
-            calculated_days = (self.end_time - self.start_time).days + 1
-        else:
-            calculated_days = days if days else None
-        
-        days_str = str(calculated_days)
-        
-        row = (
-            f"| {datetime.now().strftime('%Y-%m-%d %H:%M')} | {date_range_str} | {days_str} | "
-            f"{self.results['total_trades']} | {win_rate:.1f}% | {roi:.2f}% | "
-            f"{price_change:.2f}% | {excess_return:.2f}% | {plr} | "
-            f"{sharpe:.2f} |"
+        success = await fetcher.ensure_klines(
+            symbol=symbol,
+            interval=interval,
+            start_time=start_time,
+            end_time=end_time,
+            days=days,
+            auto_fetch=auto_fetch
         )
         
-        with open(filepath, 'a', encoding='utf-8') as f:
-            f.write(row + '\n')
+        if not success:
+            logger.error("获取 1m K线数据失败")
+            return [], []
         
-        print(f"📊 历史记录已追加: {filepath}")
+        actual_start, actual_end = fetcher.get_time_range()
+        klines_1m = fetcher.query_cache(symbol, interval, actual_start, actual_end)
+        
+        market_interval = self.market.get('interval', '1d')
+        
+        market_start = actual_start - (self.market.get('min_market_klines', 20) * 86400000)
+        
+        success = await fetcher.ensure_klines(
+            symbol=symbol,
+            interval=market_interval,
+            start_time=market_start,
+            end_time=actual_end,
+            auto_fetch=auto_fetch
+        )
+        
+        if success:
+            klines_1d = fetcher.query_cache(symbol, market_interval, market_start, actual_end)
+        else:
+            logger.warning("获取 1d K线数据失败，将使用 1m K线聚合")
+            klines_1d = []
+        
+        logger.info(f"[多周期数据] 1m K线: {len(klines_1m)} 条, 1d K线: {len(klines_1d)} 条")
+        
+        return klines_1m, klines_1d
+    
+    def _check_market_status(self, kline_1m: dict) -> MarketStatus:
+        """检查行情状态
+        
+        每天第一根 1m K线时更新行情判断
+        """
+        current_ts = kline_1m['timestamp']
+        current_date = datetime.fromtimestamp(current_ts / 1000).date()
+        
+        if self._last_check_date == current_date:
+            return self.current_market_status
+        
+        self._last_check_date = current_date
+        
+        market_klines = self._get_market_klines_before(current_ts)
+        
+        min_klines = self.market.get('min_market_klines', 20)
+        if len(market_klines) < min_klines:
+            logger.warning(f"[行情判断] K线数据不足: {len(market_klines)} < {min_klines}")
+            return self.current_market_status
+        
+        result = self.market_detector.algorithm.calculate(market_klines, self.market)
+        
+        logger.info(f"[行情判断] {current_date}: {result.status.value}, 置信度={result.confidence:.2f}, 原因={result.reason}")
+        
+        return result.status
+    
+    def _get_market_klines_before(self, timestamp: int) -> List[Dict]:
+        """获取指定时间之前的 1d K线"""
+        return [k for k in self.daily_klines_cache if k['timestamp'] < timestamp]
+    
+    def _on_market_status_change(
+        self, 
+        old_status: MarketStatus, 
+        new_status: MarketStatus, 
+        kline: dict,
+        confidence: float = 0.0,
+        reason: str = ''
+    ):
+        """处理行情状态变化"""
+        price = Decimal(str(kline['close']))
+        timestamp = kline['timestamp']
+        time = datetime.fromtimestamp(timestamp / 1000)
+        
+        is_trending = new_status in [MarketStatus.TRENDING_UP, MarketStatus.TRENDING_DOWN]
+        was_trending = old_status in [MarketStatus.TRENDING_UP, MarketStatus.TRENDING_DOWN]
+        
+        is_trading_status = new_status in [MarketStatus.RANGING, MarketStatus.TRENDING_UP]
+        was_trading_status = old_status in [MarketStatus.RANGING, MarketStatus.TRENDING_UP]
+        
+        action = 'continue'
+        
+        if new_status == MarketStatus.TRENDING_DOWN and not old_status == MarketStatus.TRENDING_DOWN:
+            if self.trading_enabled:
+                self._close_all_positions(price, timestamp, 'market_status_change')
+                self.trading_enabled = False
+                action = 'stop_trading'
+                self._end_trading_period(time)
+                logger.info(f"[行情变化] {old_status.value} -> {new_status.value}, 停止交易")
+        
+        elif is_trading_status and not was_trading_status:
+            if not self.trading_enabled:
+                self.trading_enabled = True
+                self._create_first_order(price, kline)
+                action = 'start_trading'
+                self._start_trading_period(time, new_status)
+                logger.info(f"[行情变化] {old_status.value} -> {new_status.value}, 开始交易")
+        
+        event = MarketStatusEvent(
+            timestamp=timestamp,
+            time=time,
+            status=new_status,
+            confidence=confidence,
+            reason=reason,
+            action=action,
+            price=price
+        )
+        self.market_status_events.append(event)
+        self.results['market_status_events'].append(event.to_dict())
+        
+        self.current_market_status = new_status
+    
+    def _close_all_positions(self, price: Decimal, timestamp: int, reason: str):
+        """平仓所有已成交订单"""
+        if not self.chain_state:
+            return
+        
+        filled_orders = self.chain_state.get_filled_orders()
+        leverage = self.config.get("leverage", Decimal("10"))
+        
+        for order in filled_orders:
+            if order.state != "filled":
+                continue
+            
+            order.set_state("closed", f"market_status_{reason}")
+            order.close_price = price
+            order.profit = self._calculate_profit(order, price, leverage)
+            
+            if order.stake_amount and order.stake_amount > 0:
+                trade_return = order.profit / order.stake_amount
+                self.results["trade_returns"].append(trade_return)
+            
+            if order.profit > self.results.get("max_profit", Decimal("0")):
+                self.results["max_profit"] = order.profit
+            if order.profit < self.results.get("max_loss", Decimal("0")):
+                self.results["max_loss"] = order.profit
+            
+            if order.profit > 0:
+                self.results["win_trades"] += 1
+                self.results["total_profit"] += order.profit
+                logger.info(f"[强制平仓-止盈] A{order.level}: 出场价={price:.2f}, 盈利={order.profit:.2f} USDT")
+            else:
+                self.results["loss_trades"] += 1
+                self.results["total_loss"] += abs(order.profit)
+                logger.info(f"[强制平仓-止损] A{order.level}: 出场价={price:.2f}, 亏损={order.profit:.2f} USDT")
+            
+            self.results["total_trades"] += 1
+            self.results["trades"].append({
+                "level": order.level,
+                "entry_price": float(order.entry_price),
+                "close_price": float(price),
+                "profit": float(order.profit),
+                "reason": f"market_{reason}",
+            })
+        
+        self.chain_state.cancel_pending_orders()
+        self.chain_state.orders = []
+    
+    def _calculate_profit(self, order: Autofish_Order, close_price: Decimal, leverage: Decimal) -> Decimal:
+        """计算盈亏"""
+        price_diff = close_price - order.entry_price
+        profit = price_diff * order.quantity * leverage
+        return profit
+    
+    def _create_first_order(self, price: Decimal, kline: dict = None):
+        """创建首个订单"""
+        from autofish_core import Autofish_ChainState
+        
+        if not self.chain_state:
+            self.chain_state = Autofish_ChainState(base_price=price)
+        
+        klines = self.klines_history if hasattr(self, 'klines_history') and self.klines_history else None
+        first_order = self._create_order(1, price, klines)
+        self.chain_state.orders.append(first_order)
+        logger.info(f"[开始交易] 创建 A1: 入场价={first_order.entry_price:.2f}")
+    
+    def _start_trading_period(self, time: datetime, status: MarketStatus):
+        """开始交易时段"""
+        self._current_trading_period = TradingPeriod(
+            start_time=time,
+            end_time=time,
+            status=status
+        )
+    
+    def _end_trading_period(self, time: datetime):
+        """结束交易时段"""
+        if self._current_trading_period:
+            self._current_trading_period.end_time = time
+            self.trading_periods.append(self._current_trading_period)
+            self._current_trading_period = None
+    
+    def _on_kline(self, kline: dict):
+        """处理 K线数据（重写）"""
+        self.kline_count += 1
+        
+        open_price = Decimal(str(kline.get("open", kline.get("o", 0))))
+        high_price = Decimal(str(kline.get("high", kline.get("h", 0))))
+        low_price = Decimal(str(kline.get("low", kline.get("l", 0))))
+        close_price = Decimal(str(kline.get("close", kline.get("c", 0))))
+        timestamp = kline.get("timestamp", kline.get("t", 0))
+        
+        kline_time = datetime.fromtimestamp(timestamp / 1000) if timestamp else datetime.now()
+        
+        if self.kline_count % 100 == 0:
+            logger.debug(f"[K线 #{self.kline_count}] {kline_time.strftime('%Y-%m-%d %H:%M')} "
+                        f"O={open_price:.2f} H={high_price:.2f} L={low_price:.2f} C={close_price:.2f}")
+        
+        new_status = self._check_market_status(kline)
+        
+        if new_status != self.current_market_status:
+            self._on_market_status_change(
+                self.current_market_status, 
+                new_status, 
+                kline,
+                confidence=0.0,
+                reason=''
+            )
+        
+        if self._current_trading_period:
+            self._current_trading_period.end_time = kline_time
+        
+        if not self.trading_enabled:
+            return
+        
+        self._check_first_entry_timeout(close_price, kline_time)
+        
+        self._process_entry(low_price, close_price)
+        self._process_exit(open_price, high_price, low_price, close_price)
+    
+    async def run(
+        self, 
+        symbol: str = "BTCUSDT", 
+        interval: str = "1m", 
+        limit: int = 1000, 
+        days: int = None, 
+        start_time: int = None, 
+        end_time: int = None, 
+        auto_fetch: bool = True
+    ):
+        """运行行情感知回测"""
+        self.interval = interval
+        self.days = days
+        
+        logger.info("=" * 60)
+        logger.info("行情感知回测开始")
+        logger.info("=" * 60)
+        logger.info(f"配置: {self.config}")
+        logger.info(f"行情配置: {self.market}")
+        
+        print("=" * 60)
+        print("行情感知回测")
+        print("=" * 60)
+        print(f"\n配置:")
+        print(f"  交易对: {symbol}")
+        print(f"  K线周期: {interval}")
+        print(f"  行情判断周期: {self.market.get('interval', '1d')}")
+        print(f"  行情判断算法: {self.market.get('algorithm', 'realtime')}")
+        if start_time and end_time:
+            start_dt = datetime.fromtimestamp(start_time / 1000)
+            end_dt = datetime.fromtimestamp(end_time / 1000)
+            print(f"  时间范围: {start_dt.strftime('%Y-%m-%d')} ~ {end_dt.strftime('%Y-%m-%d')}")
+        elif days:
+            print(f"  回测天数: {days} 天")
+        else:
+            print(f"  数据量: {limit}")
+        
+        klines_1m, klines_1d = await self._fetch_multi_interval_klines(
+            symbol, interval, limit, days, start_time, end_time, auto_fetch
+        )
+        
+        if not klines_1m:
+            logger.error("获取 K线数据失败")
+            return
+        
+        self.daily_klines_cache = klines_1d
+        
+        self.start_time = datetime.fromtimestamp(klines_1m[0]["timestamp"] / 1000)
+        self.end_time = datetime.fromtimestamp(klines_1m[-1]["timestamp"] / 1000)
+        
+        self.results["first_price"] = Decimal(klines_1m[0]["open"])
+        self.results["last_price"] = Decimal(klines_1m[-1]["close"])
+        
+        print(f"\n📊 回测时间范围:")
+        print(f"  开始: {self.start_time.strftime('%Y-%m-%d %H:%M')}")
+        print(f"  结束: {self.end_time.strftime('%Y-%m-%d %H:%M')}")
+        print(f"  1m K线数: {len(klines_1m)}")
+        print(f"  1d K线数: {len(klines_1d)}")
+        
+        first_price = Decimal(klines_1m[0]["open"])
+        from autofish_core import Autofish_ChainState
+        self.chain_state = Autofish_ChainState(base_price=first_price)
+        
+        self.klines_history = klines_1m[:30] if len(klines_1m) >= 30 else klines_1m
+        
+        required_periods = self.market_detector.algorithm.get_required_periods()
+        min_klines = max(required_periods, self.market.get('min_market_klines', 20))
+        
+        if len(klines_1d) >= min_klines:
+            initial_result = self.market_detector.algorithm.calculate(
+                klines_1d[:min_klines],
+                self.market
+            )
+            self.current_market_status = initial_result.status
+            logger.info(f"[初始行情] {initial_result.status.value}, 原因={initial_result.reason}")
+            
+            if self.current_market_status == MarketStatus.TRENDING_DOWN:
+                self.trading_enabled = False
+                print(f"\n⚠️ 初始行情为下跌趋势，暂停交易")
+            else:
+                first_order = self._create_order(1, first_price, self.klines_history)
+                self.chain_state.orders.append(first_order)
+                print(f"\n📋 创建首个订单: A1 入场价={first_order.entry_price:.2f}")
+                self._start_trading_period(self.start_time, self.current_market_status)
+        else:
+            first_order = self._create_order(1, first_price, self.klines_history)
+            self.chain_state.orders.append(first_order)
+            print(f"\n📋 创建首个订单: A1 入场价={first_order.entry_price:.2f}")
+            self._start_trading_period(self.start_time, MarketStatus.RANGING)
+        
+        print(f"\n⏳ 开始回测...")
+        
+        for kline in klines_1m:
+            self._on_kline(kline)
+        
+        if self._current_trading_period:
+            self._current_trading_period.end_time = self.end_time
+            self.trading_periods.append(self._current_trading_period)
+        
+        self._calculate_market_statistics()
+        self._print_summary()
+    
+    def _calculate_market_statistics(self):
+        """计算行情统计"""
+        total_minutes = (self.end_time - self.start_time).total_seconds() / 60
+        
+        trading_minutes = 0
+        stopped_minutes = 0
+        
+        for period in self.trading_periods:
+            duration = (period.end_time - period.start_time).total_seconds() / 60
+            if period.status == MarketStatus.RANGING:
+                trading_minutes += duration
+            else:
+                stopped_minutes += duration
+        
+        self.results['total_trading_minutes'] = int(trading_minutes)
+        self.results['total_stopped_minutes'] = int(stopped_minutes)
+        
+        self.results['trading_periods'] = [p.to_dict() for p in self.trading_periods]
+        
+        ranging_count = sum(1 for e in self.market_status_events if e.status == MarketStatus.RANGING)
+        trending_count = sum(1 for e in self.market_status_events if e.status in [MarketStatus.TRENDING_UP, MarketStatus.TRENDING_DOWN])
+        
+        self.results['market_statistics'] = {
+            'total_events': len(self.market_status_events),
+            'ranging_events': ranging_count,
+            'trending_events': trending_count,
+            'trading_minutes': int(trading_minutes),
+            'stopped_minutes': int(stopped_minutes),
+            'trading_pct': trading_minutes / total_minutes * 100 if total_minutes > 0 else 0,
+            'stopped_pct': stopped_minutes / total_minutes * 100 if total_minutes > 0 else 0,
+        }
+    
+    def _print_summary(self):
+        """打印回测结果"""
+        net_profit = self.results["total_profit"] - self.results["total_loss"]
+        win_rate = (self.results["win_trades"] / self.results["total_trades"] * 100 
+                   if self.results["total_trades"] > 0 else 0)
+        
+        market_stats = self.results.get('market_statistics', {})
+        
+        print("\n" + "=" * 60)
+        print("📊 回测结果")
+        print("=" * 60)
+        print(f"  回测时间: {self.start_time.strftime('%Y-%m-%d %H:%M')} - {self.end_time.strftime('%Y-%m-%d %H:%M')}")
+        print(f"  K线数量: {self.kline_count}")
+        print(f"  总交易: {self.results['total_trades']}")
+        print(f"  盈利次数: {self.results['win_trades']}")
+        print(f"  亏损次数: {self.results['loss_trades']}")
+        print(f"  胜率: {win_rate:.2f}%")
+        print(f"  总盈利: {float(self.results['total_profit']):.2f} USDT")
+        print(f"  总亏损: {float(self.results['total_loss']):.2f} USDT")
+        print(f"  净收益: {float(net_profit):.2f} USDT")
+        
+        print("\n📈 行情统计:")
+        print(f"  行情状态变化: {market_stats.get('total_events', 0)} 次")
+        print(f"  交易时间占比: {market_stats.get('trading_pct', 0):.1f}%")
+        print(f"  停止时间占比: {market_stats.get('stopped_pct', 0):.1f}%")
+        
+        print("=" * 60)
+        
+        logger.info("=" * 60)
+        logger.info("回测结果")
+        logger.info("=" * 60)
+        logger.info(f"  总交易: {self.results['total_trades']}")
+        logger.info(f"  胜率: {win_rate:.2f}%")
+        logger.info(f"  净收益: {net_profit:.2f} USDT")
 
 
 async def main():
     """主函数"""
-    parser = argparse.ArgumentParser(description="Autofish V2 回测")
-    parser.add_argument("--symbol", type=str, default="BTCUSDT", help="交易对 (默认: BTCUSDT)")
-    parser.add_argument("--interval", type=str, default="1m", help="K线周期 (默认: 1m)")
-    parser.add_argument("--limit", type=int, default=1500, help="K线数量 (默认: 1500)")
-    parser.add_argument("--days", type=int, default=None, help="回测天数 (默认: None，使用 limit 参数)")
-    parser.add_argument("--date-range", type=str, default=None, help="回测时间范围 (格式: yyyymmdd-yyyymmdd，例如: 20260301-20260310)")
-    parser.add_argument("--decay-factor", type=float, default=0.5, help="衰减因子 (默认: 0.5，可选: 0.5/1.0)")
-    parser.add_argument("--stop-loss", type=float, default=0.08, help="止损比例 (默认: 0.08)")
-    parser.add_argument("--total-amount", type=float, default=10000, help="总投入金额 (默认: 10000)")
-    parser.add_argument("--no-auto-fetch", action="store_true", help="禁用自动获取缺失数据（仅使用缓存）")
+    parser = argparse.ArgumentParser(description="行情感知回测")
+    parser.add_argument("--symbol", type=str, required=True, help="交易对（必选）")
+    parser.add_argument("--date-range", type=str, required=True, help="时间范围 (yyyymmdd-yyyymmdd)（必选）")
+    parser.add_argument("--case-id", type=str, default=None, help="测试用例ID")
+    parser.add_argument("--amplitude-params", type=str, default=None, help="振幅参数（JSON字符串）")
+    parser.add_argument("--market-params", type=str, default=None, help="行情算法参数（JSON字符串，格式: {\"algorithm\": \"dual_thrust\", \"dual_thrust\": {...}, \"trading_statuses\": [\"ranging\"]}）")
+    parser.add_argument("--entry-params", type=str, default=None, help="入场价格策略参数（JSON字符串，格式: {\"strategy\": \"atr\", \"atr\": {...}}）")
+    parser.add_argument("--timeout-params", type=str, default=None, help="超时参数（JSON字符串）")
     
     args = parser.parse_args()
     
-    # 解析时间范围（支持多段，用逗号分隔）
+    amplitude = json.loads(args.amplitude_params) if args.amplitude_params else {}
+    market = json.loads(args.market_params) if args.market_params else {"algorithm": "always_ranging"}
+    entry = json.loads(args.entry_params) if args.entry_params else {}
+    timeout = json.loads(args.timeout_params) if args.timeout_params else {"a1_timeout_minutes": 0}
+    
+    logger.info(f"[参数] symbol={args.symbol}")
+    logger.info(f"[参数] date_range={args.date_range}")
+    logger.info(f"[参数] amplitude={amplitude}")
+    logger.info(f"[参数] market={market}")
+    logger.info(f"[参数] entry={entry}")
+    logger.info(f"[参数] timeout={timeout}")
+    
     date_ranges = []
     
     if args.date_range:
-        # 支持多段时间范围，用逗号分隔
         range_parts = args.date_range.split(",")
         
         for range_str in range_parts:
@@ -860,23 +1206,16 @@ async def main():
                 continue
             
             try:
-                # 支持两种格式: yyyymmdd-yyyymmdd 或 yyyy-mm-dd-yyyy-mm-dd
                 if range_str.count("-") == 1:
-                    # 格式: yyyymmdd-yyyymmdd
                     parts = range_str.split("-")
                     start_date = datetime.strptime(parts[0], "%Y%m%d")
                     end_date = datetime.strptime(parts[1], "%Y%m%d")
-                elif range_str.count("-") == 4:
-                    # 格式: yyyy-mm-dd-yyyy-mm-dd
-                    parts = range_str.split("-")
-                    start_date = datetime.strptime(f"{parts[0]}-{parts[1]}-{parts[2]}", "%Y-%m-%d")
-                    end_date = datetime.strptime(f"{parts[3]}-{parts[4]}-{parts[5]}", "%Y-%m-%d")
                 else:
                     logger.error(f"[时间范围] 格式错误: {range_str}")
                     continue
                 
                 start_time = int(start_date.timestamp() * 1000)
-                end_time = int(end_date.timestamp() * 1000) + 86400000 - 1  # 结束日期的 23:59:59
+                end_time = int(end_date.timestamp() * 1000) + 86400000 - 1
                 days = (end_date - start_date).days + 1
                 date_range_str = f"{days}d_{start_date.strftime('%Y%m%d')}-{end_date.strftime('%Y%m%d')}"
                 
@@ -888,81 +1227,135 @@ async def main():
                     "start_date": start_date,
                     "end_date": end_date,
                 })
-                
-                logger.info(f"[时间范围] {start_date.strftime('%Y-%m-%d')} ~ {end_date.strftime('%Y-%m-%d')} ({days} 天)")
             except ValueError as e:
                 logger.error(f"[时间范围] 解析失败: {range_str}, 错误: {e}")
     
-    decay_factor = Decimal(str(args.decay_factor))
+    decay_factor = Decimal(str(amplitude.get("decay_factor", 0.5))) if amplitude else Decimal("0.5")
     
-    amplitude_config = Autofish_AmplitudeConfig.load_latest(args.symbol, decay_factor=decay_factor)
+    def ensure_decimal(value, default="0"):
+        """确保值为 Decimal 类型"""
+        if value is None:
+            return Decimal(default)
+        if isinstance(value, Decimal):
+            return value
+        return Decimal(str(value))
     
-    if amplitude_config:
-        config = {
-            "symbol": amplitude_config.get_symbol(),
-            "leverage": amplitude_config.get_leverage(),
-            "grid_spacing": amplitude_config.get_grid_spacing(),
-            "exit_profit": amplitude_config.get_exit_profit(),
-            "stop_loss": amplitude_config.get_stop_loss(),
-            "total_amount_quote": amplitude_config.get_total_amount_quote(),
-            "max_entries": amplitude_config.get_max_entries(),
-            "decay_factor": amplitude_config.get_decay_factor(),
-            "weights": amplitude_config.get_weights(),
-            "valid_amplitudes": amplitude_config.get_valid_amplitudes(),
-            "total_expected_return": amplitude_config.get_total_expected_return(),
-            "entry_price_strategy": amplitude_config.get_entry_price_strategy(),
-        }
-        config_file = amplitude_config.config_path
+    if not amplitude:
+        from autofish_core import Autofish_AmplitudeConfig
+        amplitude_config = Autofish_AmplitudeConfig.load_latest(args.symbol, decay_factor=decay_factor)
+        if amplitude_config:
+            amplitude = {
+                "leverage": amplitude_config.get_leverage(),
+                "grid_spacing": amplitude_config.get_grid_spacing(),
+                "exit_profit": amplitude_config.get_exit_profit(),
+                "stop_loss": amplitude_config.get_stop_loss(),
+                "total_amount_quote": amplitude_config.get_total_amount_quote(),
+                "max_entries": amplitude_config.get_max_entries(),
+                "decay_factor": amplitude_config.get_decay_factor(),
+                "weights": amplitude_config.get_weights(),
+                "valid_amplitudes": amplitude_config.get_valid_amplitudes(),
+                "total_expected_return": amplitude_config.get_total_expected_return(),
+            }
     else:
-        config = Autofish_OrderCalculator.get_default_config("binance")
-        config["symbol"] = args.symbol
-        config["decay_factor"] = decay_factor
-        config.update({
-            "stop_loss": Decimal(str(args.stop_loss)),
-            "total_amount_quote": Decimal(str(args.total_amount)),
-        })
-        config_file = "无（使用内置默认配置）"
+        amplitude["grid_spacing"] = ensure_decimal(amplitude.get("grid_spacing"), "0.01")
+        amplitude["exit_profit"] = ensure_decimal(amplitude.get("exit_profit"), "0.01")
+        amplitude["stop_loss"] = ensure_decimal(amplitude.get("stop_loss"), "0.08")
+        amplitude["total_amount_quote"] = ensure_decimal(amplitude.get("total_amount_quote"), "10000")
+        amplitude["decay_factor"] = ensure_decimal(amplitude.get("decay_factor"), "0.5")
     
-    logger.info(f"[配置加载] {'使用振幅分析配置' if amplitude_config else '使用默认配置'}: {args.symbol}")
-    logger.info(f"  配置文件: {config_file}")
-    logger.info(f"  交易标的: {config.get('symbol')}")
-    logger.info(f"  交易杠杆: {config['leverage']}x")
-    logger.info(f"  资金投入: {config['total_amount_quote']} USDT")
-    logger.info(f"  网格间距: {float(config['grid_spacing'])*100:.1f}%")
-    logger.info(f"  止盈比例: {float(config['exit_profit'])*100:.1f}%")
-    logger.info(f"  止损比例: {float(config['stop_loss'])*100:.1f}%")
-    logger.info(f"  衰减因子: {float(decay_factor)}")
-    logger.info(f"  最大层级: {config['max_entries']}")
-    logger.info(f"  网格权重: {config.get('weights', [])}")
+    print(f"\n📊 共 {len(date_ranges)} 个时间段需要回测")
     
-    # 处理回测
-    if date_ranges:
-        # 多段时间范围
-        print(f"\n📊 共 {len(date_ranges)} 个时间段需要回测")
+    for i, dr in enumerate(date_ranges, 1):
+        print(f"\n{'='*60}")
+        print(f"📅 第 {i}/{len(date_ranges)} 个时间段: {dr['start_date'].strftime('%Y-%m-%d')} ~ {dr['end_date'].strftime('%Y-%m-%d')} ({dr['days']} 天)")
+        print(f"{'='*60}")
         
-        for i, dr in enumerate(date_ranges, 1):
-            print(f"\n{'='*60}")
-            print(f"📅 第 {i}/{len(date_ranges)} 个时间段: {dr['start_date'].strftime('%Y-%m-%d')} ~ {dr['end_date'].strftime('%Y-%m-%d')} ({dr['days']} 天)")
-            print(f"{'='*60}")
-            
-            engine = BacktestEngine(config)
-            await engine.run(
-                symbol=args.symbol, 
-                interval=args.interval, 
-                limit=args.limit, 
-                days=dr['days'], 
-                start_time=dr['start_time'], 
-                end_time=dr['end_time'],
-                auto_fetch=not args.no_auto_fetch
-            )
-            engine.save_report(args.symbol, dr['days'], dr['date_range_str'])
-            engine.save_history(args.symbol, dr['days'], dr['date_range_str'])
-    else:
-        # 单次回测（使用 --days 或 --limit）
-        engine = BacktestEngine(config)
-        await engine.run(symbol=args.symbol, interval=args.interval, limit=args.limit, days=args.days, auto_fetch=not args.no_auto_fetch)
-        engine.save_report(args.symbol, args.days)
-        engine.save_history(args.symbol, args.days)
+        engine = MarketAwareBacktestEngine(amplitude, market, entry, timeout)
+        await engine.run(
+            symbol=args.symbol, 
+            interval="1m", 
+            limit=1500, 
+            days=dr['days'], 
+            start_time=dr['start_time'], 
+            end_time=dr['end_time'],
+            auto_fetch=True
+        )
+        
+        _save_to_database(args, engine, dr['date_range_str'], amplitude, market, entry, timeout)
+
+
+def _save_to_database(args, engine, date_range_str, amplitude, market, entry, timeout):
+    """保存行情感知回测结果到数据库"""
+    try:
+        from database.test_results_db import TestResultsDB, TestResult
+        from datetime import datetime
+        import uuid
+        
+        db = TestResultsDB()
+        
+        result_id = f"cli_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{str(uuid.uuid4())[:8]}"
+        case_id = args.case_id if args.case_id else result_id
+        
+        params = {
+            "symbol": args.symbol,
+            "date_range": args.date_range,
+            "amplitude": amplitude,
+            "market": market,
+            "entry": entry,
+            "timeout": timeout,
+        }
+        
+        results = engine.results
+        market_stats = results.get('market_statistics', {})
+        
+        total_trades = results.get('total_trades', 0)
+        win_trades = results.get('win_trades', 0)
+        loss_trades = results.get('loss_trades', 0)
+        total_profit = float(results.get('total_profit', 0))
+        total_loss = float(results.get('total_loss', 0))
+        net_profit = total_profit - total_loss
+        win_rate = (win_trades / total_trades * 100) if total_trades > 0 else 0
+        
+        total_amount = float(engine.config.get('total_amount_quote', 1200))
+        roi = (net_profit / total_amount * 100) if total_amount > 0 else 0
+        
+        first_price = float(results.get('first_price', 0))
+        last_price = float(results.get('last_price', 0))
+        price_change = ((last_price - first_price) / first_price * 100) if first_price > 0 else 0
+        excess_return = roi - price_change
+        
+        result = TestResult(
+            result_id=result_id,
+            case_id=case_id,
+            symbol=args.symbol,
+            interval="1m",
+            start_time=engine.start_time.strftime('%Y-%m-%d %H:%M') if engine.start_time else '',
+            end_time=engine.end_time.strftime('%Y-%m-%d %H:%M') if engine.end_time else '',
+            klines_count=engine.kline_count,
+            total_trades=total_trades,
+            win_trades=win_trades,
+            loss_trades=loss_trades,
+            win_rate=win_rate,
+            total_profit=total_profit,
+            total_loss=total_loss,
+            net_profit=net_profit,
+            roi=roi,
+            price_change=price_change,
+            excess_return=excess_return,
+            profit_factor=0,
+            sharpe_ratio=0,
+            max_profit_trade=float(results.get('max_profit', 0)),
+            max_loss_trade=float(results.get('max_loss', 0)),
+            trading_time_ratio=market_stats.get('trading_pct', 0),
+            stopped_time_ratio=market_stats.get('stopped_pct', 0),
+            market_status_changes=market_stats.get('total_events', 0),
+            market_algorithm=market.get('algorithm', 'always_ranging'),
+        )
+        db.save_result(result)
+        
+        print(f"\n✅ 结果已保存到数据库: result_id={result_id}, case_id={case_id}")
+    except Exception as e:
+        print(f"\n⚠️ 保存到数据库失败: {e}")
 
 
 if __name__ == "__main__":
