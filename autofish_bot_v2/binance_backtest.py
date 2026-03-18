@@ -104,7 +104,6 @@ class BacktestEngine:
     def __init__(self, config: dict):
         self.config = config
         self.interval = None
-        self.days = None
         
         self.a1_timeout_minutes = config.get('a1_timeout_minutes', 10)
         
@@ -224,7 +223,7 @@ class BacktestEngine:
             klines=klines
         )
     
-    def _process_entry(self, low_price: Decimal, current_price: Decimal):
+    def _process_entry(self, low_price: Decimal, current_price: Decimal, kline_time: datetime = None):
         """处理入场"""
         max_level = self.config.get("max_entries", 4)
         
@@ -232,6 +231,7 @@ class BacktestEngine:
         if pending_order:
             if Autofish_OrderCalculator.check_entry_triggered(low_price, pending_order.entry_price):
                 pending_order.set_state("filled", "K线触发入场")
+                pending_order.filled_at = kline_time.strftime('%Y-%m-%d %H:%M:%S') if kline_time else datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                 
                 weights = self._get_weights()
                 weight_pct = float(weights.get(pending_order.level, Decimal("0"))) * 100
@@ -247,7 +247,7 @@ class BacktestEngine:
                     self.chain_state.orders.append(new_order)
                     logger.info(f"[链式下单] 创建 A{next_level}: 入场价={new_order.entry_price:.2f}")
     
-    def _process_exit(self, open_price: Decimal, high_price: Decimal, low_price: Decimal, current_price: Decimal):
+    def _process_exit(self, open_price: Decimal, high_price: Decimal, low_price: Decimal, current_price: Decimal, kline_time: datetime = None):
         """处理出场
         
         改进：当 K 线同时触及止盈止损时，根据 K 线形态判断触发顺序
@@ -257,6 +257,7 @@ class BacktestEngine:
             high_price: K 线最高价
             low_price: K 线最低价
             current_price: 当前价格（收盘价）
+            kline_time: K 线时间
         """
         leverage = self.config.get("leverage", Decimal("10"))
         
@@ -282,9 +283,9 @@ class BacktestEngine:
                 )
                 
                 if exit_type == "take_profit":
-                    self._close_order(order, "take_profit", order.take_profit_price, leverage)
+                    self._close_order(order, "take_profit", order.take_profit_price, leverage, kline_time)
                 else:
-                    self._close_order(order, "stop_loss", order.stop_loss_price, leverage)
+                    self._close_order(order, "stop_loss", order.stop_loss_price, leverage, kline_time)
                 
                 self.chain_state.cancel_pending_orders()
                 new_order = self._create_order(order.level, current_price)
@@ -293,7 +294,7 @@ class BacktestEngine:
                 break
                 
             elif tp_triggered:
-                self._close_order(order, "take_profit", order.take_profit_price, leverage)
+                self._close_order(order, "take_profit", order.take_profit_price, leverage, kline_time)
                 self.chain_state.cancel_pending_orders()
                 new_order = self._create_order(order.level, current_price)
                 self.chain_state.orders.append(new_order)
@@ -301,7 +302,7 @@ class BacktestEngine:
                 break
                 
             elif sl_triggered:
-                self._close_order(order, "stop_loss", order.stop_loss_price, leverage)
+                self._close_order(order, "stop_loss", order.stop_loss_price, leverage, kline_time)
                 self.chain_state.cancel_pending_orders()
                 new_order = self._create_order(order.level, current_price)
                 self.chain_state.orders.append(new_order)
@@ -333,11 +334,12 @@ class BacktestEngine:
         else:
             return "stop_loss"
     
-    def _close_order(self, order: Autofish_Order, reason: str, close_price: Decimal, leverage: Decimal):
+    def _close_order(self, order: Autofish_Order, reason: str, close_price: Decimal, leverage: Decimal, kline_time: datetime = None):
         """平仓"""
         order.set_state("closed", reason)
         order.close_price = close_price
         order.profit = Autofish_OrderCalculator(leverage=leverage).calculate_profit(order, close_price)
+        order.closed_at = kline_time.strftime('%Y-%m-%d %H:%M:%S') if kline_time else datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         
         if order.stake_amount and order.stake_amount > 0:
             trade_return = order.profit / order.stake_amount
@@ -365,9 +367,14 @@ class BacktestEngine:
         self.results["trades"].append({
             "level": order.level,
             "entry_price": float(order.entry_price),
-            "close_price": float(close_price),
+            "exit_price": float(close_price),
+            "entry_time": order.filled_at,
+            "exit_time": order.closed_at,
             "profit": float(order.profit),
             "reason": reason,
+            "trade_type": "take_profit" if reason == "take_profit" else "stop_loss",
+            "quantity": float(order.quantity) if order.quantity else 0,
+            "stake": float(order.stake_amount) if order.stake_amount else 0,
         })
     
     def _on_kline(self, kline: dict):
@@ -389,8 +396,8 @@ class BacktestEngine:
         
         self._check_first_entry_timeout(close_price, kline_time)
         
-        self._process_entry(low_price, close_price)
-        self._process_exit(open_price, high_price, low_price, close_price)
+        self._process_entry(low_price, close_price, kline_time)
+        self._process_exit(open_price, high_price, low_price, close_price, kline_time)
     
     def _check_first_entry_timeout(self, current_price: Decimal, current_time: datetime) -> None:
         """检查第一笔入场订单是否超时（回测版本）
@@ -429,56 +436,7 @@ class BacktestEngine:
         print(f"   新 A1 入场价: {float(new_first_entry.entry_price):.2f}")
         print(f"   价格调整: {price_diff:.2f} ({price_diff_pct:.2f}%)")
     
-    async def fetch_klines(self, symbol: str, interval: str = "1m", limit: int = 1000, days: int = None, start_time: int = None, end_time: int = None, auto_fetch: bool = True) -> List[dict]:
-        """获取历史 K 线数据
-        
-        流程：
-        1. 请求 binance_kline_fetcher 准备数据（检查并补齐）
-        2. 从 DB 获取数据
-        
-        参数:
-            symbol: 交易对
-            interval: K 线周期
-            limit: 单次获取数量（最大 1500）
-            days: 回测天数
-            start_time: 开始时间戳（毫秒）
-            end_time: 结束时间戳（毫秒）
-            auto_fetch: 是否自动获取缺失数据
-        """
-        from binance_kline_fetcher import KlineFetcher
-        
-        fetcher = KlineFetcher()
-        
-        success = await fetcher.ensure_klines(
-            symbol=symbol,
-            interval=interval,
-            start_time=start_time,
-            end_time=end_time,
-            days=days,
-            limit=limit,
-            auto_fetch=auto_fetch
-        )
-        
-        if not success:
-            logger.error("数据准备失败")
-            print(f"\n❌ 数据准备失败，请手动运行:")
-            print(f"   python binance_kline_fetcher.py --symbol {symbol} --interval {interval}")
-            return []
-        
-        actual_start, actual_end = fetcher.get_time_range()
-        klines = fetcher.query_cache(symbol, interval, actual_start, actual_end)
-        
-        if klines:
-            logger.info(f"[获取K线] 从本地缓存获取 {len(klines)} 条数据")
-            print(f"[获取K线] 从本地缓存获取 {len(klines)} 条数据")
-        else:
-            logger.error(f"[获取K线] 本地缓存无数据")
-            print(f"\n❌ 本地缓存无数据，请先运行:")
-            print(f"   python binance_kline_fetcher.py --symbol {symbol} --interval {interval}")
-        
-        return klines
-    
-    async def run(self, symbol: str = "BTCUSDT", interval: str = "1m", limit: int = 1000, days: int = None, start_time: int = None, end_time: int = None, auto_fetch: bool = True):
+    async def run(self, symbol: str = "BTCUSDT", interval: str = "1m", start_time: int = None, end_time: int = None):
         """运行回测
         
         主要流程：
@@ -490,14 +448,10 @@ class BacktestEngine:
         参数:
             symbol: 交易对
             interval: K线周期
-            limit: K线数量
-            days: 回测天数（如果指定，则分批获取足够的数据）
             start_time: 开始时间戳（毫秒）
             end_time: 结束时间戳（毫秒）
-            auto_fetch: 是否自动获取缺失数据
         """
         self.interval = interval
-        self.days = days
         logger.info("=" * 60)
         logger.info("Autofish V1 回测开始")
         logger.info("=" * 60)
@@ -513,10 +467,6 @@ class BacktestEngine:
             start_dt = datetime.fromtimestamp(start_time / 1000)
             end_dt = datetime.fromtimestamp(end_time / 1000)
             print(f"  时间范围: {start_dt.strftime('%Y-%m-%d')} ~ {end_dt.strftime('%Y-%m-%d')}")
-        elif days:
-            print(f"  回测天数: {days} 天")
-        else:
-            print(f"  数据量: {limit}")
         print(f"  网格间距: {float(self.config.get('grid_spacing', Decimal('0.01')))*100}%")
         print(f"  止盈: {float(self.config.get('exit_profit', Decimal('0.01')))*100}%")
         print(f"  止损: {float(self.config.get('stop_loss', Decimal('0.08')))*100}%")
@@ -524,7 +474,9 @@ class BacktestEngine:
         print(f"  总资金: {self.config.get('total_amount_quote', 1200)} USDT")
         print(f"  最大层级: {self.config.get('max_entries', 4)}")
         
-        klines = await self.fetch_klines(symbol, interval, limit, days, start_time, end_time, auto_fetch)
+        from binance_kline_fetcher import KlineFetcher
+        fetcher = KlineFetcher()
+        klines = await fetcher.fetch_kline(symbol, interval, start_time, end_time)
         
         if not klines:
             logger.error("获取 K 线数据失败")
@@ -749,11 +701,8 @@ class MarketAwareBacktestEngine(BacktestEngine):
         self, 
         symbol: str, 
         interval: str, 
-        limit: int = 1000,
-        days: int = None,
         start_time: int = None, 
-        end_time: int = None,
-        auto_fetch: bool = True
+        end_time: int = None
     ) -> tuple:
         """获取多周期 K线数据
         
@@ -764,41 +713,21 @@ class MarketAwareBacktestEngine(BacktestEngine):
         
         fetcher = KlineFetcher()
         
-        success = await fetcher.ensure_klines(
-            symbol=symbol,
-            interval=interval,
-            start_time=start_time,
-            end_time=end_time,
-            days=days,
-            auto_fetch=auto_fetch
-        )
+        klines_1m = await fetcher.fetch_kline(symbol, interval, start_time, end_time)
         
-        if not success:
+        if not klines_1m:
             logger.error("获取 1m K线数据失败")
             return [], []
         
-        actual_start, actual_end = fetcher.get_time_range()
-        klines_1m = fetcher.query_cache(symbol, interval, actual_start, actual_end)
-        
         market_interval = self.market.get('interval', '1d')
+        market_start = start_time - (self.market.get('min_market_klines', 20) * 86400000)
         
-        market_start = actual_start - (self.market.get('min_market_klines', 20) * 86400000)
+        klines_1d = await fetcher.fetch_kline(symbol, market_interval, market_start, end_time)
         
-        success = await fetcher.ensure_klines(
-            symbol=symbol,
-            interval=market_interval,
-            start_time=market_start,
-            end_time=actual_end,
-            auto_fetch=auto_fetch
-        )
-        
-        if success:
-            klines_1d = fetcher.query_cache(symbol, market_interval, market_start, actual_end)
-        else:
+        if not klines_1d:
             logger.warning("获取 1d K线数据失败，将使用 1m K线聚合")
-            klines_1d = []
         
-        logger.info(f"[多周期数据] 1m K线: {len(klines_1m)} 条, 1d K线: {len(klines_1d)} 条")
+        logger.info(f"[多周期数据] 1m K线: {len(klines_1m)} 条, 1d K线: {len(klines_1d) if klines_1d else 0} 条")
         
         return klines_1m, klines_1d
     
@@ -855,7 +784,7 @@ class MarketAwareBacktestEngine(BacktestEngine):
         
         if new_status == MarketStatus.TRENDING_DOWN and not old_status == MarketStatus.TRENDING_DOWN:
             if self.trading_enabled:
-                self._close_all_positions(price, timestamp, 'market_status_change')
+                self._close_all_positions(price, timestamp, 'market_status_change', time)
                 self.trading_enabled = False
                 action = 'stop_trading'
                 self._end_trading_period(time)
@@ -883,7 +812,7 @@ class MarketAwareBacktestEngine(BacktestEngine):
         
         self.current_market_status = new_status
     
-    def _close_all_positions(self, price: Decimal, timestamp: int, reason: str):
+    def _close_all_positions(self, price: Decimal, timestamp: int, reason: str, kline_time: datetime = None):
         """平仓所有已成交订单"""
         if not self.chain_state:
             return
@@ -898,6 +827,7 @@ class MarketAwareBacktestEngine(BacktestEngine):
             order.set_state("closed", f"market_status_{reason}")
             order.close_price = price
             order.profit = self._calculate_profit(order, price, leverage)
+            order.closed_at = kline_time.strftime('%Y-%m-%d %H:%M:%S') if kline_time else datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             
             if order.stake_amount and order.stake_amount > 0:
                 trade_return = order.profit / order.stake_amount
@@ -921,9 +851,14 @@ class MarketAwareBacktestEngine(BacktestEngine):
             self.results["trades"].append({
                 "level": order.level,
                 "entry_price": float(order.entry_price),
-                "close_price": float(price),
+                "exit_price": float(price),
+                "entry_time": order.filled_at,
+                "exit_time": order.closed_at,
                 "profit": float(order.profit),
                 "reason": f"market_{reason}",
+                "trade_type": "take_profit" if order.profit >= 0 else "stop_loss",
+                "quantity": float(order.quantity) if order.quantity else 0,
+                "stake": float(order.stake_amount) if order.stake_amount else 0,
             })
         
         self.chain_state.cancel_pending_orders()
@@ -1004,15 +939,11 @@ class MarketAwareBacktestEngine(BacktestEngine):
         self, 
         symbol: str = "BTCUSDT", 
         interval: str = "1m", 
-        limit: int = 1000, 
-        days: int = None, 
         start_time: int = None, 
-        end_time: int = None, 
-        auto_fetch: bool = True
+        end_time: int = None
     ):
         """运行行情感知回测"""
         self.interval = interval
-        self.days = days
         
         logger.info("=" * 60)
         logger.info("行情感知回测开始")
@@ -1032,13 +963,9 @@ class MarketAwareBacktestEngine(BacktestEngine):
             start_dt = datetime.fromtimestamp(start_time / 1000)
             end_dt = datetime.fromtimestamp(end_time / 1000)
             print(f"  时间范围: {start_dt.strftime('%Y-%m-%d')} ~ {end_dt.strftime('%Y-%m-%d')}")
-        elif days:
-            print(f"  回测天数: {days} 天")
-        else:
-            print(f"  数据量: {limit}")
         
         klines_1m, klines_1d = await self._fetch_multi_interval_klines(
-            symbol, interval, limit, days, start_time, end_time, auto_fetch
+            symbol, interval, start_time, end_time
         )
         
         if not klines_1m:
@@ -1176,6 +1103,7 @@ async def main():
     parser.add_argument("--symbol", type=str, required=True, help="交易对（必选）")
     parser.add_argument("--date-range", type=str, required=True, help="时间范围 (yyyymmdd-yyyymmdd)（必选）")
     parser.add_argument("--case-id", type=str, default=None, help="测试用例ID")
+    parser.add_argument("--interval", type=str, default="1m", help="K线周期（默认: 1m）")
     parser.add_argument("--amplitude-params", type=str, default=None, help="振幅参数（JSON字符串）")
     parser.add_argument("--market-params", type=str, default=None, help="行情算法参数（JSON字符串，格式: {\"algorithm\": \"dual_thrust\", \"dual_thrust\": {...}, \"trading_statuses\": [\"ranging\"]}）")
     parser.add_argument("--entry-params", type=str, default=None, help="入场价格策略参数（JSON字符串，格式: {\"strategy\": \"atr\", \"atr\": {...}}）")
@@ -1273,12 +1201,9 @@ async def main():
         engine = MarketAwareBacktestEngine(amplitude, market, entry, timeout)
         await engine.run(
             symbol=args.symbol, 
-            interval="1m", 
-            limit=1500, 
-            days=dr['days'], 
+            interval=args.interval, 
             start_time=dr['start_time'], 
-            end_time=dr['end_time'],
-            auto_fetch=True
+            end_time=dr['end_time']
         )
         
         _save_to_database(args, engine, dr['date_range_str'], amplitude, market, entry, timeout)
@@ -1352,6 +1277,27 @@ def _save_to_database(args, engine, date_range_str, amplitude, market, entry, ti
             market_algorithm=market.get('algorithm', 'always_ranging'),
         )
         db.save_result(result)
+        
+        trades = results.get('trades', [])
+        if trades:
+            trade_details = []
+            for i, t in enumerate(trades):
+                from database.test_results_db import TradeDetail
+                trade_details.append(TradeDetail(
+                    result_id=result_id,
+                    trade_seq=i + 1,
+                    level=str(t.get('level', '')),
+                    entry_price=float(t.get('entry_price', 0)),
+                    exit_price=float(t.get('exit_price', 0)),
+                    entry_time=t.get('entry_time', ''),
+                    exit_time=t.get('exit_time', ''),
+                    trade_type=t.get('trade_type', ''),
+                    profit=float(t.get('profit', 0)),
+                    quantity=float(t.get('quantity', 0)),
+                    stake=float(t.get('stake', 0)),
+                ))
+            db.save_trade_details(result_id, trade_details)
+            print(f"   交易详情已保存: {len(trade_details)} 条")
         
         print(f"\n✅ 结果已保存到数据库: result_id={result_id}, case_id={case_id}")
     except Exception as e:

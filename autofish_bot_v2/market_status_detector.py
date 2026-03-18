@@ -1545,21 +1545,12 @@ class MarketStatusDetector:
         self._interval = interval
         
         fetcher = KlineFetcher()
-        success = await fetcher.ensure_klines(
+        klines = await fetcher.fetch_kline(
             symbol=symbol,
             interval=interval,
             start_time=start_time,
-            end_time=end_time,
-            days=days,
-            limit=limit,
-            auto_fetch=True
+            end_time=end_time
         )
-        
-        if not success:
-            raise Exception("获取 K 线数据失败")
-        
-        actual_start, actual_end = fetcher.get_time_range()
-        klines = fetcher.query_cache(symbol, interval, actual_start, actual_end)
         
         if not klines:
             raise Exception("K 线数据为空")

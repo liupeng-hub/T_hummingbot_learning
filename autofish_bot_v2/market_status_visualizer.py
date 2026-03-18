@@ -113,21 +113,12 @@ class DataProvider:
         start_time = int(start_date.timestamp() * 1000)
         end_time = int(end_date.timestamp() * 1000)
         
-        await self.fetcher.ensure_klines(
-            symbol=symbol,
-            interval=interval,
-            days=(end_date - start_date).days + 1,
-            auto_fetch=True
-        )
-        
-        klines = self.fetcher.query_cache(
+        return await self.fetcher.fetch_kline(
             symbol=symbol,
             interval=interval,
             start_time=start_time,
             end_time=end_time
         )
-        
-        return klines
     
     def klines_to_dataframe(self, klines: List[Dict]) -> pd.DataFrame:
         """将K线数据转换为DataFrame"""
@@ -1087,26 +1078,72 @@ class MarketStatusVisualizer:
 ALGORITHMS = {
     'dual_thrust': {
         'name': 'Dual Thrust',
-        'description': '基于突破的行情判断算法',
+        'description': 'Dual Thrust 状态过滤器（增强版）- 基于历史波动幅度构建突破区间，针对下跌行情有特殊处理',
         'params': {
-            'k1': {'type': 'float', 'default': 0.5, 'description': '上轨系数'},
-            'k2': {'type': 'float', 'default': 0.5, 'description': '下轨系数'},
-            'k2_down_factor': {'type': 'float', 'default': 0.5, 'description': '下跌识别因子'},
-            'down_confirm_days': {'type': 'int', 'default': 1, 'description': '下跌确认天数'},
+            'n_days': {'type': 'int', 'default': 4, 'description': '回看天数'},
+            'k1': {'type': 'float', 'default': 0.4, 'description': '上轨系数 K1'},
+            'k2': {'type': 'float', 'default': 0.4, 'description': '下轨系数 K2'},
+            'k2_down_factor': {'type': 'float', 'default': 0.8, 'description': '下跌敏感系数'},
+            'down_confirm_days': {'type': 'int', 'default': 2, 'description': '下跌确认天数'},
+            'cooldown_days': {'type': 'int', 'default': 1, 'description': '冷却期(天)'},
         }
     },
     'improved': {
         'name': 'Improved Status',
-        'description': '改进的行情状态判断算法',
+        'description': '改进的行情判断算法 - 支撑阻力位识别 + 箱体震荡识别，更严格的趋势确认',
         'params': {
-            'volatility_threshold': {'type': 'float', 'default': 0.02, 'description': '波动率阈值'},
-            'trend_confirm_days': {'type': 'int', 'default': 3, 'description': '趋势确认天数'},
+            'lookback_period': {'type': 'int', 'default': 60, 'description': '回看周期'},
+            'min_range_duration': {'type': 'int', 'default': 10, 'description': '最小震荡持续天数'},
+            'max_range_pct': {'type': 'float', 'default': 0.15, 'description': '最大震荡区间比例'},
+            'breakout_threshold': {'type': 'float', 'default': 0.03, 'description': '突破阈值'},
+            'breakout_confirm_days': {'type': 'int', 'default': 3, 'description': '突破确认天数'},
+            'swing_window': {'type': 'int', 'default': 5, 'description': '摆动窗口'},
+            'merge_threshold': {'type': 'float', 'default': 0.03, 'description': '合并阈值'},
+            'min_touches': {'type': 'int', 'default': 3, 'description': '最小触及次数'},
         }
     },
     'always_ranging': {
         'name': 'Always Ranging',
-        'description': '始终判定为震荡状态',
+        'description': '始终返回震荡行情 - 用于与原 binance_backtest 的测试结果对比',
         'params': {}
+    },
+    'composite': {
+        'name': 'Composite',
+        'description': '组合算法 - ADX + ATR + 布林带宽度综合判断，多指标融合',
+        'params': {
+            'adx_period': {'type': 'int', 'default': 14, 'description': 'ADX 周期'},
+            'adx_threshold': {'type': 'int', 'default': 25, 'description': 'ADX 阈值'},
+            'atr_period': {'type': 'int', 'default': 14, 'description': 'ATR 周期'},
+            'atr_multiplier': {'type': 'float', 'default': 1.5, 'description': 'ATR 乘数'},
+            'bb_period': {'type': 'int', 'default': 20, 'description': '布林带周期'},
+            'bb_std': {'type': 'float', 'default': 2.0, 'description': '布林带标准差'},
+            'bb_width_threshold': {'type': 'float', 'default': 0.04, 'description': '布林带宽度阈值'},
+            'ma_period': {'type': 'int', 'default': 50, 'description': 'MA 周期'},
+        }
+    },
+    'adx': {
+        'name': 'ADX',
+        'description': '基于 ADX 的趋势强度判断 - ADX>=阈值时为趋势行情，否则为震荡',
+        'params': {
+            'period': {'type': 'int', 'default': 14, 'description': 'ADX 周期'},
+            'threshold': {'type': 'int', 'default': 25, 'description': '趋势阈值'},
+        }
+    },
+    'realtime': {
+        'name': 'RealTime',
+        'description': '实时市场状态判断算法 - 价格行为+波动率，增加状态惯性，震荡状态更稳定',
+        'params': {
+            'lookback_period': {'type': 'int', 'default': 20, 'description': '回看周期'},
+            'breakout_threshold': {'type': 'float', 'default': 0.02, 'description': '突破阈值'},
+            'consecutive_bars': {'type': 'int', 'default': 3, 'description': '连续K线数'},
+            'atr_period': {'type': 'int', 'default': 14, 'description': 'ATR 周期'},
+            'expansion_threshold': {'type': 'float', 'default': 1.5, 'description': '扩张阈值'},
+            'contraction_threshold': {'type': 'float', 'default': 0.7, 'description': '收缩阈值'},
+            'confirm_periods': {'type': 'int', 'default': 2, 'description': '确认周期数'},
+            'min_trend_signals': {'type': 'int', 'default': 4, 'description': '最小趋势信号数'},
+            'min_trend_confidence': {'type': 'float', 'default': 0.8, 'description': '最小趋势置信度'},
+            'min_range_duration': {'type': 'int', 'default': 5, 'description': '最小震荡持续天数'},
+        }
     }
 }
 
@@ -1537,7 +1574,7 @@ class MarketVisualizerServer:
                 start_ts = int(datetime.strptime(case['start_date'], '%Y-%m-%d').timestamp() * 1000)
                 end_ts = int(datetime.strptime(case['end_date'], '%Y-%m-%d').timestamp() * 1000) + 86400000 - 1
                 
-                klines = loop.run_until_complete(fetcher.fetch_and_cache(
+                klines = loop.run_until_complete(fetcher.fetch_kline(
                     symbol=case['symbol'],
                     interval=case['interval'],
                     start_time=start_ts,

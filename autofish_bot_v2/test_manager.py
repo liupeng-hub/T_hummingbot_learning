@@ -1,23 +1,28 @@
 #!/usr/bin/env python3
 """
-测试管理系统 - CLI， WebServer
+测试管理系统 - CLI 与 WebServer
 
 功能:
-1. 测试计划管理: 创建、读取、更新、归档
-2. 测试执行: 按计划执行测试场景
-3. 结果记录: 统一格式记录测试结果
-4. 历史管理: 测试历史索引和查询
-5. 对比分析: 多组测试结果对比
+1. 测试用例管理: 创建、查看、删除、执行
+2. 测试结果管理: 查看、删除、导出
+3. Web API 服务: 提供 RESTful 接口
 
 使用示例:
-    # 创建测试计划
-    python test_manager.py create-plan --name "行情感知测试" --type market_aware --symbol BTCUSDT
+    # 创建测试用例
+    python test_manager.py create-case --symbol BTCUSDT --date-range 20250101-20250131
     
-    # 执行测试计划
-    python test_manager.py run-plan --plan-id TP001
+    # 列出测试用例
+    python test_manager.py list-cases
     
-    # 查看历史
-    python test_manager.py history --symbol BTCUSDT
+    # 执行测试用例
+    python test_manager.py run-case <case_id>
+    
+    # 查看测试结果
+    python test_manager.py list-results
+    python test_manager.py show-result <result_id>
+    
+    # 启动 Web 服务
+    python test_manager.py serve --port 5002
 """
 
 import os
@@ -28,14 +33,11 @@ import subprocess
 import logging
 from datetime import datetime
 from pathlib import Path
-from typing import Optional, Dict, Any, List
-from dataclasses import dataclass, field, asdict
-from enum import Enum
-from pathlib import Path
-from datetime import datetime
-import json
+from typing import Dict, Any, List
+import asyncio
 
 from database.test_results_db import TestResultsDB, TestCase, TestResult, TradeDetail
+from binance_kline_fetcher import KlineFetcher
 
 # 配置日志
 def setup_logging():
@@ -53,539 +55,6 @@ def setup_logging():
     return logging.getLogger(__name__)
 
 logger = setup_logging()
-
-
-class TestType(str, Enum):
-    BACKTEST = "backtest"
-    MARKET_AWARE = "market_aware"
-    VISUALIZER = "visualizer"
-    OPTIMIZATION = "optimization"
-    AMPLITUDE = "amplitude"
-
-
-class PlanStatus(str, Enum):
-    DRAFT = "draft"
-    ACTIVE = "active"
-    RUNNING = "running"
-    COMPLETED = "completed"
-    ARCHIVED = "archived"
-
-
-@dataclass
-class TestScenario:
-    scenario_id: str
-    name: str
-    params: Dict[str, Any]
-    expected_output: List[str] = field(default_factory=list)
-
-
-@dataclass
-class TestPlan:
-    plan_id: str
-    plan_name: str
-    description: str
-    test_type: str
-    status: str
-    created_at: str
-    test_objective: Dict[str, Any]
-    test_parameters: Dict[str, Any]
-    test_scenarios: List[Dict[str, Any]] = field(default_factory=list)
-    expected_results: Dict[str, Any] = field(default_factory=dict)
-    execution: Dict[str, Any] = field(default_factory=dict)
-    updated_at: str = ""
-    search_space: Dict[str, Any] = field(default_factory=dict)
-    optimization_target: Dict[str, Any] = field(default_factory=dict)
-    
-    def to_dict(self) -> Dict[str, Any]:
-        return asdict(self)
-    
-    @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> 'TestPlan':
-        known_fields = {
-            'plan_id', 'plan_name', 'description', 'test_type', 'status',
-            'created_at', 'test_objective', 'test_parameters', 'test_scenarios',
-            'expected_results', 'execution', 'updated_at', 'search_space',
-            'optimization_target'
-        }
-        filtered_data = {k: v for k, v in data.items() if k in known_fields}
-        
-        # 设置默认值
-        if 'test_objective' not in filtered_data:
-            filtered_data['test_objective'] = {}
-        if 'test_parameters' not in filtered_data:
-            filtered_data['test_parameters'] = {}
-        
-        return cls(**filtered_data)
-
-
-class TestManager:
-    """测试管理器"""
-    
-    OUTPUT_DIR = "out"
-    TEST_PLANS_DIR = "test_plans"
-    TEST_HISTORY_DIR = "test_history"
-    TEST_COMPARISON_DIR = "test_comparison"
-    
-    TEST_TYPE_DIRS = {
-        TestType.BACKTEST: "backtest",
-        TestType.MARKET_AWARE: "market_aware",
-        TestType.VISUALIZER: "visualizer",
-        TestType.OPTIMIZATION: "optimization",
-        TestType.AMPLITUDE: "amplitude",
-    }
-    
-    EXECUTORS = {
-        TestType.BACKTEST: "binance_backtest.py",
-        TestType.MARKET_AWARE: "binance_backtest.py",
-        TestType.VISUALIZER: "market_status_visualizer.py",
-        TestType.OPTIMIZATION: "optuna_dual_thrust_optimizer.py",
-        TestType.AMPLITUDE: "autofish_core.py",
-    }
-    
-    def __init__(self, base_dir: str = None):
-        self.base_dir = Path(base_dir or os.path.dirname(os.path.abspath(__file__)))
-        self.output_dir = self.base_dir / self.OUTPUT_DIR
-        self.db = TestResultsDB(str(self.base_dir / "database/test_results.db"))
-        self._ensure_directories()
-        logger.info(f"TestManager 初始化完成, base_dir={self.base_dir}")
-    
-    def _ensure_directories(self):
-        for dir_name in ["test_report", self.TEST_HISTORY_DIR, self.TEST_COMPARISON_DIR]:
-            dir_path = self.output_dir / dir_name
-            dir_path.mkdir(parents=True, exist_ok=True)
-        logger.debug(f"目录结构已确保存在")
-    
-    def _get_next_plan_id(self) -> str:
-        conn = self.db._get_connection()
-        cursor = conn.cursor()
-        
-        cursor.execute("SELECT MAX(CAST(SUBSTR(plan_id, 3) AS INTEGER)) as max_id FROM test_plans")
-        row = cursor.fetchone()
-        conn.close()
-        
-        max_id = row['max_id'] if row and row['max_id'] else 0
-        return f"TP{max_id + 1:03d}"
-    
-    def create_plan(self, name: str, test_type: str, description: str = "",
-                    parameters: Dict[str, Any] = None, scenarios: List[Dict[str, Any]] = None,
-                    objective: Dict[str, Any] = None) -> TestPlan:
-        logger.info(f"创建测试计划: name={name}, test_type={test_type}")
-        plan_id = self._get_next_plan_id()
-        logger.debug(f"生成计划ID: {plan_id}")
-        now = datetime.now().isoformat()
-        
-        test_parameters = parameters or {}
-        test_scenarios = scenarios or []
-        test_objective = objective or {"primary": description}
-        
-        executor = self.EXECUTORS.get(TestType(test_type), "unknown.py")
-        
-        plan = TestPlan(
-            plan_id=plan_id,
-            plan_name=name,
-            description=description,
-            test_type=test_type,
-            status=PlanStatus.ACTIVE.value,
-            created_at=now,
-            test_objective=test_objective,
-            test_parameters=test_parameters,
-            test_scenarios=test_scenarios,
-            expected_results={"metrics": []},
-            execution={"executor": executor, "command_template": ""},
-            updated_at=now
-        )
-        
-        conn = self.db._get_connection()
-        cursor = conn.cursor()
-        
-        cursor.execute("""
-            INSERT INTO test_plans (plan_id, plan_name, test_type, description, status, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        """, (plan_id, name, test_type, description, 'active', now, now))
-        
-        for scenario in test_scenarios:
-            cursor.execute("""
-                INSERT INTO test_scenarios (plan_id, scenario_id, scenario_name, params_json)
-                VALUES (?, ?, ?, ?)
-            """, (plan_id, scenario['scenario_id'], scenario.get('name', ''), json.dumps(scenario.get('params', {}))))
-        
-        conn.commit()
-        conn.close()
-        
-        logger.info(f"测试计划创建成功: plan_id={plan_id}, name={name}")
-        return plan
-    
-    def load_plan(self, plan_id: str) -> Optional[TestPlan]:
-        logger.debug(f"加载测试计划: plan_id={plan_id}")
-        conn = self.db._get_connection()
-        cursor = conn.cursor()
-        
-        cursor.execute("SELECT * FROM test_plans WHERE plan_id = ?", (plan_id,))
-        row = cursor.fetchone()
-        
-        if not row:
-            conn.close()
-            return None
-        
-        plan_data = dict(row)
-        
-        # 解析 JSON 字段
-        if plan_data.get('test_objective'):
-            plan_data['test_objective'] = json.loads(plan_data['test_objective'])
-        else:
-            plan_data['test_objective'] = {}
-        
-        if plan_data.get('test_parameters'):
-            plan_data['test_parameters'] = json.loads(plan_data['test_parameters'])
-        else:
-            plan_data['test_parameters'] = {}
-        
-        # 解析 execution 字段
-        if plan_data.get('execution'):
-            plan_data['execution'] = json.loads(plan_data['execution'])
-        else:
-            plan_data['execution'] = {}
-        
-        cursor.execute("SELECT * FROM test_scenarios WHERE plan_id = ?", (plan_id,))
-        scenarios = []
-        for s in cursor.fetchall():
-            scenarios.append({
-                'scenario_id': s['scenario_id'],
-                'name': s['scenario_name'],
-                'params': json.loads(s['params_json']) if s['params_json'] else {}
-            })
-        
-        conn.close()
-        
-        plan_data['test_scenarios'] = scenarios
-        
-        logger.debug(f"测试计划加载成功: plan_id={plan_id}, scenarios_count={len(scenarios)}")
-        return TestPlan.from_dict(plan_data)
-    
-    def list_plans(self, status: str = None) -> List[TestPlan]:
-        conn = self.db._get_connection()
-        cursor = conn.cursor()
-        
-        if status:
-            cursor.execute("SELECT * FROM test_plans WHERE status = ? ORDER BY created_at DESC", (status,))
-        else:
-            cursor.execute("SELECT * FROM test_plans ORDER BY created_at DESC")
-        
-        plans = []
-        for row in cursor.fetchall():
-            plan_data = dict(row)
-            
-            # 解析 JSON 字段
-            if plan_data.get('test_objective'):
-                plan_data['test_objective'] = json.loads(plan_data['test_objective'])
-            else:
-                plan_data['test_objective'] = {}
-            
-            if plan_data.get('test_parameters'):
-                plan_data['test_parameters'] = json.loads(plan_data['test_parameters'])
-            else:
-                plan_data['test_parameters'] = {}
-            
-            # 解析 execution 字段
-            if plan_data.get('execution'):
-                plan_data['execution'] = json.loads(plan_data['execution'])
-            else:
-                plan_data['execution'] = {}
-            
-            cursor.execute("SELECT * FROM test_scenarios WHERE plan_id = ?", (plan_data['plan_id'],))
-            scenarios = []
-            for s in cursor.fetchall():
-                scenarios.append({
-                    'scenario_id': s['scenario_id'],
-                    'name': s['scenario_name'],
-                    'params': json.loads(s['params_json']) if s['params_json'] else {}
-                })
-            plan_data['test_scenarios'] = scenarios
-            plans.append(TestPlan.from_dict(plan_data))
-        
-        conn.close()
-        return plans
-    
-    def update_plan_status(self, plan_id: str, new_status: str) -> Optional[TestPlan]:
-        plan = self.load_plan(plan_id)
-        if not plan:
-            return None
-        
-        conn = self.db._get_connection()
-        cursor = conn.cursor()
-        cursor.execute(
-            "UPDATE test_plans SET status = ?, updated_at = ? WHERE plan_id = ?",
-            (new_status, datetime.now().isoformat(), plan_id)
-        )
-        conn.commit()
-        conn.close()
-        
-        return self.load_plan(plan_id)
-    
-    def get_report_dir(self, test_type: str) -> Path:
-        type_dir = self.TEST_TYPE_DIRS.get(TestType(test_type), "other")
-        return self.output_dir / "test_report" / type_dir
-    
-    def save_result(self, plan: TestPlan, scenario: Dict[str, Any], 
-                    result_data: Dict[str, Any], output_files: List[str] = None) -> str:
-        results_dir = self.get_report_dir(plan.test_type) / plan.plan_id
-        results_dir.mkdir(parents=True, exist_ok=True)
-        
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        result_id = f"{plan.plan_id}_{scenario['scenario_id']}_{timestamp}"
-        
-        result_content = self._generate_result_markdown(plan, scenario, result_data, output_files)
-        result_file = results_dir / f"{plan.plan_id}_{scenario['scenario_id']}_result.md"
-        
-        with open(result_file, 'w', encoding='utf-8') as f:
-            f.write(result_content)
-        
-        self._update_history(plan, scenario, result_data)
-        
-        return str(result_file)
-    
-    def _generate_result_markdown(self, plan: TestPlan, scenario: Dict[str, Any],
-                                   result_data: Dict[str, Any], output_files: List[str] = None) -> str:
-        lines = [
-            f"# 测试结果报告",
-            "",
-            "## 测试信息",
-            "",
-            "| 项目 | 值 |",
-            "|------|-----|",
-            f"| 测试计划 | {plan.plan_id} - {plan.plan_name} |",
-            f"| 测试场景 | {scenario['scenario_id']} - {scenario['name']} |",
-            f"| 测试类型 | {plan.test_type} |",
-            f"| 执行时间 | {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} |",
-            "",
-            "## 测试参数",
-            "",
-            "| 参数 | 值 |",
-            "|------|-----|",
-        ]
-        
-        for key, value in plan.test_parameters.items():
-            lines.append(f"| {key} | {value} |")
-        
-        for key, value in scenario.get('params', {}).items():
-            lines.append(f"| {key} | {value} |")
-        
-        lines.extend([
-            "",
-            "## 测试结果",
-            "",
-            "### 核心指标",
-            "",
-            "| 指标 | 值 |",
-            "|------|-----|",
-        ])
-        
-        for key, value in result_data.items():
-            lines.append(f"| {key} | {value} |")
-        
-        if output_files:
-            lines.extend([
-                "",
-                "## 输出文件",
-                "",
-            ])
-            for f in output_files:
-                lines.append(f"- {f}")
-        
-        lines.extend([
-            "",
-            "---",
-            f"测试ID: {plan.plan_id}_{scenario['scenario_id']}_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
-        ])
-        
-        return "\n".join(lines)
-    
-    def _update_history(self, plan: TestPlan, scenario: Dict[str, Any], 
-                        result_data: Dict[str, Any]):
-        history_dir = self.output_dir / self.TEST_HISTORY_DIR
-        history_dir.mkdir(parents=True, exist_ok=True)
-        
-        symbol = plan.test_parameters.get('symbol', 'UNKNOWN')
-        history_file = history_dir / f"{symbol}_history.md"
-        
-        if not history_file.exists():
-            header = [
-                f"# {symbol} 测试历史",
-                "",
-                "## 测试记录",
-                "",
-                "| 测试ID | 日期 | 测试计划 | 类型 | 核心指标 |",
-                "|--------|------|----------|------|----------|",
-            ]
-            with open(history_file, 'w', encoding='utf-8') as f:
-                f.write("\n".join(header) + "\n")
-        
-        metrics_str = ", ".join([f"{k}: {v}" for k, v in list(result_data.items())[:3]])
-        
-        with open(history_file, 'a', encoding='utf-8') as f:
-            f.write(f"| {plan.plan_id}_{scenario['scenario_id']} | {datetime.now().strftime('%Y-%m-%d')} | {plan.plan_name} | {plan.test_type} | {metrics_str} |\n")
-    
-    def generate_summary(self, plan_id: str) -> Optional[str]:
-        plan = self.load_plan(plan_id)
-        if not plan:
-            return None
-        
-        results_dir = self.get_report_dir(plan.test_type) / plan.plan_id
-        summary_file = results_dir / f"{plan.plan_id}_summary.md"
-        
-        lines = [
-            f"# 测试计划汇总报告",
-            "",
-            "## 测试计划信息",
-            "",
-            "| 项目 | 值 |",
-            "|------|-----|",
-            f"| 测试计划 | {plan.plan_id} - {plan.plan_name} |",
-            f"| 测试类型 | {plan.test_type} |",
-            f"| 创建时间 | {plan.created_at} |",
-            f"| 状态 | {plan.status} |",
-            "",
-            "## 测试场景结果",
-            "",
-            "| 场景 | 状态 | 核心指标 |",
-            "|------|------|----------|",
-        ]
-        
-        for scenario in plan.test_scenarios:
-            result_file = results_dir / f"{plan.plan_id}_{scenario['scenario_id']}_result.md"
-            status = "✅ 已完成" if result_file.exists() else "⏳ 待执行"
-            lines.append(f"| {scenario['scenario_id']} - {scenario['name']} | {status} | - |")
-        
-        with open(summary_file, 'w', encoding='utf-8') as f:
-            f.write("\n".join(lines))
-        
-        return str(summary_file)
-    
-    def compare_results(self, plan_id: str, scenario_ids: List[str] = None) -> str:
-        plan = self.load_plan(plan_id)
-        if not plan:
-            raise ValueError(f"测试计划不存在: {plan_id}")
-        
-        results_dir = self.get_report_dir(plan.test_type) / plan.plan_id
-        
-        comparison_id = f"CMP_{plan_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-        comparison_file = self.output_dir / self.TEST_COMPARISON_DIR / f"{comparison_id}.md"
-        
-        lines = [
-            f"# 测试对比报告",
-            "",
-            "## 对比信息",
-            "",
-            "| 项目 | 值 |",
-            "|------|-----|",
-            f"| 对比ID | {comparison_id} |",
-            f"| 测试计划 | {plan.plan_id} - {plan.plan_name} |",
-            f"| 创建时间 | {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} |",
-            "",
-            "## 场景对比",
-            "",
-            "| 场景 | 核心指标 |",
-            "|------|----------|",
-        ]
-        
-        scenarios = plan.test_scenarios
-        if scenario_ids:
-            scenarios = [s for s in scenarios if s['scenario_id'] in scenario_ids]
-        
-        for scenario in scenarios:
-            result_file = results_dir / f"{plan.plan_id}_{scenario['scenario_id']}_result.md"
-            if result_file.exists():
-                lines.append(f"| {scenario['scenario_id']} - {scenario['name']} | [查看]({result_file.name}) |")
-            else:
-                lines.append(f"| {scenario['scenario_id']} - {scenario['name']} | 未执行 |")
-        
-        with open(comparison_file, 'w', encoding='utf-8') as f:
-            f.write("\n".join(lines))
-        
-        return str(comparison_file)
-    
-    def run_plan(self, plan_id: str, scenario_id: str = None, dry_run: bool = False) -> List[str]:
-        """执行测试计划
-        
-        参数:
-            plan_id: 测试计划ID
-            scenario_id: 指定场景ID，不指定则执行所有场景
-            dry_run: 只显示命令，不执行
-            
-        返回:
-            执行的命令列表
-        """
-        logger.info(f"执行测试计划: plan_id={plan_id}, scenario_id={scenario_id}, dry_run={dry_run}")
-        plan = self.load_plan(plan_id)
-        if not plan:
-            logger.error(f"测试计划不存在: {plan_id}")
-            raise ValueError(f"测试计划不存在: {plan_id}")
-        
-        executor = plan.execution.get("executor", "")
-        command_template = plan.execution.get("command_template", "")
-        
-        if not executor or not command_template:
-            logger.error(f"测试计划缺少执行配置: executor={executor}, command_template={command_template}")
-            raise ValueError(f"测试计划缺少执行配置")
-        
-        results_dir = self.get_report_dir(plan.test_type) / plan.plan_id
-        
-        scenarios = plan.test_scenarios
-        if scenario_id:
-            scenarios = [s for s in scenarios if s.get("scenario_id") == scenario_id]
-        
-        logger.info(f"准备执行 {len(scenarios)} 个场景")
-        executed_commands = []
-        
-        for scenario in scenarios:
-            logger.info(f"执行场景: {scenario.get('scenario_id')} - {scenario.get('name')}")
-            scenario_output_dir = results_dir / f"{plan.plan_id}_{scenario['scenario_id']}_raw"
-            scenario_output_dir.mkdir(parents=True, exist_ok=True)
-            
-            params = {**plan.test_parameters, **scenario.get("params", {})}
-            
-            command = command_template
-            for key, value in params.items():
-                if value is None:
-                    continue
-                if isinstance(value, list):
-                    value = ",".join(str(v) for v in value)
-                command = command.replace(f"{{{key}}}", str(value))
-            
-            command = command.replace("{symbol}", params.get("symbol", ""))
-            command = command.replace("{date_range}", params.get("date_range", ""))
-            command = command.replace("{output_dir}", str(scenario_output_dir))
-            
-            import re
-            command = re.sub(r'\{[a-zA-Z_][a-zA-Z0-9_]*\}', '', command)
-            
-            print(f"\n{'='*60}")
-            print(f"[{plan.plan_id}] 执行场景: {scenario.get('scenario_id')} - {scenario.get('name')}")
-            print(f"输出目录: {scenario_output_dir}")
-            print(f"{'='*60}")
-            print(f"命令: {command}")
-            
-            if dry_run:
-                print("(dry-run) 跳过执行")
-                executed_commands.append(command)
-                continue
-            
-            try:
-                result = subprocess.run(command, shell=True, cwd=str(self.base_dir))
-                if result.returncode == 0:
-                    logger.info(f"场景 {scenario.get('scenario_id')} 执行成功")
-                    print(f"✅ 场景 {scenario.get('scenario_id')} 执行成功")
-                    print(f"📁 结果已保存到: {scenario_output_dir}")
-                else:
-                    logger.error(f"场景 {scenario.get('scenario_id')} 执行失败，返回码: {result.returncode}")
-                    print(f"❌ 场景 {scenario.get('scenario_id')} 执行失败，返回码: {result.returncode}")
-            except Exception as e:
-                logger.exception(f"执行异常: {e}")
-                print(f"❌ 执行异常: {e}")
-            
-            executed_commands.append(command)
-        
-        return executed_commands
 
 
 def _export_report(args):
@@ -862,48 +331,52 @@ def main():
     parser = argparse.ArgumentParser(description="测试管理系统")
     subparsers = parser.add_subparsers(dest="command", help="可用命令")
     
-    create_parser = subparsers.add_parser("create-plan", help="创建测试计划")
-    create_parser.add_argument("--name", required=True, help="测试计划名称")
-    create_parser.add_argument("--type", required=True, choices=[t.value for t in TestType], help="测试类型")
-    create_parser.add_argument("--description", default="", help="测试计划描述")
-    create_parser.add_argument("--symbol", help="交易标的")
-    create_parser.add_argument("--date-range", help="日期范围")
-    create_parser.add_argument("--scenarios", help="测试场景JSON文件")
+    create_case_parser = subparsers.add_parser("create-case", help="创建测试用例")
+    create_case_parser.add_argument("--symbol", required=True, help="交易对（必选）")
+    create_case_parser.add_argument("--date-range", required=True, help="时间范围 (yyyymmdd-yyyymmdd)（必选）")
+    create_case_parser.add_argument("--name", default="", help="用例名称")
+    create_case_parser.add_argument("--description", default="", help="用例描述")
+    create_case_parser.add_argument("--amplitude-params", help="振幅参数（JSON字符串）")
+    create_case_parser.add_argument("--market-params", help="行情算法参数（JSON字符串）")
+    create_case_parser.add_argument("--entry-params", help="入场价格策略参数（JSON字符串）")
+    create_case_parser.add_argument("--timeout-params", help="超时参数（JSON字符串）")
     
-    list_parser = subparsers.add_parser("list-plans", help="列出测试计划")
-    list_parser.add_argument("--status", choices=[s.value for s in PlanStatus], help="按状态筛选")
+    list_cases_parser = subparsers.add_parser("list-cases", help="列出测试用例")
+    list_cases_parser.add_argument("--symbol", help="按交易对筛选")
+    list_cases_parser.add_argument("--status", help="按状态筛选")
+    list_cases_parser.add_argument("--limit", type=int, default=100, help="返回数量限制")
     
-    show_parser = subparsers.add_parser("show-plan", help="查看测试计划")
-    show_parser.add_argument("--plan-id", required=True, help="测试计划ID")
+    show_case_parser = subparsers.add_parser("show-case", help="查看测试用例详情")
+    show_case_parser.add_argument("case_id", help="测试用例ID")
     
-    run_parser = subparsers.add_parser("run-plan", help="执行测试计划")
-    run_parser.add_argument("--plan-id", required=True, help="测试计划ID")
-    run_parser.add_argument("--scenario", help="指定场景ID，不指定则执行所有场景")
-    run_parser.add_argument("--dry-run", action="store_true", help="只显示命令，不执行")
+    delete_case_parser = subparsers.add_parser("delete-case", help="删除测试用例")
+    delete_case_parser.add_argument("case_id", help="测试用例ID")
     
-    summary_parser = subparsers.add_parser("summary", help="生成测试汇总")
-    summary_parser.add_argument("--plan-id", required=True, help="测试计划ID")
+    reset_case_parser = subparsers.add_parser("reset-case", help="重置测试用例（清除测试结果，恢复为可执行状态）")
+    reset_case_parser.add_argument("case_id", help="测试用例ID")
     
-    compare_parser = subparsers.add_parser("compare", help="生成对比报告")
-    compare_parser.add_argument("--plan-id", required=True, help="测试计划ID")
-    compare_parser.add_argument("--scenarios", help="要对比的场景ID，逗号分隔")
+    run_case_parser = subparsers.add_parser("run-case", help="执行测试用例")
+    run_case_parser.add_argument("case_id", help="测试用例ID")
+    run_case_parser.add_argument("--dry-run", action="store_true", help="只显示命令，不执行")
     
-    history_parser = subparsers.add_parser("history", help="查看测试历史")
-    history_parser.add_argument("--symbol", help="按标的筛选")
-    history_parser.add_argument("--type", help="按测试类型筛选")
+    list_results_parser = subparsers.add_parser("list-results", help="列出测试结果")
+    list_results_parser.add_argument("--case-id", help="按用例ID筛选")
+    list_results_parser.add_argument("--symbol", help="按交易对筛选")
+    list_results_parser.add_argument("--status", help="按状态筛选")
+    list_results_parser.add_argument("--limit", type=int, default=100, help="返回数量限制")
     
-    query_parser = subparsers.add_parser("query-results", help="查询测试结果")
-    query_parser.add_argument("--symbol", help="按标的筛选")
-    query_parser.add_argument("--type", help="按测试类型筛选")
-    query_parser.add_argument("--plan-id", help="按计划ID筛选")
-    query_parser.add_argument("--limit", type=int, default=20, help="返回结果数量")
+    show_result_parser = subparsers.add_parser("show-result", help="查看测试结果详情")
+    show_result_parser.add_argument("result_id", help="测试结果ID")
+    
+    delete_result_parser = subparsers.add_parser("delete-result", help="删除测试结果")
+    delete_result_parser.add_argument("result_id", help="测试结果ID")
     
     export_parser = subparsers.add_parser("export", help="导出测试报告")
-    export_parser.add_argument("id", help="执行ID/结果ID/优化ID")
+    export_parser.add_argument("id", help="执行ID/结果ID")
     export_parser.add_argument("--format", choices=["md", "csv", "png", "html", "all"], default="md", help="导出格式")
     export_parser.add_argument("--type", choices=["backtest", "market_aware", "visualizer", "optimizer", "longport"], 
                                help="报告类型（自动检测时可不指定）")
-    export_parser.add_argument("--output", help="输出文件路径（不指定则使用默认路径）")
+    export_parser.add_argument("--output", help="输出文件路径")
     
     stats_parser = subparsers.add_parser("stats", help="查看统计数据")
     
@@ -914,109 +387,190 @@ def main():
     
     args = parser.parse_args()
     
-    manager = TestManager()
+    db = TestResultsDB()
     
-    if args.command == "create-plan":
-        parameters = {}
-        if args.symbol:
-            parameters["symbol"] = args.symbol
-        if args.date_range:
-            parameters["date_range"] = args.date_range
+    if args.command == "create-case":
+        date_parts = args.date_range.split("-")
+        if len(date_parts) != 2:
+            print(f"❌ 日期格式错误，应为 yyyymmdd-yyyymmdd")
+            sys.exit(1)
         
-        scenarios = []
-        if args.scenarios and os.path.exists(args.scenarios):
-            with open(args.scenarios, 'r') as f:
-                scenarios = json.load(f)
+        date_start = f"{date_parts[0][:4]}-{date_parts[0][4:6]}-{date_parts[0][6:8]}"
+        date_end = f"{date_parts[1][:4]}-{date_parts[1][4:6]}-{date_parts[1][6:8]}"
         
-        plan = manager.create_plan(
-            name=args.name,
-            test_type=args.type,
+        case = TestCase(
+            case_id='',
+            name=args.name or f"{args.symbol}_{args.date_range}",
+            symbol=args.symbol,
+            date_start=date_start,
+            date_end=date_end,
+            test_type='market_aware',
             description=args.description,
-            parameters=parameters,
-            scenarios=scenarios
+            amplitude=args.amplitude_params or '{}',
+            market=args.market_params or '{"algorithm": "always_ranging"}',
+            entry=args.entry_params or '{}',
+            timeout=args.timeout_params or '{"a1_timeout_minutes": 0}',
+            status='draft'
         )
-        print(f"✅ 测试计划已创建: {plan.plan_id} - {plan.plan_name}")
-        print(f"   状态: {plan.status}")
-        print(f"   类型: {plan.test_type}")
-    
-    elif args.command == "list-plans":
-        plans = manager.list_plans(args.status)
-        if not plans:
-            print("暂无测试计划")
+        
+        case_id = db.create_case(case)
+        if case_id:
+            print(f"✅ 测试用例已创建: {case_id}")
+            print(f"   名称: {case.name}")
+            print(f"   交易对: {case.symbol}")
+            print(f"   日期范围: {date_start} ~ {date_end}")
         else:
-            print(f"共 {len(plans)} 个测试计划:\n")
-            for plan in plans:
-                print(f"  {plan.plan_id} | {plan.plan_name} | {plan.test_type} | {plan.status}")
-    
-    elif args.command == "show-plan":
-        plan = manager.load_plan(args.plan_id)
-        if plan:
-            print(json.dumps(plan.to_dict(), indent=2, ensure_ascii=False))
-        else:
-            print(f"❌ 测试计划不存在: {args.plan_id}")
-    
-    elif args.command == "run-plan":
-        try:
-            commands = manager.run_plan(args.plan_id, args.scenario, args.dry_run)
-            print(f"\n✅ 执行完成，共 {len(commands)} 个场景")
-        except ValueError as e:
-            logger.error(f"执行测试计划失败: {e}")
-            print(f"❌ {e}")
+            print(f"❌ 创建测试用例失败")
             sys.exit(1)
     
-    elif args.command == "summary":
-        summary_file = manager.generate_summary(args.plan_id)
-        if summary_file:
-            print(f"✅ 汇总报告已生成: {summary_file}")
-        else:
-            print(f"❌ 测试计划不存在: {args.plan_id}")
-    
-    elif args.command == "compare":
-        scenario_ids = args.scenarios.split(",") if args.scenarios else None
-        comparison_file = manager.compare_results(args.plan_id, scenario_ids)
-        print(f"✅ 对比报告已生成: {comparison_file}")
-    
-    elif args.command == "history":
-        history_dir = manager.output_dir / manager.TEST_HISTORY_DIR
-        if args.symbol:
-            history_file = history_dir / f"{args.symbol}_history.md"
-            if history_file.exists():
-                with open(history_file, 'r') as f:
-                    print(f.read())
-            else:
-                print(f"暂无 {args.symbol} 测试历史")
-        else:
-            for f in history_dir.glob("*_history.md"):
-                print(f"\n=== {f.stem} ===")
-                with open(f, 'r') as fp:
-                    print(fp.read())
-    
-    elif args.command == "query-results":
+    elif args.command == "list-cases":
         filters = {}
         if args.symbol:
             filters['symbol'] = args.symbol
-        if args.type:
-            filters['test_type'] = args.type
-        if args.plan_id:
-            filters['plan_id'] = args.plan_id
+        if args.status:
+            filters['status'] = args.status
         
-        db = TestResultsDB()
-        results = db.query_results(filters, args.limit)
+        cases = db.list_cases(filters, args.limit, 0)
+        
+        if not cases:
+            print("暂无测试用例")
+        else:
+            print(f"\n共 {len(cases)} 个测试用例:\n")
+            print(f"{'用例ID':<40} | {'名称':<30} | {'交易对':<10} | {'状态':<10} | {'日期范围'}")
+            print("-" * 120)
+            for c in cases:
+                date_range = f"{c.get('date_start', '')} ~ {c.get('date_end', '')}"
+                print(f"{c['case_id']:<40} | {c.get('name', '')[:30]:<30} | {c.get('symbol', ''):<10} | {c.get('status', ''):<10} | {date_range}")
+    
+    elif args.command == "show-case":
+        case = db.get_case(args.case_id)
+        if not case:
+            print(f"❌ 测试用例不存在: {args.case_id}")
+            sys.exit(1)
+        
+        for field in ['amplitude', 'market', 'entry', 'timeout']:
+            if case.get(field):
+                case[field] = json.loads(case[field])
+        
+        print(json.dumps(case, indent=2, ensure_ascii=False, default=str))
+    
+    elif args.command == "delete-case":
+        success = db.delete_case(args.case_id)
+        if success:
+            print(f"✅ 测试用例已删除: {args.case_id}")
+        else:
+            print(f"❌ 删除失败: {args.case_id}")
+            sys.exit(1)
+    
+    elif args.command == "reset-case":
+        success = db.reset_case(args.case_id)
+        if success:
+            print(f"✅ 测试用例已重置: {args.case_id}")
+            print(f"   状态已恢复为 active，可以重新执行")
+        else:
+            print(f"❌ 重置失败: {args.case_id}")
+            sys.exit(1)
+    
+    elif args.command == "run-case":
+        case = db.get_case(args.case_id)
+        if not case:
+            print(f"❌ 测试用例不存在: {args.case_id}")
+            sys.exit(1)
+        
+        if case['status'] not in ('draft', 'active'):
+            print(f"❌ 状态 {case['status']} 不允许执行")
+            sys.exit(1)
+        
+        amplitude = case.get('amplitude') or '{}'
+        market = case.get('market') or '{"algorithm": "always_ranging"}'
+        entry = case.get('entry') or '{}'
+        timeout = case.get('timeout') or '{"a1_timeout_minutes": 0}'
+        
+        date_start = case['date_start'].replace('-', '')
+        date_end = case['date_end'].replace('-', '')
+        date_range = f"{date_start}-{date_end}"
+        
+        cmd = [
+            'python3', 'binance_backtest.py',
+            '--symbol', case['symbol'],
+            '--date-range', date_range,
+            '--case-id', args.case_id,
+            '--interval', case.get('interval', '1m'),
+            '--amplitude-params', amplitude,
+            '--market-params', market,
+            '--entry-params', entry,
+            '--timeout-params', timeout
+        ]
+        
+        print(f"\n{'='*60}")
+        print(f"执行测试用例: {args.case_id}")
+        print(f"交易对: {case['symbol']}")
+        print(f"日期范围: {case['date_start']} ~ {case['date_end']}")
+        print(f"{'='*60}")
+        print(f"命令: {' '.join(cmd)}")
+        
+        if args.dry_run:
+            print("(dry-run) 跳过执行")
+        else:
+            db.update_case_status(args.case_id, 'running')
+            try:
+                result = subprocess.run(cmd, cwd=str(Path(__file__).parent))
+                if result.returncode == 0:
+                    db.update_case_status(args.case_id, 'completed')
+                    print(f"✅ 测试用例执行成功")
+                else:
+                    db.update_case_status(args.case_id, 'error')
+                    print(f"❌ 测试用例执行失败，返回码: {result.returncode}")
+            except Exception as e:
+                db.update_case_status(args.case_id, 'error')
+                print(f"❌ 执行异常: {e}")
+                sys.exit(1)
+    
+    elif args.command == "list-results":
+        filters = {}
+        if args.case_id:
+            filters['case_id'] = args.case_id
+        if args.symbol:
+            filters['symbol'] = args.symbol
+        if args.status:
+            filters['status'] = args.status
+        
+        results = db.list_results(filters, args.limit, 0)
         
         if not results:
             print("暂无测试结果")
         else:
-            print(f"\n共 {len(results)} 条结果:\n")
+            print(f"\n共 {len(results)} 条测试结果:\n")
+            print(f"{'结果ID':<40} | {'用例ID':<36} | {'交易对':<10} | {'胜率':<8} | {'收益率':<10} | {'净收益':<12}")
+            print("-" * 130)
             for r in results:
-                print(f"  {r.get('execution_id')} | {r.get('symbol')} | {r.get('test_type')} | "
-                      f"胜率:{r.get('win_rate', 0):.1f}% | 净收益:{r.get('net_profit', 0):.2f} | "
-                      f"执行时间:{r.get('executed_at', '')}")
+                print(f"{r['result_id']:<40} | {(r.get('case_id') or '')[:36]:<36} | {r.get('symbol', ''):<10} | {r.get('win_rate', 0):.1f}% | {r.get('roi', 0):.2f}% | {r.get('net_profit', 0):.2f}")
+    
+    elif args.command == "show-result":
+        result = db.get_result(args.result_id)
+        if not result:
+            print(f"❌ 测试结果不存在: {args.result_id}")
+            sys.exit(1)
+        
+        if result.get('trading_statuses'):
+            result['trading_statuses'] = json.loads(result['trading_statuses'])
+        if result.get('extra_metrics'):
+            result['extra_metrics'] = json.loads(result['extra_metrics'])
+        
+        print(json.dumps(result, indent=2, ensure_ascii=False, default=str))
+    
+    elif args.command == "delete-result":
+        success = db.delete_result(args.result_id)
+        if success:
+            print(f"✅ 测试结果已删除: {args.result_id}")
+        else:
+            print(f"❌ 删除失败: {args.result_id}")
+            sys.exit(1)
     
     elif args.command == "export":
         _export_report(args)
     
     elif args.command == "stats":
-        db = TestResultsDB()
         stats = db.get_statistics()
         
         print("\n📊 测试统计:")
@@ -1480,7 +1034,30 @@ def create_flask_app():
                 if case.get(field):
                     case[field] = json.loads(case[field])
             
-            return jsonify({'success': True, 'data': case})
+            test_case_info = {
+                'case_id': case.get('case_id'),
+                'name': case.get('name'),
+                'status': case.get('status'),
+                'symbol': case.get('symbol'),
+                'test_type': case.get('test_type'),
+                'date_start': case.get('date_start'),
+                'date_end': case.get('date_end'),
+                'description': case.get('description'),
+                'interval': case.get('interval', '1m'),
+                'created_at': case.get('created_at'),
+                'updated_at': case.get('updated_at'),
+                'success': True
+            }
+            
+            return jsonify({
+                'data': {
+                    'test_case': test_case_info,
+                    'amplitude': case.get('amplitude', {}),
+                    'market': case.get('market', {}),
+                    'entry': case.get('entry', {}),
+                    'timeout': case.get('timeout', {})
+                }
+            })
         except Exception as e:
             return jsonify({'success': False, 'error': str(e)})
     
@@ -1552,6 +1129,7 @@ def create_flask_app():
                 '--symbol', case['symbol'],
                 '--date-range', f"{case['date_start']}-{case['date_end']}",
                 '--case-id', case_id,
+                '--interval', case.get('interval', '1m'),
                 '--amplitude-params', json.dumps(amplitude),
                 '--market-params', json.dumps(market),
                 '--entry-params', json.dumps(entry),
@@ -1561,8 +1139,20 @@ def create_flask_app():
             import subprocess
             import threading
             
+            db.update_case_status(case_id, 'running')
+            
             def run_backtest():
-                result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+                try:
+                    result = subprocess.run(cmd, capture_output=True, text=True, timeout=3600)
+                    if result.returncode == 0:
+                        db.update_case_status(case_id, 'completed')
+                        print(f"[{case_id}] 测试完成")
+                    else:
+                        db.update_case_status(case_id, 'error')
+                        print(f"[{case_id}] 测试失败: {result.stderr}")
+                except Exception as e:
+                    db.update_case_status(case_id, 'error')
+                    print(f"[{case_id}] 测试异常: {e}")
             
             thread = threading.Thread(target=run_backtest)
             thread.start()
@@ -1639,9 +1229,75 @@ def create_flask_app():
             
             trades = db.get_trade_details(result_id)
             
+            for t in trades:
+                if t.get('entry_time'):
+                    t['entry_date'] = t['entry_time'].split()[0] if ' ' in t['entry_time'] else t['entry_time']
+                if t.get('exit_time'):
+                    t['exit_date'] = t['exit_time'].split()[0] if ' ' in t['exit_time'] else t['exit_time']
+            
+            klines = []
+            symbol = result.get('symbol')
+            start_time = result.get('start_time')
+            end_time = result.get('end_time')
+            
+            case = None
+            if result.get('case_id'):
+                case = db.get_case(result.get('case_id'))
+            
+            interval = request.args.get('interval')
+            if not interval:
+                if case and case.get('interval'):
+                    interval = case.get('interval')
+                else:
+                    interval = '1m'
+            
+            if not start_time or not end_time:
+                if trades:
+                    if not start_time:
+                        start_time = min(t.get('entry_time') for t in trades if t.get('entry_time'))
+                    if not end_time:
+                        end_time = max(t.get('exit_time') for t in trades if t.get('exit_time'))
+                
+                if (not start_time or not end_time) and result.get('case_id'):
+                    case = db.get_case(result.get('case_id'))
+                    if case:
+                        if not start_time and case.get('date_start'):
+                            start_time = case.get('date_start')
+                        if not end_time and case.get('date_end'):
+                            end_time = case.get('date_end')
+            
+            if symbol and start_time and end_time:
+                try:
+                    fetcher = KlineFetcher()
+                    start_str = start_time.split()[0] if ' ' in start_time else start_time
+                    end_str = end_time.split()[0] if ' ' in end_time else end_time
+                    start_dt = datetime.strptime(start_str, '%Y-%m-%d')
+                    end_dt = datetime.strptime(end_str, '%Y-%m-%d')
+                    start_ts = int(start_dt.timestamp() * 1000)
+                    end_ts = int(end_dt.timestamp() * 1000)
+                    
+                    async def fetch_klines_async():
+                        return await fetcher.fetch_kline(symbol, interval, start_ts, end_ts)
+                    
+                    raw_klines = asyncio.run(fetch_klines_async())
+                    
+                    for k in raw_klines:
+                        dt = datetime.fromtimestamp(k['timestamp'] / 1000)
+                        klines.append({
+                            'date': dt.strftime('%Y-%m-%d'),
+                            'timestamp': k['timestamp'],
+                            'open': float(k['open']),
+                            'high': float(k['high']),
+                            'low': float(k['low']),
+                            'close': float(k['close']),
+                            'volume': float(k['volume'])
+                        })
+                except Exception as e:
+                    logger.error(f"获取K线数据失败: {e}")
+            
             chart_data = {
                 'result': result,
-                'klines': [],
+                'klines': klines,
                 'trades': trades
             }
             

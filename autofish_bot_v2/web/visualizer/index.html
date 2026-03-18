@@ -441,6 +441,9 @@
                         <select v-model="newTest.algorithm" @change="onAlgorithmChange">
                             <option v-for="(info, name) in algorithms" :key="name" :value="name">{{ info.name }}</option>
                         </select>
+                        <div v-if="currentAlgorithmDescription" style="margin-top: 8px; padding: 10px; background: #f0f4ff; border-radius: 6px; font-size: 13px; color: #3730a3; line-height: 1.5;">
+                            <strong>算法说明：</strong>{{ currentAlgorithmDescription }}
+                        </div>
                     </div>
                     
                     <div v-if="currentAlgorithmParams" class="param-group">
@@ -527,6 +530,11 @@
                 const currentAlgorithmParams = computed(() => {
                     const algo = algorithms.value[newTest.algorithm];
                     return algo?.params || null;
+                });
+                
+                const currentAlgorithmDescription = computed(() => {
+                    const algo = algorithms.value[newTest.algorithm];
+                    return algo?.description || '';
                 });
                 
                 const canCreateTest = computed(() => {
@@ -1172,6 +1180,20 @@
                     });
                     const sortedDates = Array.from(allDates).sort();
                     
+                    const mergedOhlc = [];
+                    const mergedDateMap = {};
+                    sortedDates.forEach((date, idx) => {
+                        for (const result of compareResults.value) {
+                            const dailyStatuses = result.daily_statuses || [];
+                            const d = dailyStatuses.find(ds => ds.date === date);
+                            if (d) {
+                                mergedOhlc.push([d.open_price, d.close_price, d.low_price, d.high_price]);
+                                mergedDateMap[date] = d;
+                                return;
+                            }
+                        }
+                    });
+                    
                     const datasets = compareResults.value.map((result, idx) => {
                         const dailyStatuses = result.daily_statuses || [];
                         const dateMap = {};
@@ -1181,15 +1203,12 @@
                         
                         const validDates = sortedDates.filter(date => dateMap[date]);
                         
-                        const ohlc = validDates.map(date => {
-                            const d = dateMap[date];
-                            return [d.open_price, d.close_price, d.low_price, d.high_price];
-                        });
-                        
                         const statusGroups = [];
                         let currentGroup = null;
-                        validDates.forEach((date, i) => {
+                        sortedDates.forEach((date, i) => {
                             const d = dateMap[date];
+                            if (!d) return;
+                            
                             if (currentGroup === null || currentGroup.status !== d.status) {
                                 if (currentGroup !== null) {
                                     statusGroups.push(currentGroup);
@@ -1211,7 +1230,6 @@
                         
                         return {
                             name: `${result.test_case.algorithm}`,
-                            ohlc: ohlc,
                             validDates: validDates,
                             statusGroups: statusGroups,
                             dateMap: dateMap,
@@ -1238,6 +1256,7 @@
                         const xAxes = [];
                         const yAxes = [];
                         const series = [];
+                        const legendData = datasets.map(ds => ds.name);
                         
                         for (let i = 0; i < numDatasets; i++) {
                             const topOffset = 70 + i * (colorBarHeight + colorBarGap);
@@ -1321,22 +1340,22 @@
                             splitArea: { show: true },
                         });
                         
-                        datasets.forEach((ds, dsIdx) => {
+                        if (mergedOhlc.length > 0) {
                             series.push({
-                                name: ds.name,
+                                name: 'K线',
                                 type: 'candlestick',
                                 xAxisIndex: klineGridIndex,
                                 yAxisIndex: klineGridIndex,
-                                data: ds.ohlc,
+                                data: mergedOhlc,
                                 itemStyle: {
                                     color: '#ef4444',
                                     color0: '#22c55e',
                                     borderColor: '#ef4444',
                                     borderColor0: '#22c55e',
                                 },
-                                z: dsIdx + 2,
+                                z: 1,
                             });
-                        });
+                        }
                         
                         const xAxisIndices = Array.from({ length: numDatasets + 1 }, (_, i) => i);
                         
@@ -1352,7 +1371,7 @@
                                 axisPointer: { type: 'cross' },
                             },
                             legend: {
-                                data: datasets.map(ds => ds.name),
+                                data: legendData,
                                 top: 40,
                             },
                             grid: grids,
@@ -1370,6 +1389,7 @@
                         const layerGap = priceRange * 0.08;
                         
                         const series = [];
+                        const legendData = [];
                         
                         datasets.forEach((ds, dsIdx) => {
                             const baseGap = layerGap * dsIdx;
@@ -1395,10 +1415,14 @@
                                 ];
                             });
                             
+                            legendData.push(ds.name);
+                            
+                            const ohlcData = dsIdx === 0 ? mergedOhlc : [];
+                            
                             series.push({
                                 name: ds.name,
                                 type: 'candlestick',
-                                data: ds.ohlc,
+                                data: ohlcData,
                                 itemStyle: {
                                     color: '#ef4444',
                                     color0: '#22c55e',
@@ -1425,7 +1449,7 @@
                                 axisPointer: { type: 'cross' },
                             },
                             legend: {
-                                data: datasets.map(ds => ds.name),
+                                data: legendData,
                                 top: 40,
                             },
                             grid: [
@@ -1580,6 +1604,7 @@
                     renderMode,
                     newTest,
                     currentAlgorithmParams,
+                    currentAlgorithmDescription,
                     canCreateTest,
                     loadTestCases,
                     onTestCaseClick,

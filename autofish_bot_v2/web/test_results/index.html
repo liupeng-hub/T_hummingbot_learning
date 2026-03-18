@@ -356,242 +356,425 @@
                     <form id="caseForm">
                         <input type="hidden" id="editCaseId" value="">
                         
-                        <h6>基本信息</h6>
-                        <div class="row mb-3">
-                            <div class="col-md-4">
-                                <label class="form-label">用例名称</label>
-                                <input type="text" class="form-control" id="formCaseName" placeholder="如: BTCUSDT基础回测">
-                            </div>
-                            <div class="col-md-4">
-                                <label class="form-label">测试类型</label>
-                                <select class="form-select" id="formTestType">
-                                    <option value="backtest">普通回测</option>
-                                    <option value="market_aware">行情感知回测</option>
-                                </select>
-                            </div>
-                            <div class="col-md-4">
-                                <label class="form-label">状态</label>
-                                <select class="form-select" id="formCaseStatus">
-                                    <option value="draft">草稿</option>
-                                    <option value="active">激活</option>
-                                </select>
-                            </div>
-                        </div>
-                        <div class="row mb-3">
-                            <div class="col-md-4">
-                                <label class="form-label">标的 *</label>
-                                <input type="text" class="form-control" id="formSymbol" placeholder="如: BTCUSDT" required>
-                            </div>
-                            <div class="col-md-4">
-                                <label class="form-label">开始日期 *</label>
-                                <input type="date" class="form-control" id="formDateStart" required>
-                            </div>
-                            <div class="col-md-4">
-                                <label class="form-label">结束日期 *</label>
-                                <input type="date" class="form-control" id="formDateEnd" required>
-                            </div>
-                        </div>
-                        <div class="row mb-3">
-                            <div class="col-md-12">
-                                <label class="form-label">描述</label>
-                                <textarea class="form-control" id="formDescription" rows="2" placeholder="测试用例描述"></textarea>
-                            </div>
-                        </div>
+                        <ul class="nav nav-tabs mb-3" id="caseFormTabs" role="tablist">
+                            <li class="nav-item" role="presentation">
+                                <button class="nav-link active" id="basic-tab" data-bs-toggle="tab" data-bs-target="#basic-tab-pane" type="button" role="tab">基本信息</button>
+                            </li>
+                            <li class="nav-item" role="presentation">
+                                <button class="nav-link" id="amplitude-tab" data-bs-toggle="tab" data-bs-target="#amplitude-tab-pane" type="button" role="tab">振幅参数</button>
+                            </li>
+                            <li class="nav-item" role="presentation">
+                                <button class="nav-link" id="market-tab" data-bs-toggle="tab" data-bs-target="#market-tab-pane" type="button" role="tab">行情算法</button>
+                            </li>
+                            <li class="nav-item" role="presentation">
+                                <button class="nav-link" id="entry-tab" data-bs-toggle="tab" data-bs-target="#entry-tab-pane" type="button" role="tab">入场策略</button>
+                            </li>
+                            <li class="nav-item" role="presentation">
+                                <button class="nav-link" id="timeout-tab" data-bs-toggle="tab" data-bs-target="#timeout-tab-pane" type="button" role="tab">超时参数</button>
+                            </li>
+                        </ul>
                         
-                        <h6>振幅参数 (amplitude)</h6>
-                        <div class="row mb-3">
-                            <div class="col-md-3">
-                                <label class="form-label">衰减因子</label>
-                                <input type="number" step="0.1" class="form-control" id="formDecayFactor" placeholder="默认: 0.5">
-                            </div>
-                            <div class="col-md-3">
-                                <label class="form-label">止损比例</label>
-                                <input type="number" step="0.01" class="form-control" id="formStopLoss" placeholder="默认: 0.08">
-                            </div>
-                            <div class="col-md-3">
-                                <label class="form-label">总金额</label>
-                                <input type="number" class="form-control" id="formTotalAmount" placeholder="默认: 10000">
-                            </div>
-                            <div class="col-md-3">
-                                <label class="form-label">杠杆倍数</label>
-                                <input type="number" class="form-control" id="formLeverage" placeholder="默认: 10">
-                            </div>
-                        </div>
-                        <div class="row mb-3">
-                            <div class="col-md-3">
-                                <label class="form-label">最大入场次数</label>
-                                <input type="number" class="form-control" id="formMaxEntries" placeholder="默认: 4">
-                            </div>
-                            <div class="col-md-3">
-                                <label class="form-label">网格间距</label>
-                                <input type="number" step="0.01" class="form-control" id="formGridSpacing" placeholder="默认: 0.01">
-                            </div>
-                            <div class="col-md-3">
-                                <label class="form-label">止盈比例</label>
-                                <input type="number" step="0.01" class="form-control" id="formExitProfit" placeholder="默认: 0.01">
-                            </div>
-                        </div>
-                        <div class="row mb-3">
-                            <div class="col-md-6">
-                                <label class="form-label">有效振幅 (valid_amplitudes)</label>
-                                <input type="text" class="form-control" id="formValidAmplitudes" placeholder='默认: [1, 2, 3, 4, 5, 6, 7, 8, 9]'>
-                                <small class="text-muted">JSON数组格式，如: [1, 2, 3, 4, 5]</small>
-                            </div>
-                            <div class="col-md-6">
-                                <label class="form-label">权重 (weights)</label>
-                                <input type="text" class="form-control" id="formWeights" placeholder='默认: [0.0831, 0.2996, ...]'>
-                                <small class="text-muted">JSON数组格式，与valid_amplitudes长度一致</small>
-                            </div>
-                        </div>
-                        
-                        <h6>行情算法参数 (market)</h6>
-                        <div class="row mb-3">
-                            <div class="col-md-4">
-                                <label class="form-label">算法</label>
-                                <select class="form-select" id="formMarketAlgorithm" onchange="onMarketAlgorithmChange()">
-                                    <option value="always_ranging">always_ranging (总是震荡)</option>
-                                    <option value="dual_thrust">dual_thrust</option>
-                                    <option value="improved">improved</option>
-                                    <option value="composite">composite</option>
-                                    <option value="adx">adx</option>
-                                </select>
-                            </div>
-                            <div class="col-md-4">
-                                <label class="form-label">允许交易状态</label>
-                                <input type="text" class="form-control" id="formTradingStatuses" placeholder="如: ranging (逗号分隔)">
-                            </div>
-                        </div>
-                        
-                        <div id="dualThrustParams" class="algorithm-params" style="display:none;">
-                            <div class="row mb-3">
-                                <div class="col-md-2">
-                                    <label class="form-label">回看天数</label>
-                                    <input type="number" class="form-control" id="formNDays" placeholder="默认: 4">
+                        <div class="tab-content" id="caseFormTabContent">
+                            <div class="tab-pane fade show active" id="basic-tab-pane" role="tabpanel" aria-labelledby="basic-tab" tabindex="0">
+                                <div class="row mb-3">
+                                    <div class="col-md-4">
+                                        <label class="form-label">用例名称</label>
+                                        <input type="text" class="form-control" id="formCaseName" placeholder="如: BTCUSDT基础回测">
+                                    </div>
+                                    <div class="col-md-4">
+                                        <label class="form-label">测试类型</label>
+                                        <select class="form-select" id="formTestType">
+                                            <option value="backtest">普通回测</option>
+                                            <option value="market_aware">行情感知回测</option>
+                                        </select>
+                                    </div>
+                                    <div class="col-md-4">
+                                        <label class="form-label">状态</label>
+                                        <select class="form-select" id="formCaseStatus">
+                                            <option value="draft">草稿</option>
+                                            <option value="active">激活</option>
+                                        </select>
+                                    </div>
                                 </div>
-                                <div class="col-md-2">
-                                    <label class="form-label">上轨系数 K1</label>
-                                    <input type="number" step="0.1" class="form-control" id="formK1" placeholder="默认: 0.4">
+                                <div class="row mb-3">
+                                    <div class="col-md-4">
+                                        <label class="form-label">标的 *</label>
+                                        <input type="text" class="form-control" id="formSymbol" placeholder="如: BTCUSDT" required>
+                                    </div>
+                                    <div class="col-md-4">
+                                        <label class="form-label">K线周期</label>
+                                        <select class="form-select" id="formInterval">
+                                            <option value="1m">1分钟</option>
+                                            <option value="5m">5分钟</option>
+                                            <option value="15m">15分钟</option>
+                                            <option value="1h">1小时</option>
+                                            <option value="4h">4小时</option>
+                                            <option value="1d">1天</option>
+                                        </select>
+                                    </div>
+                                    <div class="col-md-4">
+                                        <label class="form-label">开始日期 *</label>
+                                        <input type="date" class="form-control" id="formDateStart" required>
+                                    </div>
+                                    <div class="col-md-4">
+                                        <label class="form-label">结束日期 *</label>
+                                        <input type="date" class="form-control" id="formDateEnd" required>
+                                    </div>
                                 </div>
-                                <div class="col-md-2">
-                                    <label class="form-label">下轨系数 K2</label>
-                                    <input type="number" step="0.1" class="form-control" id="formK2" placeholder="默认: 0.4">
-                                </div>
-                                <div class="col-md-2">
-                                    <label class="form-label">下跌确认天数</label>
-                                    <input type="number" class="form-control" id="formDownConfirmDays" placeholder="默认: 2">
-                                </div>
-                                <div class="col-md-2">
-                                    <label class="form-label">下跌敏感系数</label>
-                                    <input type="number" step="0.1" class="form-control" id="formK2DownFactor" placeholder="默认: 0.8">
-                                </div>
-                                <div class="col-md-2">
-                                    <label class="form-label">冷却期</label>
-                                    <input type="number" class="form-control" id="formCooldownDays" placeholder="默认: 1">
+                                <div class="row mb-3">
+                                    <div class="col-md-12">
+                                        <label class="form-label">描述</label>
+                                        <textarea class="form-control" id="formDescription" rows="2" placeholder="测试用例描述"></textarea>
+                                    </div>
                                 </div>
                             </div>
-                        </div>
-                        
-                        <div id="improvedParams" class="algorithm-params" style="display:none;">
-                            <div class="row mb-3">
-                                <div class="col-md-3">
-                                    <label class="form-label">回看周期</label>
-                                    <input type="number" class="form-control" id="formLookbackPeriod" placeholder="默认: 20">
+                            
+                            <div class="tab-pane fade" id="amplitude-tab-pane" role="tabpanel" aria-labelledby="amplitude-tab" tabindex="0">
+                                <div class="row mb-3">
+                                    <div class="col-md-3">
+                                        <label class="form-label">衰减因子</label>
+                                        <input type="number" step="0.1" class="form-control" id="formDecayFactor" placeholder="默认: 0.5">
+                                    </div>
+                                    <div class="col-md-3">
+                                        <label class="form-label">止损比例</label>
+                                        <input type="number" step="0.01" class="form-control" id="formStopLoss" placeholder="默认: 0.08">
+                                    </div>
+                                    <div class="col-md-3">
+                                        <label class="form-label">总金额</label>
+                                        <input type="number" class="form-control" id="formTotalAmount" placeholder="默认: 10000">
+                                    </div>
+                                    <div class="col-md-3">
+                                        <label class="form-label">杠杆倍数</label>
+                                        <input type="number" class="form-control" id="formLeverage" placeholder="默认: 10">
+                                    </div>
                                 </div>
-                                <div class="col-md-3">
-                                    <label class="form-label">最小震荡天数</label>
-                                    <input type="number" class="form-control" id="formMinRangeDuration" placeholder="默认: 3">
+                                <div class="row mb-3">
+                                    <div class="col-md-3">
+                                        <label class="form-label">最大入场次数</label>
+                                        <input type="number" class="form-control" id="formMaxEntries" placeholder="默认: 4">
+                                    </div>
+                                    <div class="col-md-3">
+                                        <label class="form-label">网格间距</label>
+                                        <input type="number" step="0.01" class="form-control" id="formGridSpacing" placeholder="默认: 0.01">
+                                    </div>
+                                    <div class="col-md-3">
+                                        <label class="form-label">止盈比例</label>
+                                        <input type="number" step="0.01" class="form-control" id="formExitProfit" placeholder="默认: 0.01">
+                                    </div>
                                 </div>
-                                <div class="col-md-3">
-                                    <label class="form-label">最大震荡幅度</label>
-                                    <input type="number" step="0.01" class="form-control" id="formMaxRangePct" placeholder="默认: 0.05">
-                                </div>
-                                <div class="col-md-3">
-                                    <label class="form-label">突破阈值</label>
-                                    <input type="number" step="0.01" class="form-control" id="formBreakoutThreshold" placeholder="默认: 0.02">
-                                </div>
-                            </div>
-                        </div>
-                        
-                        <div id="compositeParams" class="algorithm-params" style="display:none;">
-                            <div class="row mb-3">
-                                <div class="col-md-3">
-                                    <label class="form-label">ADX周期</label>
-                                    <input type="number" class="form-control" id="formAdxPeriod" placeholder="默认: 14">
-                                </div>
-                                <div class="col-md-3">
-                                    <label class="form-label">ADX阈值</label>
-                                    <input type="number" class="form-control" id="formAdxThreshold" placeholder="默认: 25">
-                                </div>
-                                <div class="col-md-3">
-                                    <label class="form-label">ATR周期</label>
-                                    <input type="number" class="form-control" id="formAtrPeriod" placeholder="默认: 14">
-                                </div>
-                                <div class="col-md-3">
-                                    <label class="form-label">ATR倍数</label>
-                                    <input type="number" step="0.1" class="form-control" id="formAtrMultiplier" placeholder="默认: 1.5">
-                                </div>
-                            </div>
-                        </div>
-                        
-                        <div id="adxParams" class="algorithm-params" style="display:none;">
-                            <div class="row mb-3">
-                                <div class="col-md-4">
-                                    <label class="form-label">ADX周期</label>
-                                    <input type="number" class="form-control" id="formAdxPeriodAdx" placeholder="默认: 14">
-                                </div>
-                                <div class="col-md-4">
-                                    <label class="form-label">ADX阈值</label>
-                                    <input type="number" class="form-control" id="formAdxThresholdAdx" placeholder="默认: 25">
+                                <div class="row mb-3">
+                                    <div class="col-md-6">
+                                        <label class="form-label">有效振幅 (固定值)</label>
+                                        <input type="text" class="form-control" id="formValidAmplitudes" value="[1%, 2%, 3%, 4%, 5%, 6%, 7%, 8%, 9%]" readonly style="background-color: #e9ecef;">
+                                        <small class="text-muted">表示1%、2%...9%的振幅等级</small>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <label class="form-label">权重 (weights)</label>
+                                        <input type="text" class="form-control" id="formWeights" value='[0.0831, 0.2996, 0.3167, 0.1365, 0.1005, 0.0281, 0.027, 0.0066, 0.0018]'>
+                                        <small class="text-muted">对应各振幅等级的权重值</small>
+                                    </div>
                                 </div>
                             </div>
-                        </div>
-                        
-                        <h6>入场价格策略 (entry)</h6>
-                        <div class="row mb-3">
-                            <div class="col-md-4">
-                                <label class="form-label">策略</label>
-                                <select class="form-select" id="formEntryStrategy" onchange="onEntryStrategyChange()">
-                                    <option value="">不使用入场策略</option>
-                                    <option value="fixed">fixed (固定网格)</option>
-                                    <option value="atr">atr (ATR动态)</option>
-                                    <option value="bollinger">bollinger (布林带)</option>
-                                    <option value="support">support (支撑位)</option>
-                                    <option value="composite">composite (综合)</option>
-                                </select>
+                            
+                            <div class="tab-pane fade" id="market-tab-pane" role="tabpanel" aria-labelledby="market-tab" tabindex="0">
+                                <div class="row mb-3">
+                                    <div class="col-md-6">
+                                        <label class="form-label">算法</label>
+                                        <select class="form-select" id="formMarketAlgorithm" onchange="onMarketAlgorithmChange()">
+                                            <option value="always_ranging">始终震荡 - 用于对比测试</option>
+                                            <option value="dual_thrust">Dual Thrust - 状态过滤器</option>
+                                            <option value="improved">支撑阻力 - 支撑阻力+箱体震荡</option>
+                                            <option value="composite">综合指标 - ADX+ATR+布林带组合</option>
+                                            <option value="adx">ADX趋势 - ADX趋势强度判断</option>
+                                            <option value="realtime">实时判断 - 价格行为+波动率</option>
+                                        </select>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <label class="form-label">允许交易状态</label>
+                                        <div id="tradingStatusesContainer" class="border rounded p-2">
+                                            <div class="form-check form-check-inline">
+                                                <input class="form-check-input" type="checkbox" id="statusRanging" value="ranging" checked>
+                                                <label class="form-check-label" for="statusRanging">震荡</label>
+                                            </div>
+                                            <div class="form-check form-check-inline">
+                                                <input class="form-check-input" type="checkbox" id="statusTrendingUp" value="trending_up">
+                                                <label class="form-check-label" for="statusTrendingUp">上涨</label>
+                                            </div>
+                                            <div class="form-check form-check-inline">
+                                                <input class="form-check-input" type="checkbox" id="statusTrendingDown" value="trending_down">
+                                                <label class="form-check-label" for="statusTrendingDown">下跌</label>
+                                            </div>
+                                            <div class="form-check form-check-inline">
+                                                <input class="form-check-input" type="checkbox" id="statusTransitioning" value="transitioning">
+                                                <label class="form-check-label" for="statusTransitioning">过渡</label>
+                                            </div>
+                                        </div>
+                                        <input type="hidden" id="formTradingStatuses" value="">
+                                    </div>
+                                </div>
+                                
+                                <div id="algorithmDescription" class="alert alert-info mb-3" style="display:none;">
+                                    <small id="algorithmDescText"></small>
+                                </div>
+                                
+                                <div id="alwaysRangingParams" class="algorithm-params" style="display:none;">
+                                    <div class="text-muted">此算法无参数，始终返回震荡行情状态</div>
+                                </div>
+                                
+                                <div id="dualThrustParams" class="algorithm-params" style="display:none;">
+                                    <div class="row mb-3">
+                                        <div class="col-md-2">
+                                            <label class="form-label">回看天数</label>
+                                            <input type="number" class="form-control" id="formNDays" placeholder="默认: 4">
+                                        </div>
+                                        <div class="col-md-2">
+                                            <label class="form-label">上轨系数 K1</label>
+                                            <input type="number" step="0.1" class="form-control" id="formK1" placeholder="默认: 0.4">
+                                        </div>
+                                        <div class="col-md-2">
+                                            <label class="form-label">下轨系数 K2</label>
+                                            <input type="number" step="0.1" class="form-control" id="formK2" placeholder="默认: 0.4">
+                                        </div>
+                                        <div class="col-md-2">
+                                            <label class="form-label">下跌确认天数</label>
+                                            <input type="number" class="form-control" id="formDownConfirmDays" placeholder="默认: 2">
+                                        </div>
+                                        <div class="col-md-2">
+                                            <label class="form-label">下跌敏感系数</label>
+                                            <input type="number" step="0.1" class="form-control" id="formK2DownFactor" placeholder="默认: 0.8">
+                                        </div>
+                                        <div class="col-md-2">
+                                            <label class="form-label">冷却期(天)</label>
+                                            <input type="number" class="form-control" id="formCooldownDays" placeholder="默认: 1">
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <div id="improvedParams" class="algorithm-params" style="display:none;">
+                                    <div class="row mb-3">
+                                        <div class="col-md-3">
+                                            <label class="form-label">回看周期</label>
+                                            <input type="number" class="form-control" id="formLookbackPeriod" placeholder="默认: 60">
+                                        </div>
+                                        <div class="col-md-3">
+                                            <label class="form-label">最小震荡天数</label>
+                                            <input type="number" class="form-control" id="formMinRangeDuration" placeholder="默认: 10">
+                                        </div>
+                                        <div class="col-md-3">
+                                            <label class="form-label">最大震荡幅度</label>
+                                            <input type="number" step="0.01" class="form-control" id="formMaxRangePct" placeholder="默认: 0.15">
+                                        </div>
+                                        <div class="col-md-3">
+                                            <label class="form-label">突破阈值</label>
+                                            <input type="number" step="0.01" class="form-control" id="formBreakoutThreshold" placeholder="默认: 0.03">
+                                        </div>
+                                    </div>
+                                    <div class="row mb-3">
+                                        <div class="col-md-3">
+                                            <label class="form-label">突破确认天数</label>
+                                            <input type="number" class="form-control" id="formBreakoutConfirmDays" placeholder="默认: 3">
+                                        </div>
+                                        <div class="col-md-3">
+                                            <label class="form-label">摆动窗口</label>
+                                            <input type="number" class="form-control" id="formSwingWindow" placeholder="默认: 5">
+                                        </div>
+                                        <div class="col-md-3">
+                                            <label class="form-label">合并阈值</label>
+                                            <input type="number" step="0.01" class="form-control" id="formMergeThreshold" placeholder="默认: 0.03">
+                                        </div>
+                                        <div class="col-md-3">
+                                            <label class="form-label">最小触碰次数</label>
+                                            <input type="number" class="form-control" id="formMinTouches" placeholder="默认: 3">
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <div id="compositeParams" class="algorithm-params" style="display:none;">
+                                    <div class="row mb-3">
+                                        <div class="col-md-2">
+                                            <label class="form-label">ADX周期</label>
+                                            <input type="number" class="form-control" id="formAdxPeriod" placeholder="默认: 14">
+                                        </div>
+                                        <div class="col-md-2">
+                                            <label class="form-label">ADX阈值</label>
+                                            <input type="number" class="form-control" id="formAdxThreshold" placeholder="默认: 25">
+                                        </div>
+                                        <div class="col-md-2">
+                                            <label class="form-label">ATR周期</label>
+                                            <input type="number" class="form-control" id="formAtrPeriod" placeholder="默认: 14">
+                                        </div>
+                                        <div class="col-md-2">
+                                            <label class="form-label">ATR倍数</label>
+                                            <input type="number" step="0.1" class="form-control" id="formAtrMultiplier" placeholder="默认: 1.5">
+                                        </div>
+                                        <div class="col-md-2">
+                                            <label class="form-label">布林带周期</label>
+                                            <input type="number" class="form-control" id="formBbPeriod" placeholder="默认: 20">
+                                        </div>
+                                        <div class="col-md-2">
+                                            <label class="form-label">布林带标准差</label>
+                                            <input type="number" step="0.1" class="form-control" id="formBbStd" placeholder="默认: 2">
+                                        </div>
+                                    </div>
+                                    <div class="row mb-3">
+                                        <div class="col-md-2">
+                                            <label class="form-label">布林带宽度阈值</label>
+                                            <input type="number" step="0.01" class="form-control" id="formBbWidthThreshold" placeholder="默认: 0.04">
+                                        </div>
+                                        <div class="col-md-2">
+                                            <label class="form-label">MA周期</label>
+                                            <input type="number" class="form-control" id="formMaPeriod" placeholder="默认: 50">
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <div id="adxParams" class="algorithm-params" style="display:none;">
+                                    <div class="row mb-3">
+                                        <div class="col-md-4">
+                                            <label class="form-label">ADX周期</label>
+                                            <input type="number" class="form-control" id="formAdxPeriodAdx" placeholder="默认: 14">
+                                        </div>
+                                        <div class="col-md-4">
+                                            <label class="form-label">ADX阈值</label>
+                                            <input type="number" class="form-control" id="formAdxThresholdAdx" placeholder="默认: 25">
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <div id="realtimeParams" class="algorithm-params" style="display:none;">
+                                    <div class="row mb-3">
+                                        <div class="col-md-3">
+                                            <label class="form-label">回看周期</label>
+                                            <input type="number" class="form-control" id="formRealtimeLookback" placeholder="默认: 20">
+                                        </div>
+                                        <div class="col-md-3">
+                                            <label class="form-label">突破阈值</label>
+                                            <input type="number" step="0.01" class="form-control" id="formRealtimeBreakoutThreshold" placeholder="默认: 0.02">
+                                        </div>
+                                        <div class="col-md-3">
+                                            <label class="form-label">连续K线数</label>
+                                            <input type="number" class="form-control" id="formRealtimeConsecutiveBars" placeholder="默认: 3">
+                                        </div>
+                                        <div class="col-md-3">
+                                            <label class="form-label">ATR周期</label>
+                                            <input type="number" class="form-control" id="formRealtimeAtrPeriod" placeholder="默认: 14">
+                                        </div>
+                                    </div>
+                                </div>
                             </div>
-                        </div>
-                        
-                        <div id="atrStrategyParams" class="strategy-params" style="display:none;">
-                            <div class="row mb-3">
-                                <div class="col-md-3">
-                                    <label class="form-label">ATR周期</label>
-                                    <input type="number" class="form-control" id="formEntryAtrPeriod" placeholder="默认: 14">
+                            
+                            <div class="tab-pane fade" id="entry-tab-pane" role="tabpanel" aria-labelledby="entry-tab" tabindex="0">
+                                <div class="row mb-3">
+                                    <div class="col-md-6">
+                                        <label class="form-label">策略</label>
+                                        <select class="form-select" id="formEntryStrategy" onchange="onEntryStrategyChange()">
+                                            <option value="">不使用入场策略</option>
+                                            <option value="fixed">固定网格 - 使用默认网格间距</option>
+                                            <option value="atr">ATR动态 - 基于ATR计算间距</option>
+                                            <option value="bollinger">布林带 - 基于布林带计算位置</option>
+                                            <option value="support">支撑位 - 识别支撑位入场</option>
+                                            <option value="composite">综合策略 - ATR+布林带组合</option>
+                                        </select>
+                                    </div>
                                 </div>
-                                <div class="col-md-3">
-                                    <label class="form-label">ATR倍数</label>
-                                    <input type="number" step="0.1" class="form-control" id="formEntryAtrMultiplier" placeholder="默认: 0.5">
+                                
+                                <div id="entryStrategyDescription" class="alert alert-info mb-3" style="display:none;">
+                                    <small id="entryStrategyDescText"></small>
+                                </div>
+                                
+                                <div id="fixedStrategyParams" class="strategy-params" style="display:none;">
+                                    <div class="text-muted">固定网格策略无额外参数，使用默认网格间距配置</div>
+                                </div>
+                                
+                                <div id="atrStrategyParams" class="strategy-params" style="display:none;">
+                                    <div class="row mb-3">
+                                        <div class="col-md-3">
+                                            <label class="form-label">ATR周期</label>
+                                            <input type="number" class="form-control" id="formEntryAtrPeriod" placeholder="默认: 14">
+                                        </div>
+                                        <div class="col-md-3">
+                                            <label class="form-label">ATR倍数</label>
+                                            <input type="number" step="0.1" class="form-control" id="formEntryAtrMultiplier" placeholder="默认: 0.5">
+                                        </div>
+                                        <div class="col-md-3">
+                                            <label class="form-label">最小间距</label>
+                                            <input type="number" step="0.001" class="form-control" id="formEntryMinSpacing" placeholder="默认: 0.005">
+                                        </div>
+                                        <div class="col-md-3">
+                                            <label class="form-label">最大间距</label>
+                                            <input type="number" step="0.01" class="form-control" id="formEntryMaxSpacing" placeholder="默认: 0.03">
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <div id="bollingerStrategyParams" class="strategy-params" style="display:none;">
+                                    <div class="row mb-3">
+                                        <div class="col-md-3">
+                                            <label class="form-label">周期</label>
+                                            <input type="number" class="form-control" id="formEntryBbPeriod" placeholder="默认: 20">
+                                        </div>
+                                        <div class="col-md-3">
+                                            <label class="form-label">标准差倍数</label>
+                                            <input type="number" step="0.1" class="form-control" id="formEntryBbStd" placeholder="默认: 2">
+                                        </div>
+                                        <div class="col-md-3">
+                                            <label class="form-label">最小间距</label>
+                                            <input type="number" step="0.001" class="form-control" id="formEntryBbMinSpacing" placeholder="默认: 0.005">
+                                        </div>
+                                        <div class="col-md-3">
+                                            <label class="form-label">最大间距</label>
+                                            <input type="number" step="0.01" class="form-control" id="formEntryBbMaxSpacing" placeholder="默认: 0.03">
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <div id="supportStrategyParams" class="strategy-params" style="display:none;">
+                                    <div class="row mb-3">
+                                        <div class="col-md-4">
+                                            <label class="form-label">周期</label>
+                                            <input type="number" class="form-control" id="formEntrySupportPeriod" placeholder="默认: 20">
+                                        </div>
+                                        <div class="col-md-4">
+                                            <label class="form-label">最小触及次数</label>
+                                            <input type="number" class="form-control" id="formEntryMinTouches" placeholder="默认: 2">
+                                        </div>
+                                        <div class="col-md-4">
+                                            <label class="form-label">价格容差</label>
+                                            <input type="number" step="0.01" class="form-control" id="formEntryPriceTolerance" placeholder="默认: 0.01">
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <div id="compositeStrategyParams" class="strategy-params" style="display:none;">
+                                    <div class="row mb-3">
+                                        <div class="col-md-3">
+                                            <label class="form-label">ATR周期</label>
+                                            <input type="number" class="form-control" id="formEntryCompositeAtrPeriod" placeholder="默认: 14">
+                                        </div>
+                                        <div class="col-md-3">
+                                            <label class="form-label">ATR倍数</label>
+                                            <input type="number" step="0.1" class="form-control" id="formEntryCompositeAtrMult" placeholder="默认: 0.5">
+                                        </div>
+                                        <div class="col-md-3">
+                                            <label class="form-label">布林带周期</label>
+                                            <input type="number" class="form-control" id="formEntryCompositeBbPeriod" placeholder="默认: 20">
+                                        </div>
+                                        <div class="col-md-3">
+                                            <label class="form-label">布林带标准差</label>
+                                            <input type="number" step="0.1" class="form-control" id="formEntryCompositeBbStd" placeholder="默认: 2">
+                                        </div>
+                                    </div>
                                 </div>
                             </div>
-                        </div>
-                        
-                        <div id="bollingerStrategyParams" class="strategy-params" style="display:none;">
-                            <div class="row mb-3">
-                                <div class="col-md-3">
-                                    <label class="form-label">周期</label>
-                                    <input type="number" class="form-control" id="formEntryBbPeriod" placeholder="默认: 20">
+                            
+                            <div class="tab-pane fade" id="timeout-tab-pane" role="tabpanel" aria-labelledby="timeout-tab" tabindex="0">
+                                <div class="row mb-3">
+                                    <div class="col-md-4">
+                                        <label class="form-label">首次订单未成交超时时间(分钟)</label>
+                                        <input type="number" class="form-control" id="formA1TimeoutMinutes" placeholder="0表示不启用">
+                                        <small class="text-muted">首次订单挂单后未成交的超时时间，超时后取消订单</small>
+                                    </div>
                                 </div>
-                                <div class="col-md-3">
-                                    <label class="form-label">标准差倍数</label>
-                                    <input type="number" step="0.1" class="form-control" id="formEntryBbStd" placeholder="默认: 2">
-                                </div>
-                            </div>
-                        </div>
-                        
-                        <h6>超时参数 (timeout)</h6>
-                        <div class="row mb-3">
-                            <div class="col-md-4">
-                                <label class="form-label">首次入场超时(分钟)</label>
-                                <input type="number" class="form-control" id="formA1TimeoutMinutes" placeholder="0表示不启用">
                             </div>
                         </div>
                     </form>
@@ -774,8 +957,8 @@
                 const row = document.createElement('tr');
                 const statusClass = `status-${c.status}`;
                 const canEdit = ['draft', 'active'].includes(c.status);
-                const canRun = c.status === 'active';
-                const canReset = c.status === 'completed';
+                const canRun = ['draft', 'active'].includes(c.status);
+                const canReset = ['completed', 'running', 'error', 'success'].includes(c.status);
                 
                 row.innerHTML = `
                     <td><small>${c.case_id.substring(0, 8)}...</small></td>
@@ -786,6 +969,7 @@
                     <td><span class="status-badge ${statusClass}">${c.status}</span></td>
                     <td><small>${c.created_at || '-'}</small></td>
                     <td>
+                        <button class="btn btn-sm btn-outline-danger" onclick="deleteCaseById('${c.case_id}')">删除</button>
                         <button class="btn btn-sm btn-outline-primary" onclick="showCaseDetail('${c.case_id}')">详情</button>
                         ${canEdit ? `<button class="btn btn-sm btn-outline-warning" onclick="showEditCaseForm('${c.case_id}')">编辑</button>` : ''}
                         ${canRun ? `<button class="btn btn-sm btn-outline-success" onclick="runCase('${c.case_id}')">执行</button>` : ''}
@@ -799,12 +983,13 @@
         async function showCaseDetail(caseId) {
             try {
                 const response = await fetch(`${API_BASE}/api/cases/${caseId}`);
-                const data = await response.json();
+                const result = await response.json();
                 
-                if (data.success) {
-                    const c = data.data;
+                const data = result.data;
+                if (data && data.test_case && data.test_case.success) {
+                    const c = data.test_case;
                     
-                    const amplitude = c.amplitude || {};
+                    const amplitude = data.amplitude || {};
                     const fullAmplitude = {
                         decay_factor: getParamWithDefault(amplitude.decay_factor, DEFAULT_PARAMS.amplitude.decay_factor),
                         stop_loss: getParamWithDefault(amplitude.stop_loss, DEFAULT_PARAMS.amplitude.stop_loss),
@@ -815,7 +1000,7 @@
                         exit_profit: getParamWithDefault(amplitude.exit_profit, DEFAULT_PARAMS.amplitude.exit_profit)
                     };
                     
-                    const market = c.market || {};
+                    const market = data.market || {};
                     const marketAlgo = market.algorithm || 'always_ranging';
                     const fullMarket = { algorithm: marketAlgo };
                     if (market.trading_statuses) fullMarket.trading_statuses = market.trading_statuses;
@@ -854,7 +1039,7 @@
                         };
                     }
                     
-                    const entry = c.entry || {};
+                    const entry = data.entry || {};
                     const entryStrategy = entry.strategy || '';
                     const fullEntry = {};
                     if (entryStrategy) {
@@ -895,7 +1080,7 @@
                                     amplitude: fullAmplitude,
                                     market: fullMarket,
                                     entry: fullEntry,
-                                    timeout: c.timeout || {}
+                                    timeout: data.timeout || {}
                                 }, null, 2)}</pre>
                             </div>
                         </div>
@@ -918,23 +1103,34 @@
         }
         
         async function showEditCaseForm(caseId) {
+            console.log('showEditCaseForm called with:', caseId);
             try {
                 const response = await fetch(`${API_BASE}/api/cases/${caseId}`);
-                const data = await response.json();
+                console.log('Response status:', response.status);
+                const result = await response.json();
+                console.log('Data received:', result);
                 
-                if (data.success) {
-                    const c = data.data;
+                const data = result.data;
+                if (data && data.test_case && data.test_case.success) {
+                    const c = data.test_case;
+                    console.log('Processing case:', c.name);
                     document.getElementById('caseFormTitle').textContent = '编辑测试用例';
                     document.getElementById('editCaseId').value = c.case_id;
                     document.getElementById('formCaseName').value = c.name || '';
                     document.getElementById('formTestType').value = c.test_type || 'market_aware';
                     document.getElementById('formCaseStatus').value = c.status || 'draft';
                     document.getElementById('formSymbol').value = c.symbol || '';
-                    document.getElementById('formDateStart').value = c.date_start || '';
-                    document.getElementById('formDateEnd').value = c.date_end || '';
+                    document.getElementById('formInterval').value = c.interval || '1m';
+                    
+                    const dateStart = c.date_start || '';
+                    const dateEnd = c.date_end || '';
+                    document.getElementById('formDateStart').value = dateStart.length === 8 ? 
+                        `${dateStart.slice(0,4)}-${dateStart.slice(4,6)}-${dateStart.slice(6,8)}` : dateStart;
+                    document.getElementById('formDateEnd').value = dateEnd.length === 8 ? 
+                        `${dateEnd.slice(0,4)}-${dateEnd.slice(4,6)}-${dateEnd.slice(6,8)}` : dateEnd;
                     document.getElementById('formDescription').value = c.description || '';
                     
-                    const amplitude = c.amplitude || {};
+                    const amplitude = data.amplitude || {};
                     document.getElementById('formDecayFactor').value = getParamWithDefault(amplitude.decay_factor, DEFAULT_PARAMS.amplitude.decay_factor);
                     document.getElementById('formStopLoss').value = getParamWithDefault(amplitude.stop_loss, DEFAULT_PARAMS.amplitude.stop_loss);
                     document.getElementById('formTotalAmount').value = getParamWithDefault(amplitude.total_amount_quote, DEFAULT_PARAMS.amplitude.total_amount_quote);
@@ -942,63 +1138,94 @@
                     document.getElementById('formMaxEntries').value = getParamWithDefault(amplitude.max_entries, DEFAULT_PARAMS.amplitude.max_entries);
                     document.getElementById('formGridSpacing').value = getParamWithDefault(amplitude.grid_spacing, DEFAULT_PARAMS.amplitude.grid_spacing);
                     document.getElementById('formExitProfit').value = getParamWithDefault(amplitude.exit_profit, DEFAULT_PARAMS.amplitude.exit_profit);
-                    document.getElementById('formValidAmplitudes').value = JSON.stringify(getParamWithDefault(amplitude.valid_amplitudes, DEFAULT_PARAMS.amplitude.valid_amplitudes));
-                    document.getElementById('formWeights').value = JSON.stringify(getParamWithDefault(amplitude.weights, DEFAULT_PARAMS.amplitude.weights));
-                    
-                    const market = c.market || {};
-                    const marketAlgo = market.algorithm || 'always_ranging';
-                    document.getElementById('formMarketAlgorithm').value = marketAlgo;
-                    document.getElementById('formTradingStatuses').value = (market.trading_statuses || []).join(',');
-                    
-                    document.querySelectorAll('.algorithm-params').forEach(el => el.style.display = 'none');
-                    if (marketAlgo === 'dual_thrust') {
-                        document.getElementById('dualThrustParams').style.display = 'block';
-                        const p = market.dual_thrust || {};
-                        document.getElementById('formNDays').value = getParamWithDefault(p.n_days, DEFAULT_PARAMS.dual_thrust.n_days);
-                        document.getElementById('formK1').value = getParamWithDefault(p.k1, DEFAULT_PARAMS.dual_thrust.k1);
-                        document.getElementById('formK2').value = getParamWithDefault(p.k2, DEFAULT_PARAMS.dual_thrust.k2);
-                        document.getElementById('formDownConfirmDays').value = getParamWithDefault(p.down_confirm_days, DEFAULT_PARAMS.dual_thrust.down_confirm_days);
-                        document.getElementById('formK2DownFactor').value = getParamWithDefault(p.k2_down_factor, DEFAULT_PARAMS.dual_thrust.k2_down_factor);
-                        document.getElementById('formCooldownDays').value = getParamWithDefault(p.cooldown_days, DEFAULT_PARAMS.dual_thrust.cooldown_days);
-                    } else if (marketAlgo === 'improved') {
-                        document.getElementById('improvedParams').style.display = 'block';
-                        const p = market.improved || {};
-                        document.getElementById('formLookbackPeriod').value = getParamWithDefault(p.lookback_period, DEFAULT_PARAMS.improved.lookback_period);
-                        document.getElementById('formMinRangeDuration').value = getParamWithDefault(p.min_range_duration, DEFAULT_PARAMS.improved.min_range_duration);
-                        document.getElementById('formMaxRangePct').value = getParamWithDefault(p.max_range_pct, DEFAULT_PARAMS.improved.max_range_pct);
-                        document.getElementById('formBreakoutThreshold').value = getParamWithDefault(p.breakout_threshold, DEFAULT_PARAMS.improved.breakout_threshold);
-                    } else if (marketAlgo === 'composite') {
-                        document.getElementById('compositeParams').style.display = 'block';
-                        const p = market.composite || {};
-                        document.getElementById('formAdxPeriod').value = getParamWithDefault(p.adx_period, DEFAULT_PARAMS.composite.adx_period);
-                        document.getElementById('formAdxThreshold').value = getParamWithDefault(p.adx_threshold, DEFAULT_PARAMS.composite.adx_threshold);
-                        document.getElementById('formAtrPeriod').value = getParamWithDefault(p.atr_period, DEFAULT_PARAMS.composite.atr_period);
-                        document.getElementById('formAtrMultiplier').value = getParamWithDefault(p.atr_multiplier, DEFAULT_PARAMS.composite.atr_multiplier);
-                    } else if (marketAlgo === 'adx') {
-                        document.getElementById('adxParams').style.display = 'block';
-                        const p = market.adx || {};
-                        document.getElementById('formAdxPeriodAdx').value = getParamWithDefault(p.period, DEFAULT_PARAMS.adx.period);
-                        document.getElementById('formAdxThresholdAdx').value = getParamWithDefault(p.threshold, DEFAULT_PARAMS.adx.threshold);
+                    if (amplitude.weights) {
+                        document.getElementById('formWeights').value = JSON.stringify(amplitude.weights);
                     }
                     
-                    const entry = c.entry || {};
+                    const market = data.market || {};
+                    const marketAlgo = market.algorithm || 'always_ranging';
+                    document.getElementById('formMarketAlgorithm').value = marketAlgo;
+                    
+                    const tradingStatuses = market.trading_statuses || ['ranging'];
+                    document.getElementById('statusRanging').checked = tradingStatuses.includes('ranging');
+                    document.getElementById('statusTrendingUp').checked = tradingStatuses.includes('trending_up');
+                    document.getElementById('statusTrendingDown').checked = tradingStatuses.includes('trending_down');
+                    document.getElementById('statusTransitioning').checked = tradingStatuses.includes('transitioning');
+                    
+                    onMarketAlgorithmChange();
+                    
+                    if (marketAlgo === 'dual_thrust') {
+                        const p = market.dual_thrust || {};
+                        document.getElementById('formNDays').value = getParamWithDefault(p.n_days, 4);
+                        document.getElementById('formK1').value = getParamWithDefault(p.k1, 0.4);
+                        document.getElementById('formK2').value = getParamWithDefault(p.k2, 0.4);
+                        document.getElementById('formK2DownFactor').value = getParamWithDefault(p.k2_down_factor, 0.8);
+                        document.getElementById('formDownConfirmDays').value = getParamWithDefault(p.down_confirm_days, 2);
+                        document.getElementById('formCooldownDays').value = getParamWithDefault(p.cooldown_days, 1);
+                    } else if (marketAlgo === 'improved') {
+                        const p = market.improved || {};
+                        document.getElementById('formLookbackPeriod').value = getParamWithDefault(p.lookback_period, 60);
+                        document.getElementById('formMinRangeDuration').value = getParamWithDefault(p.min_range_duration, 10);
+                        document.getElementById('formMaxRangePct').value = getParamWithDefault(p.max_range_pct, 0.15);
+                        document.getElementById('formBreakoutThreshold').value = getParamWithDefault(p.breakout_threshold, 0.03);
+                        document.getElementById('formBreakoutConfirmDays').value = getParamWithDefault(p.breakout_confirm_days, 3);
+                        document.getElementById('formSwingWindow').value = getParamWithDefault(p.swing_window, 5);
+                        document.getElementById('formMergeThreshold').value = getParamWithDefault(p.merge_threshold, 0.03);
+                        document.getElementById('formMinTouches').value = getParamWithDefault(p.min_touches, 3);
+                    } else if (marketAlgo === 'composite') {
+                        const p = market.composite || {};
+                        document.getElementById('formAdxPeriod').value = getParamWithDefault(p.adx_period, 14);
+                        document.getElementById('formAdxThreshold').value = getParamWithDefault(p.adx_threshold, 25);
+                        document.getElementById('formAtrPeriod').value = getParamWithDefault(p.atr_period, 14);
+                        document.getElementById('formAtrMultiplier').value = getParamWithDefault(p.atr_multiplier, 1.5);
+                        document.getElementById('formBbPeriod').value = getParamWithDefault(p.bb_period, 20);
+                        document.getElementById('formBbStd').value = getParamWithDefault(p.bb_std, 2.0);
+                        document.getElementById('formBbWidthThreshold').value = getParamWithDefault(p.bb_width_threshold, 0.04);
+                        document.getElementById('formMaPeriod').value = getParamWithDefault(p.ma_period, 50);
+                    } else if (marketAlgo === 'adx') {
+                        const p = market.adx || {};
+                        document.getElementById('formAdxPeriod').value = getParamWithDefault(p.period, 14);
+                        document.getElementById('formAdxThreshold').value = getParamWithDefault(p.threshold, 25);
+                    } else if (marketAlgo === 'realtime') {
+                        const p = market.realtime || {};
+                        document.getElementById('formRealtimeLookback').value = getParamWithDefault(p.lookback_period, 20);
+                        document.getElementById('formRealtimeBreakoutThreshold').value = getParamWithDefault(p.breakout_threshold, 0.02);
+                        document.getElementById('formRealtimeConsecutiveBars').value = getParamWithDefault(p.consecutive_bars, 3);
+                        document.getElementById('formRealtimeAtrPeriod').value = getParamWithDefault(p.atr_period, 14);
+                    }
+                    
+                    const entry = data.entry || {};
                     const entryStrategy = entry.strategy || '';
                     document.getElementById('formEntryStrategy').value = entryStrategy;
                     
-                    document.querySelectorAll('.strategy-params').forEach(el => el.style.display = 'none');
+                    onEntryStrategyChange();
+                    
                     if (entryStrategy === 'atr') {
-                        document.getElementById('atrStrategyParams').style.display = 'block';
                         const p = entry.atr || {};
-                        document.getElementById('formEntryAtrPeriod').value = getParamWithDefault(p.atr_period, DEFAULT_PARAMS.atr.atr_period);
-                        document.getElementById('formEntryAtrMultiplier').value = getParamWithDefault(p.atr_multiplier, DEFAULT_PARAMS.atr.atr_multiplier);
+                        document.getElementById('formEntryAtrPeriod').value = getParamWithDefault(p.atr_period, 14);
+                        document.getElementById('formEntryAtrMultiplier').value = getParamWithDefault(p.atr_multiplier, 0.5);
+                        document.getElementById('formEntryMinSpacing').value = getParamWithDefault(p.min_spacing, 0.005);
+                        document.getElementById('formEntryMaxSpacing').value = getParamWithDefault(p.max_spacing, 0.03);
                     } else if (entryStrategy === 'bollinger') {
-                        document.getElementById('bollingerStrategyParams').style.display = 'block';
                         const p = entry.bollinger || {};
-                        document.getElementById('formEntryBbPeriod').value = getParamWithDefault(p.period, DEFAULT_PARAMS.bollinger.period);
-                        document.getElementById('formEntryBbStd').value = getParamWithDefault(p.num_std, DEFAULT_PARAMS.bollinger.num_std);
+                        document.getElementById('formEntryBbPeriod').value = getParamWithDefault(p.period, 20);
+                        document.getElementById('formEntryBbStd').value = getParamWithDefault(p.num_std, 2);
+                        document.getElementById('formEntryBbMinSpacing').value = getParamWithDefault(p.min_spacing, 0.005);
+                        document.getElementById('formEntryBbMaxSpacing').value = getParamWithDefault(p.max_spacing, 0.03);
+                    } else if (entryStrategy === 'support') {
+                        const p = entry.support || {};
+                        document.getElementById('formEntrySupportPeriod').value = getParamWithDefault(p.period, 20);
+                        document.getElementById('formEntryMinTouches').value = getParamWithDefault(p.min_touches, 2);
+                        document.getElementById('formEntryPriceTolerance').value = getParamWithDefault(p.price_tolerance, 0.01);
+                    } else if (entryStrategy === 'composite') {
+                        const p = entry.composite || {};
+                        document.getElementById('formEntryCompositeAtrPeriod').value = getParamWithDefault(p.atr_period, 14);
+                        document.getElementById('formEntryCompositeAtrMult').value = getParamWithDefault(p.atr_multiplier, 0.5);
+                        document.getElementById('formEntryCompositeBbPeriod').value = getParamWithDefault(p.bb_period, 20);
+                        document.getElementById('formEntryCompositeBbStd').value = getParamWithDefault(p.bb_std, 2);
                     }
                     
-                    const timeout = c.timeout || {};
+                    const timeout = data.timeout || {};
                     document.getElementById('formA1TimeoutMinutes').value = timeout.a1_timeout_minutes || '';
                     
                     document.getElementById('deleteCaseBtn').style.display = 'inline-block';
@@ -1013,6 +1240,42 @@
             const algorithm = document.getElementById('formMarketAlgorithm').value;
             document.querySelectorAll('.algorithm-params').forEach(el => el.style.display = 'none');
             
+            const descriptions = {
+                'always_ranging': '始终返回震荡行情（用于对比测试）。此算法无参数，始终返回震荡行情状态，适用于与原 binance_backtest 的测试结果对比。',
+                'dual_thrust': 'Dual Thrust 状态过滤器（增强版）。基于历史波动幅度构建突破区间：价格在轨道内为震荡行情，突破上轨为上涨趋势，跌破下轨为下跌趋势。针对下跌行情有特殊处理：下跌阈值更敏感、下跌趋势确认需要连续多天、切换冷却期避免频繁切换。',
+                'improved': '改进的行情判断算法（支撑阻力+箱体震荡）。核心改进：更长的回看周期（60-90天）、支撑阻力位识别、箱体震荡识别、更严格的趋势确认。',
+                'composite': 'ADX + ATR + 布林带宽度组合判断。综合多指标判断趋势强度：ADX判断趋势强度、ATR判断波动率变化、布林带宽度判断波动范围。',
+                'adx': '基于 ADX 的趋势强度判断。ADX>=threshold 为趋势行情，否则为震荡。趋势行情时根据价格与MA50的关系判断上涨或下跌方向。',
+                'realtime': '实时市场状态判断算法（价格行为+波动率）。改进版本：增加状态持续性判断（惯性）、需要更强的信号才能切换状态、震荡状态更稳定。'
+            };
+            
+            const descEl = document.getElementById('algorithmDescription');
+            const descTextEl = document.getElementById('algorithmDescText');
+            
+            if (descriptions[algorithm]) {
+                descTextEl.textContent = descriptions[algorithm];
+                descEl.style.display = 'block';
+            } else {
+                descEl.style.display = 'none';
+            }
+            
+            if (algorithm === 'always_ranging') {
+                document.getElementById('alwaysRangingParams').style.display = 'block';
+                document.getElementById('statusRanging').checked = true;
+                document.getElementById('statusTrendingUp').checked = false;
+                document.getElementById('statusTrendingDown').checked = false;
+                document.getElementById('statusTransitioning').checked = false;
+                document.getElementById('statusRanging').disabled = true;
+                document.getElementById('statusTrendingUp').disabled = true;
+                document.getElementById('statusTrendingDown').disabled = true;
+                document.getElementById('statusTransitioning').disabled = true;
+            } else {
+                document.getElementById('statusRanging').disabled = false;
+                document.getElementById('statusTrendingUp').disabled = false;
+                document.getElementById('statusTrendingDown').disabled = false;
+                document.getElementById('statusTransitioning').disabled = false;
+            }
+            
             if (algorithm === 'dual_thrust') {
                 document.getElementById('dualThrustParams').style.display = 'block';
             } else if (algorithm === 'improved') {
@@ -1021,6 +1284,8 @@
                 document.getElementById('compositeParams').style.display = 'block';
             } else if (algorithm === 'adx') {
                 document.getElementById('adxParams').style.display = 'block';
+            } else if (algorithm === 'realtime') {
+                document.getElementById('realtimeParams').style.display = 'block';
             }
         }
         
@@ -1028,10 +1293,34 @@
             const strategy = document.getElementById('formEntryStrategy').value;
             document.querySelectorAll('.strategy-params').forEach(el => el.style.display = 'none');
             
-            if (strategy === 'atr') {
+            const descriptions = {
+                'fixed': '固定网格策略。使用默认网格间距配置，无额外参数。',
+                'atr': 'ATR动态策略。基于ATR（平均真实波幅）计算入场间距，根据市场波动性动态调整网格间距。',
+                'bollinger': '布林带策略。基于布林带计算入场位置，在布林带上下轨附近设置入场点。',
+                'support': '支撑位策略。识别支撑位作为入场点，在价格接近支撑位时入场。',
+                'composite': '综合策略。结合ATR和布林带两种策略，综合判断入场位置。'
+            };
+            
+            const descEl = document.getElementById('entryStrategyDescription');
+            const descTextEl = document.getElementById('entryStrategyDescText');
+            
+            if (strategy && descriptions[strategy]) {
+                descTextEl.textContent = descriptions[strategy];
+                descEl.style.display = 'block';
+            } else {
+                descEl.style.display = 'none';
+            }
+            
+            if (strategy === 'fixed') {
+                document.getElementById('fixedStrategyParams').style.display = 'block';
+            } else if (strategy === 'atr') {
                 document.getElementById('atrStrategyParams').style.display = 'block';
             } else if (strategy === 'bollinger') {
                 document.getElementById('bollingerStrategyParams').style.display = 'block';
+            } else if (strategy === 'support') {
+                document.getElementById('supportStrategyParams').style.display = 'block';
+            } else if (strategy === 'composite') {
+                document.getElementById('compositeStrategyParams').style.display = 'block';
             }
         }
         
@@ -1055,18 +1344,30 @@
             const gridSpacing = parseFloat(document.getElementById('formGridSpacing').value);
             const exitProfit = parseFloat(document.getElementById('formExitProfit').value);
             
-            if (decayFactor) amplitude.decay_factor = decayFactor;
-            if (stopLoss) amplitude.stop_loss = stopLoss;
-            if (totalAmount) amplitude.total_amount_quote = totalAmount;
-            if (leverage) amplitude.leverage = leverage;
-            if (maxEntries) amplitude.max_entries = maxEntries;
-            if (gridSpacing) amplitude.grid_spacing = gridSpacing;
-            if (exitProfit) amplitude.exit_profit = exitProfit;
+            if (decayFactor !== null && !isNaN(decayFactor)) amplitude.decay_factor = decayFactor;
+            if (stopLoss !== null && !isNaN(stopLoss)) amplitude.stop_loss = stopLoss;
+            if (totalAmount !== null && !isNaN(totalAmount)) amplitude.total_amount_quote = totalAmount;
+            if (leverage !== null && !isNaN(leverage)) amplitude.leverage = leverage;
+            if (maxEntries !== null && !isNaN(maxEntries)) amplitude.max_entries = maxEntries;
+            if (gridSpacing !== null && !isNaN(gridSpacing)) amplitude.grid_spacing = gridSpacing;
+            if (exitProfit !== null && !isNaN(exitProfit)) amplitude.exit_profit = exitProfit;
+            
+            const weightsStr = document.getElementById('formWeights').value;
+            if (weightsStr) {
+                try {
+                    amplitude.weights = JSON.parse(weightsStr);
+                } catch(e) {}
+            }
             
             const marketAlgorithm = document.getElementById('formMarketAlgorithm').value;
             const market = { algorithm: marketAlgorithm };
-            const tradingStatuses = document.getElementById('formTradingStatuses').value;
-            if (tradingStatuses) market.trading_statuses = tradingStatuses.split(',').map(s => s.trim());
+            
+            const tradingStatuses = [];
+            if (document.getElementById('statusRanging').checked) tradingStatuses.push('ranging');
+            if (document.getElementById('statusTrendingUp').checked) tradingStatuses.push('trending_up');
+            if (document.getElementById('statusTrendingDown').checked) tradingStatuses.push('trending_down');
+            if (document.getElementById('statusTransitioning').checked) tradingStatuses.push('transitioning');
+            if (tradingStatuses.length > 0) market.trading_statuses = tradingStatuses;
             
             if (marketAlgorithm === 'dual_thrust') {
                 market.dual_thrust = {};
@@ -1076,38 +1377,64 @@
                 const downConfirmDays = parseInt(document.getElementById('formDownConfirmDays').value);
                 const k2DownFactor = parseFloat(document.getElementById('formK2DownFactor').value);
                 const cooldownDays = parseInt(document.getElementById('formCooldownDays').value);
-                if (nDays) market.dual_thrust.n_days = nDays;
-                if (k1) market.dual_thrust.k1 = k1;
-                if (k2) market.dual_thrust.k2 = k2;
-                if (downConfirmDays) market.dual_thrust.down_confirm_days = downConfirmDays;
-                if (k2DownFactor) market.dual_thrust.k2_down_factor = k2DownFactor;
-                if (cooldownDays) market.dual_thrust.cooldown_days = cooldownDays;
+                if (!isNaN(nDays)) market.dual_thrust.n_days = nDays;
+                if (!isNaN(k1)) market.dual_thrust.k1 = k1;
+                if (!isNaN(k2)) market.dual_thrust.k2 = k2;
+                if (!isNaN(downConfirmDays)) market.dual_thrust.down_confirm_days = downConfirmDays;
+                if (!isNaN(k2DownFactor)) market.dual_thrust.k2_down_factor = k2DownFactor;
+                if (!isNaN(cooldownDays)) market.dual_thrust.cooldown_days = cooldownDays;
             } else if (marketAlgorithm === 'improved') {
                 market.improved = {};
                 const lookbackPeriod = parseInt(document.getElementById('formLookbackPeriod').value);
                 const minRangeDuration = parseInt(document.getElementById('formMinRangeDuration').value);
                 const maxRangePct = parseFloat(document.getElementById('formMaxRangePct').value);
                 const breakoutThreshold = parseFloat(document.getElementById('formBreakoutThreshold').value);
-                if (lookbackPeriod) market.improved.lookback_period = lookbackPeriod;
-                if (minRangeDuration) market.improved.min_range_duration = minRangeDuration;
-                if (maxRangePct) market.improved.max_range_pct = maxRangePct;
-                if (breakoutThreshold) market.improved.breakout_threshold = breakoutThreshold;
+                const breakoutConfirmDays = parseInt(document.getElementById('formBreakoutConfirmDays').value);
+                const swingWindow = parseInt(document.getElementById('formSwingWindow').value);
+                const mergeThreshold = parseFloat(document.getElementById('formMergeThreshold').value);
+                const minTouches = parseInt(document.getElementById('formMinTouches').value);
+                if (!isNaN(lookbackPeriod)) market.improved.lookback_period = lookbackPeriod;
+                if (!isNaN(minRangeDuration)) market.improved.min_range_duration = minRangeDuration;
+                if (!isNaN(maxRangePct)) market.improved.max_range_pct = maxRangePct;
+                if (!isNaN(breakoutThreshold)) market.improved.breakout_threshold = breakoutThreshold;
+                if (!isNaN(breakoutConfirmDays)) market.improved.breakout_confirm_days = breakoutConfirmDays;
+                if (!isNaN(swingWindow)) market.improved.swing_window = swingWindow;
+                if (!isNaN(mergeThreshold)) market.improved.merge_threshold = mergeThreshold;
+                if (!isNaN(minTouches)) market.improved.min_touches = minTouches;
             } else if (marketAlgorithm === 'composite') {
                 market.composite = {};
                 const adxPeriod = parseInt(document.getElementById('formAdxPeriod').value);
                 const adxThreshold = parseInt(document.getElementById('formAdxThreshold').value);
                 const atrPeriod = parseInt(document.getElementById('formAtrPeriod').value);
                 const atrMultiplier = parseFloat(document.getElementById('formAtrMultiplier').value);
-                if (adxPeriod) market.composite.adx_period = adxPeriod;
-                if (adxThreshold) market.composite.adx_threshold = adxThreshold;
-                if (atrPeriod) market.composite.atr_period = atrPeriod;
-                if (atrMultiplier) market.composite.atr_multiplier = atrMultiplier;
+                const bbPeriod = parseInt(document.getElementById('formBbPeriod').value);
+                const bbStd = parseFloat(document.getElementById('formBbStd').value);
+                const bbWidthThreshold = parseFloat(document.getElementById('formBbWidthThreshold').value);
+                const maPeriod = parseInt(document.getElementById('formMaPeriod').value);
+                if (!isNaN(adxPeriod)) market.composite.adx_period = adxPeriod;
+                if (!isNaN(adxThreshold)) market.composite.adx_threshold = adxThreshold;
+                if (!isNaN(atrPeriod)) market.composite.atr_period = atrPeriod;
+                if (!isNaN(atrMultiplier)) market.composite.atr_multiplier = atrMultiplier;
+                if (!isNaN(bbPeriod)) market.composite.bb_period = bbPeriod;
+                if (!isNaN(bbStd)) market.composite.bb_std = bbStd;
+                if (!isNaN(bbWidthThreshold)) market.composite.bb_width_threshold = bbWidthThreshold;
+                if (!isNaN(maPeriod)) market.composite.ma_period = maPeriod;
             } else if (marketAlgorithm === 'adx') {
                 market.adx = {};
                 const adxPeriodAdx = parseInt(document.getElementById('formAdxPeriodAdx').value);
                 const adxThresholdAdx = parseInt(document.getElementById('formAdxThresholdAdx').value);
-                if (adxPeriodAdx) market.adx.period = adxPeriodAdx;
-                if (adxThresholdAdx) market.adx.threshold = adxThresholdAdx;
+                if (!isNaN(adxPeriodAdx)) market.adx.period = adxPeriodAdx;
+                if (!isNaN(adxThresholdAdx)) market.adx.threshold = adxThresholdAdx;
+            } else if (marketAlgorithm === 'realtime') {
+                market.realtime = {};
+                const lookback = parseInt(document.getElementById('formRealtimeLookback').value);
+                const breakoutThreshold = parseFloat(document.getElementById('formRealtimeBreakoutThreshold').value);
+                const consecutiveBars = parseInt(document.getElementById('formRealtimeConsecutiveBars').value);
+                const atrPeriod = parseInt(document.getElementById('formRealtimeAtrPeriod').value);
+                if (!isNaN(lookback)) market.realtime.lookback_period = lookback;
+                if (!isNaN(breakoutThreshold)) market.realtime.breakout_threshold = breakoutThreshold;
+                if (!isNaN(consecutiveBars)) market.realtime.consecutive_bars = consecutiveBars;
+                if (!isNaN(atrPeriod)) market.realtime.atr_period = atrPeriod;
             }
             
             const entryStrategy = document.getElementById('formEntryStrategy').value;
@@ -1118,20 +1445,46 @@
                     entry.atr = {};
                     const atrPeriod = parseInt(document.getElementById('formEntryAtrPeriod').value);
                     const atrMultiplier = parseFloat(document.getElementById('formEntryAtrMultiplier').value);
-                    if (atrPeriod) entry.atr.atr_period = atrPeriod;
-                    if (atrMultiplier) entry.atr.atr_multiplier = atrMultiplier;
+                    const minSpacing = parseFloat(document.getElementById('formEntryMinSpacing').value);
+                    const maxSpacing = parseFloat(document.getElementById('formEntryMaxSpacing').value);
+                    if (!isNaN(atrPeriod)) entry.atr.atr_period = atrPeriod;
+                    if (!isNaN(atrMultiplier)) entry.atr.atr_multiplier = atrMultiplier;
+                    if (!isNaN(minSpacing)) entry.atr.min_spacing = minSpacing;
+                    if (!isNaN(maxSpacing)) entry.atr.max_spacing = maxSpacing;
                 } else if (entryStrategy === 'bollinger') {
                     entry.bollinger = {};
                     const bbPeriod = parseInt(document.getElementById('formEntryBbPeriod').value);
                     const bbStd = parseFloat(document.getElementById('formEntryBbStd').value);
-                    if (bbPeriod) entry.bollinger.period = bbPeriod;
-                    if (bbStd) entry.bollinger.num_std = bbStd;
+                    const minSpacing = parseFloat(document.getElementById('formEntryBbMinSpacing').value);
+                    const maxSpacing = parseFloat(document.getElementById('formEntryBbMaxSpacing').value);
+                    if (!isNaN(bbPeriod)) entry.bollinger.period = bbPeriod;
+                    if (!isNaN(bbStd)) entry.bollinger.num_std = bbStd;
+                    if (!isNaN(minSpacing)) entry.bollinger.min_spacing = minSpacing;
+                    if (!isNaN(maxSpacing)) entry.bollinger.max_spacing = maxSpacing;
+                } else if (entryStrategy === 'support') {
+                    entry.support = {};
+                    const period = parseInt(document.getElementById('formEntrySupportPeriod').value);
+                    const minTouches = parseInt(document.getElementById('formEntryMinTouches').value);
+                    const priceTolerance = parseFloat(document.getElementById('formEntryPriceTolerance').value);
+                    if (!isNaN(period)) entry.support.period = period;
+                    if (!isNaN(minTouches)) entry.support.min_touches = minTouches;
+                    if (!isNaN(priceTolerance)) entry.support.price_tolerance = priceTolerance;
+                } else if (entryStrategy === 'composite') {
+                    entry.composite = {};
+                    const atrPeriod = parseInt(document.getElementById('formEntryCompositeAtrPeriod').value);
+                    const atrMultiplier = parseFloat(document.getElementById('formEntryCompositeAtrMult').value);
+                    const bbPeriod = parseInt(document.getElementById('formEntryCompositeBbPeriod').value);
+                    const bbStd = parseFloat(document.getElementById('formEntryCompositeBbStd').value);
+                    if (!isNaN(atrPeriod)) entry.composite.atr_period = atrPeriod;
+                    if (!isNaN(atrMultiplier)) entry.composite.atr_multiplier = atrMultiplier;
+                    if (!isNaN(bbPeriod)) entry.composite.bb_period = bbPeriod;
+                    if (!isNaN(bbStd)) entry.composite.bb_std = bbStd;
                 }
             }
             
             const timeout = {};
             const a1TimeoutMinutes = parseInt(document.getElementById('formA1TimeoutMinutes').value);
-            if (a1TimeoutMinutes) timeout.a1_timeout_minutes = a1TimeoutMinutes;
+            if (!isNaN(a1TimeoutMinutes)) timeout.a1_timeout_minutes = a1TimeoutMinutes;
             
             const caseData = {
                 name: document.getElementById('formCaseName').value,
@@ -1140,6 +1493,7 @@
                 symbol: symbol,
                 date_start: dateStart.replace(/-/g, ''),
                 date_end: dateEnd.replace(/-/g, ''),
+                interval: document.getElementById('formInterval').value,
                 status: document.getElementById('formCaseStatus').value,
                 amplitude: amplitude,
                 market: market,
@@ -1185,6 +1539,26 @@
                 if (data.success) {
                     alert(data.message);
                     bootstrap.Modal.getInstance(document.getElementById('caseFormModal')).hide();
+                    loadCases();
+                } else {
+                    showError('删除失败', data.error);
+                }
+            } catch (error) {
+                console.error('删除测试用例失败:', error);
+                showError('删除失败', error.message);
+            }
+        }
+        
+        async function deleteCaseById(caseId) {
+            if (!caseId) return;
+            
+            if (!confirm('确定要删除此测试用例吗？\n\n删除后将同时删除所有相关的测试结果和交易详情！')) return;
+            
+            try {
+                const response = await fetch(`${API_BASE}/api/cases/${caseId}`, { method: 'DELETE' });
+                const data = await response.json();
+                
+                if (data.success) {
                     loadCases();
                 } else {
                     showError('删除失败', data.error);
@@ -1385,7 +1759,10 @@
         }
         
         function renderKlineChart() {
-            if (!currentChartData) return;
+            if (!currentChartData) {
+                console.log('renderKlineChart: currentChartData is null');
+                return;
+            }
             
             const chartDom = document.getElementById('klineChart');
             if (klineChart) {
@@ -1396,6 +1773,17 @@
             const klines = currentChartData.klines || [];
             const trades = currentChartData.trades || [];
             
+            console.log('renderKlineChart: klines.length =', klines.length);
+            console.log('renderKlineChart: trades.length =', trades.length);
+            
+            if (klines.length === 0) {
+                console.log('renderKlineChart: 没有K线数据');
+                klineChart.setOption({
+                    title: { text: '暂无K线数据', left: 'center' }
+                });
+                return;
+            }
+            
             const showTrades = document.getElementById('showTrades').checked;
             
             const dates = klines.map(k => k.date);
@@ -1403,6 +1791,7 @@
             const volumes = klines.map(k => k.volume);
             
             const markPoints = [];
+            const markLines = [];
             if (showTrades && trades.length > 0) {
                 trades.forEach(t => {
                     const entryIdx = dates.indexOf(t.entry_date);
@@ -1413,23 +1802,54 @@
                             name: `入场 A${t.level}`,
                             coord: [t.entry_date, t.entry_price],
                             symbol: 'triangle',
-                            symbolSize: 12,
+                            symbolSize: 14,
                             symbolRotate: 0,
-                            itemStyle: { color: '#22c55e' },
-                            label: { show: true, formatter: `A${t.level}`, position: 'top' }
+                            itemStyle: { color: '#3b82f6' },
+                            label: { 
+                                show: true, 
+                                formatter: `A${t.level}\n${t.entry_price.toFixed(2)}`, 
+                                position: 'top',
+                                fontSize: 10,
+                                color: '#3b82f6'
+                            }
                         });
                     }
                     
                     if (exitIdx >= 0) {
                         const isProfit = t.trade_type === 'take_profit';
+                        const profitColor = t.profit >= 0 ? '#22c55e' : '#ef4444';
                         markPoints.push({
                             name: `出场 A${t.level}`,
                             coord: [t.exit_date, t.exit_price],
                             symbol: 'pin',
-                            symbolSize: 30,
-                            itemStyle: { color: isProfit ? '#22c55e' : '#ef4444' },
-                            label: { show: true, formatter: `${t.profit > 0 ? '+' : ''}${t.profit.toFixed(0)}`, position: 'inside', color: '#fff', fontSize: 10 }
+                            symbolSize: 35,
+                            itemStyle: { color: profitColor },
+                            label: { 
+                                show: true, 
+                                formatter: `${t.profit >= 0 ? '+' : ''}${t.profit.toFixed(0)}`, 
+                                position: 'inside', 
+                                color: '#fff', 
+                                fontSize: 11,
+                                fontWeight: 'bold'
+                            }
                         });
+                    }
+                    
+                    if (entryIdx >= 0 && exitIdx >= 0) {
+                        const isProfit = t.profit >= 0;
+                        markLines.push([
+                            {
+                                coord: [t.entry_date, t.entry_price],
+                                lineStyle: {
+                                    color: isProfit ? '#22c55e' : '#ef4444',
+                                    width: 2,
+                                    type: 'dashed'
+                                }
+                            },
+                            {
+                                coord: [t.exit_date, t.exit_price]
+                            }
+                        ]);
                     }
                 });
             }
@@ -1499,6 +1919,10 @@
                         },
                         markPoint: {
                             data: markPoints
+                        },
+                        markLine: {
+                            symbol: ['none', 'none'],
+                            data: markLines
                         }
                     },
                     {

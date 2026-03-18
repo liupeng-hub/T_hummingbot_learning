@@ -326,12 +326,12 @@ class TestResultsDB:
             cursor.execute("""
                 INSERT INTO test_cases 
                 (case_id, name, description, symbol, date_start, date_end, test_type,
-                 amplitude, market, entry, timeout, status, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 amplitude, market, entry, timeout, status, interval, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (case.case_id, case.name, case.description, case.symbol,
                   case.date_start, case.date_end, case.test_type,
                   case.amplitude, case.market, case.entry, case.timeout,
-                  case.status, now, now))
+                  case.status, getattr(case, 'interval', '1m'), now, now))
             
             conn.commit()
             return case.case_id
@@ -400,7 +400,7 @@ class TestResultsDB:
             
             # 构建更新语句
             allowed_fields = ['name', 'description', 'symbol', 'date_start', 'date_end',
-                            'test_type', 'amplitude', 'market', 'entry', 'timeout', 'status']
+                            'test_type', 'amplitude', 'market', 'entry', 'timeout', 'status', 'interval']
             set_clauses = []
             params = []
             
@@ -423,6 +423,24 @@ class TestResultsDB:
             return True
         except Exception as e:
             print(f"更新测试用例失败: {e}")
+            return False
+        finally:
+            conn.close()
+    
+    def update_case_status(self, case_id: str, status: str) -> bool:
+        """更新测试用例状态"""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        
+        try:
+            cursor.execute(
+                "UPDATE test_cases SET status = ?, updated_at = ? WHERE case_id = ?",
+                (status, datetime.now().isoformat(), case_id)
+            )
+            conn.commit()
+            return cursor.rowcount > 0
+        except Exception as e:
+            print(f"更新测试用例状态失败: {e}")
             return False
         finally:
             conn.close()
@@ -580,7 +598,12 @@ class TestResultsDB:
         cursor = conn.cursor()
         
         try:
-            cursor.execute("SELECT * FROM test_results WHERE result_id = ?", (result_id,))
+            cursor.execute("""
+                SELECT r.*, c.test_type, c.name as case_name
+                FROM test_results r
+                LEFT JOIN test_cases c ON r.case_id = c.case_id
+                WHERE r.result_id = ?
+            """, (result_id,))
             row = cursor.fetchone()
             return dict(row) if row else None
         finally:
@@ -592,24 +615,29 @@ class TestResultsDB:
         cursor = conn.cursor()
         
         try:
-            sql = "SELECT * FROM test_results WHERE 1=1"
+            sql = """
+                SELECT r.*, c.test_type, c.name as case_name
+                FROM test_results r
+                LEFT JOIN test_cases c ON r.case_id = c.case_id
+                WHERE 1=1
+            """
             params = []
             
             if filters:
                 if filters.get('case_id'):
-                    sql += " AND case_id = ?"
+                    sql += " AND r.case_id = ?"
                     params.append(filters['case_id'])
                 if filters.get('symbol'):
-                    sql += " AND symbol = ?"
+                    sql += " AND r.symbol = ?"
                     params.append(filters['symbol'])
                 if filters.get('status'):
-                    sql += " AND status = ?"
+                    sql += " AND r.status = ?"
                     params.append(filters['status'])
                 if filters.get('market_algorithm'):
-                    sql += " AND market_algorithm = ?"
+                    sql += " AND r.market_algorithm = ?"
                     params.append(filters['market_algorithm'])
             
-            sql += " ORDER BY executed_at DESC LIMIT ? OFFSET ?"
+            sql += " ORDER BY r.executed_at DESC LIMIT ? OFFSET ?"
             params.extend([limit, offset])
             
             cursor.execute(sql, params)
