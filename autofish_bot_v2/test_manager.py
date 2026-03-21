@@ -340,6 +340,7 @@ def main():
     create_case_parser.add_argument("--market-params", help="行情算法参数（JSON字符串）")
     create_case_parser.add_argument("--entry-params", help="入场价格策略参数（JSON字符串）")
     create_case_parser.add_argument("--timeout-params", help="超时参数（JSON字符串）")
+    create_case_parser.add_argument("--capital-params", help="资金池参数（JSON字符串")
     
     list_cases_parser = subparsers.add_parser("list-cases", help="列出测试用例")
     list_cases_parser.add_argument("--symbol", help="按交易对筛选")
@@ -410,6 +411,7 @@ def main():
             market=args.market_params or '{"algorithm": "always_ranging"}',
             entry=args.entry_params or '{}',
             timeout=args.timeout_params or '{"a1_timeout_minutes": 0}',
+            capital=args.capital_params or '{"strategy": "guding"}',
             status='draft'
         )
         
@@ -485,6 +487,7 @@ def main():
         market = case.get('market') or '{"algorithm": "always_ranging"}'
         entry = case.get('entry') or '{}'
         timeout = case.get('timeout') or '{"a1_timeout_minutes": 0}'
+        capital = case.get('capital') or '{"strategy": "guding"}'
         
         date_start = case['date_start'].replace('-', '')
         date_end = case['date_end'].replace('-', '')
@@ -499,7 +502,8 @@ def main():
             '--amplitude-params', amplitude,
             '--market-params', market,
             '--entry-params', entry,
-            '--timeout-params', timeout
+            '--timeout-params', timeout,
+            '--capital-params', capital
         ]
         
         print(f"\n{'='*60}")
@@ -619,7 +623,7 @@ def create_flask_app():
             if request.args.get('plan_id'):
                 filters['plan_id'] = request.args.get('plan_id')
             limit = int(request.args.get('limit', 50))
-            results = db.query_results(filters, limit)
+            results = db.list_results(filters, limit)
             return jsonify({'success': True, 'data': results})
         except Exception as e:
             return jsonify({'success': False, 'error': str(e)})
@@ -1010,6 +1014,7 @@ def create_flask_app():
                 market=json.dumps(data.get('market', {})),
                 entry=json.dumps(data.get('entry', {})),
                 timeout=json.dumps(data.get('timeout', {})),
+                capital=json.dumps(data.get('capital', {})),
                 status='draft'
             )
             
@@ -1030,7 +1035,7 @@ def create_flask_app():
             if not case:
                 return jsonify({'success': False, 'error': '测试用例不存在'})
             
-            for field in ['amplitude', 'market', 'entry', 'timeout']:
+            for field in ['amplitude', 'market', 'entry', 'timeout', 'capital']:
                 if case.get(field):
                     case[field] = json.loads(case[field])
             
@@ -1055,7 +1060,8 @@ def create_flask_app():
                     'amplitude': case.get('amplitude', {}),
                     'market': case.get('market', {}),
                     'entry': case.get('entry', {}),
-                    'timeout': case.get('timeout', {})
+                    'timeout': case.get('timeout', {}),
+                    'capital': case.get('capital', {})
                 }
             })
         except Exception as e:
@@ -1072,7 +1078,7 @@ def create_flask_app():
                 if field in data:
                     updates[field] = data[field]
             
-            for field in ['amplitude', 'market', 'entry', 'timeout']:
+            for field in ['amplitude', 'market', 'entry', 'timeout', 'capital']:
                 if field in data:
                     updates[field] = json.dumps(data[field])
             
@@ -1123,6 +1129,7 @@ def create_flask_app():
             market = json.loads(case['market'] or '{}')
             entry = json.loads(case['entry'] or '{}')
             timeout = json.loads(case['timeout'] or '{}')
+            capital = json.loads(case['capital'] or '{}')
             
             cmd = [
                 'python3', 'binance_backtest.py',
@@ -1133,7 +1140,8 @@ def create_flask_app():
                 '--amplitude-params', json.dumps(amplitude),
                 '--market-params', json.dumps(market),
                 '--entry-params', json.dumps(entry),
-                '--timeout-params', json.dumps(timeout)
+                '--timeout-params', json.dumps(timeout),
+                '--capital-params', json.dumps(capital)
             ]
             
             import subprocess
@@ -1143,7 +1151,13 @@ def create_flask_app():
             
             def run_backtest():
                 try:
+                    print(f"[{case_id}] 开始执行命令: {' '.join(cmd)}")
                     result = subprocess.run(cmd, capture_output=True, text=True, timeout=3600)
+                    print(f"[{case_id}] 命令返回码: {result.returncode}")
+                    if result.stdout:
+                        print(f"[{case_id}] 输出: {result.stdout[-2000:]}")
+                    if result.stderr:
+                        print(f"[{case_id}] 错误: {result.stderr[-1000:]}")
                     if result.returncode == 0:
                         db.update_case_status(case_id, 'completed')
                         print(f"[{case_id}] 测试完成")
@@ -1207,6 +1221,8 @@ def create_flask_app():
                 result['trading_statuses'] = json.loads(result['trading_statuses'])
             if result.get('extra_metrics'):
                 result['extra_metrics'] = json.loads(result['extra_metrics'])
+            if result.get('capital'):
+                result['capital'] = json.loads(result['capital'])
             
             return jsonify({'success': True, 'data': result})
         except Exception as e:
@@ -1217,6 +1233,26 @@ def create_flask_app():
         try:
             trades = db.get_trade_details(result_id)
             return jsonify({'success': True, 'data': trades})
+        except Exception as e:
+            return jsonify({'success': False, 'error': str(e)})
+    
+    @app.route('/api/results/<result_id>/capital', methods=['GET'])
+    def get_capital_detail(result_id):
+        try:
+            result = db.get_result(result_id)
+            if not result:
+                return jsonify({'success': False, 'error': '测试结果不存在'})
+            
+            capital_stats = db.get_capital_statistics(result_id)
+            capital_history = db.get_capital_history(result_id)
+            
+            return jsonify({
+                'success': True,
+                'data': {
+                    'statistics': capital_stats,
+                    'history': capital_history
+                }
+            })
         except Exception as e:
             return jsonify({'success': False, 'error': str(e)})
     
@@ -1281,6 +1317,13 @@ def create_flask_app():
                     
                     raw_klines = asyncio.run(fetch_klines_async())
                     
+                    # 限制K线数量，采样显示
+                    max_klines = 5000
+                    if len(raw_klines) > max_klines:
+                        step = len(raw_klines) // max_klines
+                        raw_klines = raw_klines[::step]
+                        logger.info(f"K线数据采样: 原始{len(raw_klines) * step}条, 采样后{len(raw_klines)}条")
+                    
                     for k in raw_klines:
                         dt = datetime.fromtimestamp(k['timestamp'] / 1000)
                         klines.append({
@@ -1295,10 +1338,13 @@ def create_flask_app():
                 except Exception as e:
                     logger.error(f"获取K线数据失败: {e}")
             
+            capital_history = db.get_capital_history(result_id)
+            
             chart_data = {
                 'result': result,
                 'klines': klines,
-                'trades': trades
+                'trades': trades,
+                'capital_history': capital_history
             }
             
             return jsonify({'success': True, 'data': chart_data})

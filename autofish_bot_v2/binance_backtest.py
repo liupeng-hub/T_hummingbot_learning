@@ -376,6 +376,27 @@ class BacktestEngine:
             "quantity": float(order.quantity) if order.quantity else 0,
             "stake": float(order.stake_amount) if order.stake_amount else 0,
         })
+        
+        self._update_capital_after_trade(order.profit, kline_time)
+    
+    def _update_capital_after_trade(self, profit: Decimal, kline_time: datetime = None) -> None:
+        """交易后更新资金池
+        
+        Args:
+            profit: 本次交易盈亏
+            kline_time: K线时间
+        """
+        if self.capital_pool.strategy == 'guding':
+            return
+        
+        result = self.capital_pool.process_trade_profit(profit, kline_time)
+        
+        if result.get('withdrawal'):
+            logger.info(f"[资金池] 触发提现: 提现金额={result.get('withdrawal_amount', 0):.2f}, "
+                       f"保留资金={result.get('retained_capital', 0):.2f}")
+        
+        if result.get('liquidation'):
+            logger.warning(f"[资金池] 触发爆仓恢复: 恢复资金={result.get('recovered_capital', 0):.2f}")
     
     def _on_kline(self, kline: dict):
         """处理 K 线数据"""
@@ -655,6 +676,7 @@ class MarketAwareBacktestEngine(BacktestEngine):
         market: Dict,
         entry: Dict,
         timeout: Dict,
+        capital: Dict = None,
     ):
         config = amplitude.copy()
         config['a1_timeout_minutes'] = timeout.get('a1_timeout_minutes', 0)
@@ -684,6 +706,20 @@ class MarketAwareBacktestEngine(BacktestEngine):
         self.results['total_trading_minutes'] = 0
         self.results['total_stopped_minutes'] = 0
         self.results['market_statistics'] = {}
+        
+        self.total_amount_quote = Decimal(str(amplitude.get('total_amount_quote', 10000)))
+        self.initial_capital = self.total_amount_quote
+        self.stop_loss = float(amplitude.get('stop_loss', 0.08))
+        self.leverage = int(amplitude.get('leverage', 10))
+        
+        from autofish_core import CapitalPoolFactory
+        self.capital_pool = CapitalPoolFactory.create(
+            self.initial_capital,
+            capital or {'strategy': 'guding'},
+            self.stop_loss,
+            self.leverage
+        )
+        self.capital_strategy = self.capital_pool.strategy
         
     def _create_algorithm(self) -> StatusAlgorithm:
         """创建行情判断算法"""
@@ -933,7 +969,7 @@ class MarketAwareBacktestEngine(BacktestEngine):
         self._check_first_entry_timeout(close_price, kline_time)
         
         self._process_entry(low_price, close_price)
-        self._process_exit(open_price, high_price, low_price, close_price)
+        self._process_exit(open_price, high_price, low_price, close_price, kline_time)
     
     async def run(
         self, 
@@ -1108,6 +1144,7 @@ async def main():
     parser.add_argument("--market-params", type=str, default=None, help="行情算法参数（JSON字符串，格式: {\"algorithm\": \"dual_thrust\", \"dual_thrust\": {...}, \"trading_statuses\": [\"ranging\"]}）")
     parser.add_argument("--entry-params", type=str, default=None, help="入场价格策略参数（JSON字符串，格式: {\"strategy\": \"atr\", \"atr\": {...}}）")
     parser.add_argument("--timeout-params", type=str, default=None, help="超时参数（JSON字符串）")
+    parser.add_argument("--capital-params", type=str, default=None, help="资金池参数（JSON字符串，格式: {\"mode\": \"progressive\", \"initial_capital\": 10000, \"strategy\": \"conservative\"}）")
     
     args = parser.parse_args()
     
@@ -1115,6 +1152,7 @@ async def main():
     market = json.loads(args.market_params) if args.market_params else {"algorithm": "always_ranging"}
     entry = json.loads(args.entry_params) if args.entry_params else {}
     timeout = json.loads(args.timeout_params) if args.timeout_params else {"a1_timeout_minutes": 0}
+    capital = json.loads(args.capital_params) if args.capital_params else {"strategy": "guding"}
     
     logger.info(f"[参数] symbol={args.symbol}")
     logger.info(f"[参数] date_range={args.date_range}")
@@ -1122,6 +1160,7 @@ async def main():
     logger.info(f"[参数] market={market}")
     logger.info(f"[参数] entry={entry}")
     logger.info(f"[参数] timeout={timeout}")
+    logger.info(f"[参数] capital={capital}")
     
     date_ranges = []
     
@@ -1198,7 +1237,7 @@ async def main():
         print(f"📅 第 {i}/{len(date_ranges)} 个时间段: {dr['start_date'].strftime('%Y-%m-%d')} ~ {dr['end_date'].strftime('%Y-%m-%d')} ({dr['days']} 天)")
         print(f"{'='*60}")
         
-        engine = MarketAwareBacktestEngine(amplitude, market, entry, timeout)
+        engine = MarketAwareBacktestEngine(amplitude, market, entry, timeout, capital)
         await engine.run(
             symbol=args.symbol, 
             interval=args.interval, 
@@ -1206,10 +1245,10 @@ async def main():
             end_time=dr['end_time']
         )
         
-        _save_to_database(args, engine, dr['date_range_str'], amplitude, market, entry, timeout)
+        _save_to_database(args, engine, dr['date_range_str'], amplitude, market, entry, timeout, capital)
 
 
-def _save_to_database(args, engine, date_range_str, amplitude, market, entry, timeout):
+def _save_to_database(args, engine, date_range_str, amplitude, market, entry, timeout, capital):
     """保存行情感知回测结果到数据库"""
     try:
         from database.test_results_db import TestResultsDB, TestResult
@@ -1228,6 +1267,7 @@ def _save_to_database(args, engine, date_range_str, amplitude, market, entry, ti
             "market": market,
             "entry": entry,
             "timeout": timeout,
+            "capital": capital,
         }
         
         results = engine.results
@@ -1248,6 +1288,8 @@ def _save_to_database(args, engine, date_range_str, amplitude, market, entry, ti
         last_price = float(results.get('last_price', 0))
         price_change = ((last_price - first_price) / first_price * 100) if first_price > 0 else 0
         excess_return = roi - price_change
+        
+        capital_stats = engine.capital_pool.get_statistics() if engine.capital_pool and hasattr(engine.capital_pool, 'get_statistics') else {}
         
         result = TestResult(
             result_id=result_id,
@@ -1275,8 +1317,15 @@ def _save_to_database(args, engine, date_range_str, amplitude, market, entry, ti
             stopped_time_ratio=market_stats.get('stopped_pct', 0),
             market_status_changes=market_stats.get('total_events', 0),
             market_algorithm=market.get('algorithm', 'always_ranging'),
+            capital=json.dumps(capital),
         )
         db.save_result(result)
+        
+        if capital_stats:
+            statistics_id = db.save_capital_statistics(result_id, capital_stats)
+            if statistics_id and capital_stats.get('capital_history'):
+                db.save_capital_history(result_id, statistics_id, capital_stats['capital_history'])
+                print(f"   资金统计已保存: {len(capital_stats.get('capital_history', []))} 条历史记录")
         
         trades = results.get('trades', [])
         if trades:
