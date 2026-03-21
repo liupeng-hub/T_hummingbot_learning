@@ -189,6 +189,7 @@
                                         <th>胜率</th>
                                         <th>净收益</th>
                                         <th>收益率</th>
+                                        <th>资金收益率</th>
                                         <th>标的涨跌</th>
                                         <th>超额收益</th>
                                         <th>执行时间</th>
@@ -372,6 +373,9 @@
                             <li class="nav-item" role="presentation">
                                 <button class="nav-link" id="timeout-tab" data-bs-toggle="tab" data-bs-target="#timeout-tab-pane" type="button" role="tab">超时参数</button>
                             </li>
+                            <li class="nav-item" role="presentation">
+                                <button class="nav-link" id="capital-tab" data-bs-toggle="tab" data-bs-target="#capital-tab-pane" type="button" role="tab">资金池参数</button>
+                            </li>
                         </ul>
                         
                         <div class="tab-content" id="caseFormTabContent">
@@ -414,7 +418,7 @@
                                     </div>
                                     <div class="col-md-4">
                                         <label class="form-label">开始日期 *</label>
-                                        <input type="date" class="form-control" id="formDateStart" required>
+                                        <input type="date" class="form-control" id="formDateStart" value="2020-01-01" required>
                                     </div>
                                     <div class="col-md-4">
                                         <label class="form-label">结束日期 *</label>
@@ -776,6 +780,42 @@
                                     </div>
                                 </div>
                             </div>
+                            
+                            <div class="tab-pane fade" id="capital-tab-pane" role="tabpanel" aria-labelledby="capital-tab" tabindex="0">
+                                <div class="row mb-3">
+                                    <div class="col-md-6">
+                                        <label class="form-label">资金池策略</label>
+                                        <select class="form-select" id="formCapitalStrategy" onchange="onCapitalStrategyChange()">
+                                            <option value="guding">固定模式 (guding)</option>
+                                            <option value="baoshou">保守策略 (baoshou)</option>
+                                            <option value="wenjian">稳健策略 (wenjian)</option>
+                                            <option value="jijin">激进策略 (jijin)</option>
+                                            <option value="zidingyi">自定义策略 (zidingyi)</option>
+                                        </select>
+                                        <small class="text-muted">固定模式: 每轮使用初始资金; 递进模式: 支持提现和资金增长</small>
+                                    </div>
+                                </div>
+                                <div id="capitalParamsSection" style="display:none;">
+                                    <div class="row mb-3">
+                                        <div class="col-md-6">
+                                            <label class="form-label">提现阈值</label>
+                                            <input type="number" step="0.1" class="form-control" id="formWithdrawalThreshold" placeholder="默认: 2.0">
+                                            <small class="text-muted">资金增长倍数达到此值时触发提现</small>
+                                        </div>
+                                        <div class="col-md-6">
+                                            <label class="form-label">保留比例</label>
+                                            <input type="number" step="0.1" class="form-control" id="formWithdrawalRetain" placeholder="默认: 1.5">
+                                            <small class="text-muted">提现后保留的资金倍数</small>
+                                        </div>
+                                    </div>
+                                    <div class="alert alert-info mb-2">
+                                        <small>爆仓阈值自动计算: 1 - (stop_loss × leverage)</small>
+                                    </div>
+                                </div>
+                                <div id="capitalStrategyDesc" class="alert alert-info mb-3">
+                                    <small id="capitalStrategyDescText">固定模式: 每轮使用初始资金，记录盈亏</small>
+                                </div>
+                            </div>
                         </div>
                     </form>
                 </div>
@@ -783,6 +823,51 @@
                     <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
                     <button type="button" class="btn btn-danger" id="deleteCaseBtn" onclick="deleteCase()" style="display:none;">删除</button>
                     <button type="button" class="btn btn-primary" onclick="saveCase()">保存</button>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="modal fade" id="capitalDetailModal" tabindex="-1">
+        <div class="modal-dialog modal-xl">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">资金详情</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <ul class="nav nav-tabs mb-3">
+                        <li class="nav-item">
+                            <a class="nav-link active" data-bs-toggle="tab" href="#capitalStatsTab">资金统计</a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link" data-bs-toggle="tab" href="#capitalHistoryTab" id="capitalHistoryTabLink">资金历史</a>
+                        </li>
+                    </ul>
+                    <div class="tab-content">
+                        <div class="tab-pane fade show active" id="capitalStatsTab">
+                            <div class="row" id="capitalStatsContent">
+                            </div>
+                        </div>
+                        <div class="tab-pane fade" id="capitalHistoryTab">
+                            <div id="capitalChart" style="height: 350px; margin-bottom: 20px;"></div>
+                            <div class="table-container" style="max-height: 500px; overflow-y: auto;">
+                                <table class="table table-sm table-striped">
+                                    <thead>
+                                        <tr>
+                                            <th>时间</th>
+                                            <th>事件类型</th>
+                                            <th>变化前资金</th>
+                                            <th>变化后资金</th>
+                                            <th>盈亏</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="capitalHistoryContent">
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>
@@ -801,6 +886,9 @@
                             <div class="btn-group" role="group">
                                 <input type="checkbox" class="btn-check" id="showTrades" checked onchange="updateChart()">
                                 <label class="btn btn-outline-primary" for="showTrades">显示交易标注</label>
+                                
+                                <input type="checkbox" class="btn-check" id="showCapital" checked onchange="updateChart()">
+                                <label class="btn btn-outline-success" for="showCapital">显示资金曲线</label>
                             </div>
                         </div>
                     </div>
@@ -860,11 +948,51 @@
             bollinger: {
                 period: 20,
                 num_std: 2.0
+            },
+            timeout: {
+                a1_timeout_minutes: 0
+            },
+            capital: {
+                strategy: 'guding',
+                baoshou: { withdrawal_threshold: 2.0, withdrawal_retain: 1.5 },
+                wenjian: { withdrawal_threshold: 3.0, withdrawal_retain: 2.0 },
+                jijin: { withdrawal_threshold: 1.5, withdrawal_retain: 1.2 }
             }
         };
         
         function getParamWithDefault(value, defaultValue) {
             return value !== undefined && value !== null && value !== '' ? value : defaultValue;
+        }
+        
+        function normalizeCapitalFormat(capital) {
+            if (!capital) {
+                return { strategy: 'guding' };
+            }
+            
+            const strategy = capital.strategy || 'guding';
+            
+            if (strategy === 'guding') {
+                return { strategy: 'guding' };
+            }
+            
+            if (capital[strategy] && typeof capital[strategy] === 'object') {
+                return {
+                    strategy: strategy,
+                    [strategy]: capital[strategy]
+                };
+            }
+            
+            if (capital.withdrawal_threshold !== undefined || capital.withdrawal_retain !== undefined) {
+                return {
+                    strategy: strategy,
+                    [strategy]: {
+                        withdrawal_threshold: capital.withdrawal_threshold || 2.0,
+                        withdrawal_retain: capital.withdrawal_retain || 1.5
+                    }
+                };
+            }
+            
+            return { strategy: strategy };
         }
         
         function showError(title, message) {
@@ -883,6 +1011,9 @@
         }
         
         document.addEventListener('DOMContentLoaded', function() {
+            const today = new Date().toISOString().split('T')[0];
+            document.getElementById('formDateEnd').value = today;
+            
             loadStatistics();
             loadCases();
             loadResults();
@@ -1080,7 +1211,10 @@
                                     amplitude: fullAmplitude,
                                     market: fullMarket,
                                     entry: fullEntry,
-                                    timeout: data.timeout || {}
+                                    timeout: {
+                                        a1_timeout_minutes: getParamWithDefault((data.timeout || {}).a1_timeout_minutes, DEFAULT_PARAMS.timeout.a1_timeout_minutes)
+                                    },
+                                    capital: normalizeCapitalFormat(data.capital)
                                 }, null, 2)}</pre>
                             </div>
                         </div>
@@ -1096,6 +1230,12 @@
             document.getElementById('caseFormTitle').textContent = '新建测试用例';
             document.getElementById('editCaseId').value = '';
             document.getElementById('caseForm').reset();
+            
+            const today = new Date().toISOString().split('T')[0];
+            document.getElementById('formDateStart').value = '2020-01-01';
+            document.getElementById('formDateEnd').value = today;
+            document.getElementById('formSymbol').value = 'BTCUSDT';
+            
             document.querySelectorAll('.algorithm-params').forEach(el => el.style.display = 'none');
             document.querySelectorAll('.strategy-params').forEach(el => el.style.display = 'none');
             document.getElementById('deleteCaseBtn').style.display = 'none';
@@ -1228,11 +1368,79 @@
                     const timeout = data.timeout || {};
                     document.getElementById('formA1TimeoutMinutes').value = timeout.a1_timeout_minutes || '';
                     
+                    const capital = data.capital || {};
+                    let strategy = capital.strategy || 'guding';
+                    
+                    const strategyMapping = {
+                        'conservative': 'baoshou',
+                        'moderate': 'wenjian',
+                        'aggressive': 'jijin',
+                        'custom': 'zidingyi'
+                    };
+                    if (strategyMapping[strategy]) {
+                        strategy = strategyMapping[strategy];
+                    }
+                    
+                    document.getElementById('formCapitalStrategy').value = strategy;
+                    
+                    if (strategy !== 'guding') {
+                        let strategyParams = capital[strategy] || {};
+                        if (!strategyParams.withdrawal_threshold && capital.withdrawal_threshold) {
+                            strategyParams = {
+                                withdrawal_threshold: capital.withdrawal_threshold,
+                                withdrawal_retain: capital.withdrawal_retain
+                            };
+                        }
+                        document.getElementById('formWithdrawalThreshold').value = strategyParams.withdrawal_threshold || '';
+                        document.getElementById('formWithdrawalRetain').value = strategyParams.withdrawal_retain || '';
+                    }
+                    
+                    onCapitalStrategyChange();
+                    
                     document.getElementById('deleteCaseBtn').style.display = 'inline-block';
                     new bootstrap.Modal(document.getElementById('caseFormModal')).show();
                 }
             } catch (error) {
                 console.error('加载用例失败:', error);
+            }
+        }
+        
+        function onCapitalStrategyChange() {
+            const strategy = document.getElementById('formCapitalStrategy').value;
+            const paramsSection = document.getElementById('capitalParamsSection');
+            const descText = document.getElementById('capitalStrategyDescText');
+            const thresholdInput = document.getElementById('formWithdrawalThreshold');
+            const retainInput = document.getElementById('formWithdrawalRetain');
+            
+            const defaults = {
+                'guding': { withdrawal_threshold: null, withdrawal_retain: null, desc: '固定模式: 每轮使用初始资金，记录盈亏' },
+                'baoshou': { withdrawal_threshold: 2.0, withdrawal_retain: 1.5, desc: '保守策略: 提现阈值 2.0 倍, 保留 1.5 倍' },
+                'wenjian': { withdrawal_threshold: 3.0, withdrawal_retain: 2.0, desc: '稳健策略: 提现阈值 3.0 倍, 保留 2.0 倍' },
+                'jijin': { withdrawal_threshold: 1.5, withdrawal_retain: 1.2, desc: '激进策略: 提现阈值 1.5 倍, 保留 1.2 倍' },
+                'zidingyi': { withdrawal_threshold: null, withdrawal_retain: null, desc: '自定义策略: 请手动设置提现阈值和保留比例' }
+            };
+            
+            const config = defaults[strategy] || defaults['guding'];
+            descText.textContent = config.desc;
+            
+            if (strategy === 'guding') {
+                paramsSection.style.display = 'none';
+            } else {
+                paramsSection.style.display = 'block';
+                if (config.withdrawal_threshold !== null) {
+                    thresholdInput.value = config.withdrawal_threshold;
+                    thresholdInput.readOnly = false;
+                } else {
+                    thresholdInput.value = '';
+                    thresholdInput.readOnly = false;
+                }
+                if (config.withdrawal_retain !== null) {
+                    retainInput.value = config.withdrawal_retain;
+                    retainInput.readOnly = false;
+                } else {
+                    retainInput.value = '';
+                    retainInput.readOnly = false;
+                }
             }
         }
         
@@ -1486,6 +1694,18 @@
             const a1TimeoutMinutes = parseInt(document.getElementById('formA1TimeoutMinutes').value);
             if (!isNaN(a1TimeoutMinutes)) timeout.a1_timeout_minutes = a1TimeoutMinutes;
             
+            const capitalStrategy = document.getElementById('formCapitalStrategy').value;
+            const capital = { strategy: capitalStrategy };
+            
+            if (capitalStrategy !== 'guding') {
+                const withdrawalThreshold = parseFloat(document.getElementById('formWithdrawalThreshold').value);
+                const withdrawalRetain = parseFloat(document.getElementById('formWithdrawalRetain').value);
+                capital[capitalStrategy] = {
+                    withdrawal_threshold: isNaN(withdrawalThreshold) ? 2.0 : withdrawalThreshold,
+                    withdrawal_retain: isNaN(withdrawalRetain) ? 1.5 : withdrawalRetain
+                };
+            }
+            
             const caseData = {
                 name: document.getElementById('formCaseName').value,
                 description: document.getElementById('formDescription').value,
@@ -1498,7 +1718,8 @@
                 amplitude: amplitude,
                 market: market,
                 entry: entry,
-                timeout: timeout
+                timeout: timeout,
+                capital: capital
             };
             
             try {
@@ -1640,6 +1861,9 @@
                 const roiClass = r.roi >= 0 ? 'positive' : 'negative';
                 const excessClass = r.excess_return >= 0 ? 'positive' : 'negative';
                 
+                const capitalReturn = r.capital_statistics ? r.capital_statistics.total_return : r.roi;
+                const capitalReturnClass = capitalReturn >= 0 ? 'positive' : 'negative';
+                
                 row.innerHTML = `
                     <td><small>${r.result_id.substring(0, 8)}...</small></td>
                     <td><small>${r.case_id ? r.case_id.substring(0, 8) + '...' : '-'}</small></td>
@@ -1649,15 +1873,269 @@
                     <td>${r.win_rate.toFixed(1)}%</td>
                     <td class="${netProfitClass}">${r.net_profit.toFixed(2)}</td>
                     <td class="${roiClass}">${r.roi.toFixed(2)}%</td>
+                    <td class="${capitalReturnClass}">${capitalReturn.toFixed(2)}%</td>
                     <td>${r.price_change.toFixed(2)}%</td>
                     <td class="${excessClass}">${r.excess_return.toFixed(2)}%</td>
                     <td><small>${r.executed_at}</small></td>
                     <td>
                         <button class="btn btn-sm btn-outline-primary" onclick="showResultDetail('${r.result_id}')">详情</button>
                         <button class="btn btn-sm btn-outline-info" onclick="showChart('${r.result_id}')">图表</button>
+                        <button class="btn btn-sm btn-outline-success" onclick="showCapitalDetail('${r.result_id}')">资金</button>
                     </td>
                 `;
                 tbody.appendChild(row);
+            });
+        }
+        
+        let capitalChartData = null;
+        
+        async function showCapitalDetail(resultId) {
+            try {
+                const response = await fetch(`${API_BASE}/api/results/${resultId}/capital`);
+                const data = await response.json();
+                
+                if (data.success) {
+                    const stats = data.data.statistics || {};
+                    const history = data.data.history || [];
+                    
+                    const statsContent = document.getElementById('capitalStatsContent');
+                    const historyContent = document.getElementById('capitalHistoryContent');
+                    
+                    if (Object.keys(stats).length === 0) {
+                        statsContent.innerHTML = '<div class="col-12"><div class="alert alert-info">暂无资金统计数据（可能使用固定模式）</div></div>';
+                    } else {
+                        const formatValue = (val, suffix = '') => {
+                            return val !== undefined && val !== null ? val.toFixed(2) + suffix : '-';
+                        };
+                        
+                        statsContent.innerHTML = `
+                            <div class="col-md-3">
+                                <div class="card metric-card">
+                                    <div class="metric-value">${formatValue(stats.initial_capital)}</div>
+                                    <div class="metric-label">初始资金</div>
+                                </div>
+                            </div>
+                            <div class="col-md-3">
+                                <div class="card metric-card">
+                                    <div class="metric-value">${formatValue(stats.final_capital)}</div>
+                                    <div class="metric-label">最终资金</div>
+                                </div>
+                            </div>
+                            <div class="col-md-3">
+                                <div class="card metric-card">
+                                    <div class="metric-value ${stats.total_return >= 0 ? 'positive' : 'negative'}">${formatValue(stats.total_return, '%')}</div>
+                                    <div class="metric-label">总收益率</div>
+                                </div>
+                            </div>
+                            <div class="col-md-3">
+                                <div class="card metric-card">
+                                    <div class="metric-value ${stats.max_drawdown >= 0 ? 'negative' : 'positive'}">${formatValue(stats.max_drawdown, '%')}</div>
+                                    <div class="metric-label">最大回撤</div>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <table class="table table-sm">
+                                    <tr><td>交易资金</td><td>${formatValue(stats.trading_capital)}</td></tr>
+                                    <tr><td>利润池</td><td>${formatValue(stats.profit_pool)}</td></tr>
+                                    <tr><td>累计盈利</td><td class="positive">${formatValue(stats.total_profit)}</td></tr>
+                                    <tr><td>累计亏损</td><td class="negative">${formatValue(stats.total_loss)}</td></tr>
+                                </table>
+                            </div>
+                            <div class="col-md-6">
+                                <table class="table table-sm">
+                                    <tr><td>提现次数</td><td>${stats.withdrawal_count || 0}</td></tr>
+                                    <tr><td>累计提现</td><td>${formatValue(stats.total_withdrawal)}</td></tr>
+                                    <tr><td>爆仓次数</td><td>${stats.liquidation_count || 0}</td></tr>
+                                    <tr><td>胜率</td><td>${formatValue(stats.win_rate, '%')}</td></tr>
+                                </table>
+                            </div>
+                        `;
+                    }
+                    
+                    historyContent.innerHTML = '';
+                    if (history.length === 0) {
+                        historyContent.innerHTML = '<tr><td colspan="5" class="text-center text-muted">暂无资金历史记录</td></tr>';
+                    } else {
+                        history.forEach(h => {
+                            const profitClass = h.profit >= 0 ? 'positive' : 'negative';
+                            const eventTypeMap = {
+                                'trade': '交易',
+                                'withdrawal': '提现',
+                                'liquidation': '爆仓恢复'
+                            };
+                            historyContent.innerHTML += `
+                                <tr>
+                                    <td><small>${h.timestamp}</small></td>
+                                    <td>${eventTypeMap[h.event_type] || h.event_type}</td>
+                                    <td>${h.old_capital.toFixed(2)}</td>
+                                    <td>${h.new_capital.toFixed(2)}</td>
+                                    <td class="${profitClass}">${h.profit.toFixed(2)}</td>
+                                </tr>
+                            `;
+                        });
+                    }
+                    
+                    // 渲染资金曲线图表
+                    capitalChartData = { history, stats };
+                    
+                    // 注册 Tab 切换事件
+                    const tabLink = document.getElementById('capitalHistoryTabLink');
+                    if (tabLink) {
+                        tabLink.onclick = function() {
+                            setTimeout(function() {
+                                if (capitalChartData && capitalChartData.history) {
+                                    renderCapitalChart(capitalChartData.history, capitalChartData.stats);
+                                }
+                            }, 300);
+                        };
+                    }
+                    
+                    const modal = new bootstrap.Modal(document.getElementById('capitalDetailModal'));
+                    modal.show();
+                }
+            } catch (error) {
+                console.error('加载资金详情失败:', error);
+            }
+        }
+        
+        function renderCapitalChart(history, stats) {
+            capitalChartData = { history, stats };
+            
+            const chartDom = document.getElementById('capitalChart');
+            if (!chartDom) {
+                console.error('capitalChart container not found');
+                return;
+            }
+            
+            // 销毁现有图表
+            const existingChart = echarts.getInstanceByDom(chartDom);
+            if (existingChart) {
+                existingChart.dispose();
+            }
+            
+            const capitalChart = echarts.init(chartDom);
+            
+            if (!history || history.length === 0) {
+                capitalChart.setOption({
+                    title: { text: '暂无资金历史数据', left: 'center' }
+                });
+                return;
+            }
+            
+            // 构建数据
+            const times = history.map((h, i) => h.timestamp ? h.timestamp.substring(0, 19) : `#${i + 1}`);
+            const tradingCapitals = history.map(h => h.new_capital);
+            const totalCapitals = history.map(h => h.total_capital || h.new_capital);
+            const profits = history.map(h => h.profit);
+            
+            const option = {
+                title: {
+                    text: '资金变化趋势',
+                    left: 'center',
+                    textStyle: { fontSize: 14 }
+                },
+                tooltip: {
+                    trigger: 'axis',
+                    formatter: function(params) {
+                        const idx = params[0].dataIndex;
+                        const h = history[idx];
+                        const totalCap = h.total_capital || h.new_capital;
+                        return `
+                            <div style="font-size: 12px;">
+                                <div><strong>${times[idx]}</strong></div>
+                                <div>交易资金: ${h.new_capital.toFixed(2)} USDT</div>
+                                <div>总资金: ${totalCap.toFixed(2)} USDT</div>
+                                <div style="color: ${h.profit >= 0 ? '#22c55e' : '#ef4444'}">盈亏: ${h.profit >= 0 ? '+' : ''}${h.profit.toFixed(2)}</div>
+                            </div>
+                        `;
+                    }
+                },
+                legend: {
+                    data: ['交易资金', '总资金', '盈亏'],
+                    top: 30
+                },
+                grid: {
+                    left: '10%',
+                    right: '10%',
+                    top: 70,
+                    bottom: 60
+                },
+                xAxis: {
+                    type: 'category',
+                    data: times,
+                    axisLabel: {
+                        rotate: 45,
+                        fontSize: 10,
+                        interval: Math.floor(times.length / 10)
+                    }
+                },
+                yAxis: [
+                    {
+                        type: 'value',
+                        name: '资金 (USDT)',
+                        position: 'left',
+                        scale: true
+                    },
+                    {
+                        type: 'value',
+                        name: '盈亏 (USDT)',
+                        position: 'right',
+                        scale: true
+                    }
+                ],
+                dataZoom: [
+                    {
+                        type: 'inside',
+                        start: 0,
+                        end: 100
+                    },
+                    {
+                        type: 'slider',
+                        start: 0,
+                        end: 100,
+                        bottom: 10
+                    }
+                ],
+                series: [
+                    {
+                        name: '交易资金',
+                        type: 'line',
+                        yAxisIndex: 0,
+                        data: tradingCapitals,
+                        smooth: true,
+                        lineStyle: { width: 2, color: '#3b82f6' },
+                        areaStyle: { opacity: 0.1, color: '#3b82f6' },
+                        symbol: 'none'
+                    },
+                    {
+                        name: '总资金',
+                        type: 'line',
+                        yAxisIndex: 0,
+                        data: totalCapitals,
+                        smooth: true,
+                        lineStyle: { width: 3, color: '#f59e0b' },
+                        symbol: 'none'
+                    },
+                    {
+                        name: '盈亏',
+                        type: 'bar',
+                        yAxisIndex: 1,
+                        data: profits,
+                        itemStyle: {
+                            color: function(params) {
+                                return params.value >= 0 ? '#22c55e' : '#ef4444';
+                            }
+                        }
+                    }
+                ]
+            };
+            
+            capitalChart.setOption(option);
+            console.log('Capital chart rendered successfully');
+            
+            // 窗口大小变化时重新调整
+            window.addEventListener('resize', function() {
+                capitalChart.resize();
             });
         }
         
@@ -1728,6 +2206,49 @@
                                     <tr><td>超额收益</td><td>${r.excess_return.toFixed(2)}%</td></tr>
                                 </table>
                             </div>
+                            <div class="col-md-12">
+                                <h6>资金池参数</h6>
+                                <table class="table table-sm">
+                                    ${r.capital ? `
+                                        <tr><td>策略</td><td>${r.capital.strategy === 'guding' ? '固定模式' : r.capital.strategy === 'baoshou' ? '保守策略' : r.capital.strategy === 'wenjian' ? '稳健策略' : r.capital.strategy === 'jijin' ? '激进策略' : '自定义策略'}</td></tr>
+                                        ${r.capital.strategy && r.capital.strategy !== 'guding' ? `
+                                            <tr><td>提现阈值</td><td>${(r.capital[r.capital.strategy] || {}).withdrawal_threshold || 2.0} 倍</td></tr>
+                                            <tr><td>保留比例</td><td>${(r.capital[r.capital.strategy] || {}).withdrawal_retain || 1.5} 倍</td></tr>
+                                        ` : ''}
+                                    ` : '<tr><td colspan="2" class="text-muted">未配置资金池参数（使用默认固定模式）</td></tr>'}
+                                </table>
+                            </div>
+                            ${r.capital_statistics ? `
+                            <div class="col-md-12">
+                                <h6>资金统计</h6>
+                                <div class="row">
+                                    <div class="col-md-3">
+                                        <div class="card metric-card" style="padding: 10px;">
+                                            <div class="metric-value" style="font-size: 1.2em;">${r.capital_statistics.initial_capital.toFixed(2)}</div>
+                                            <div class="metric-label">初始资金</div>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-3">
+                                        <div class="card metric-card" style="padding: 10px;">
+                                            <div class="metric-value" style="font-size: 1.2em;">${r.capital_statistics.final_capital.toFixed(2)}</div>
+                                            <div class="metric-label">最终资金</div>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-3">
+                                        <div class="card metric-card" style="padding: 10px;">
+                                            <div class="metric-value ${r.capital_statistics.total_return >= 0 ? 'positive' : 'negative'}" style="font-size: 1.2em;">${r.capital_statistics.total_return.toFixed(2)}%</div>
+                                            <div class="metric-label">资金收益率</div>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-3">
+                                        <div class="card metric-card" style="padding: 10px;">
+                                            <div class="metric-value negative" style="font-size: 1.2em;">${r.capital_statistics.max_drawdown.toFixed(2)}%</div>
+                                            <div class="metric-label">最大回撤</div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            ` : ''}
                             ${tradesHtml}
                         </div>
                     `;
@@ -1785,10 +2306,31 @@
             }
             
             const showTrades = document.getElementById('showTrades').checked;
+            const showCapital = document.getElementById('showCapital').checked;
+            const capitalHistory = currentChartData.capital_history || [];
             
             const dates = klines.map(k => k.date);
             const ohlc = klines.map(k => [k.open, k.close, k.low, k.high]);
             const volumes = klines.map(k => k.volume);
+            
+            let capitalSeries = null;
+            if (showCapital && capitalHistory.length > 0) {
+                const capitalData = dates.map(date => {
+                    const match = capitalHistory.find(h => h.timestamp && h.timestamp.startsWith(date));
+                    return match ? match.new_capital : null;
+                });
+                
+                capitalSeries = {
+                    name: '资金',
+                    type: 'line',
+                    yAxisIndex: 2,
+                    data: capitalData,
+                    smooth: true,
+                    lineStyle: { width: 2, color: '#22c55e' },
+                    areaStyle: { opacity: 0.1, color: '#22c55e' },
+                    symbol: 'none'
+                };
+            }
             
             const markPoints = [];
             const markLines = [];
@@ -1868,7 +2410,7 @@
                     textStyle: { color: '#333' }
                 },
                 legend: {
-                    data: ['K线', '成交量'],
+                    data: ['K线', '成交量', '资金'],
                     top: 40
                 },
                 grid: [
@@ -1900,7 +2442,8 @@
                 ],
                 yAxis: [
                     { scale: true, splitArea: { show: true } },
-                    { scale: true, gridIndex: 1, splitNumber: 2, axisLabel: { show: false }, axisLine: { show: false }, axisTick: { show: false }, splitLine: { show: false } }
+                    { scale: true, gridIndex: 1, splitNumber: 2, axisLabel: { show: false }, axisLine: { show: false }, axisTick: { show: false }, splitLine: { show: false } },
+                    { scale: true, position: 'right', name: '资金 (USDT)', axisLine: { show: true }, splitLine: { show: true } }
                 ],
                 dataZoom: [
                     { type: 'inside', xAxisIndex: [0, 1], start: 0, end: 100 },
@@ -1931,8 +2474,9 @@
                         xAxisIndex: 1,
                         yAxisIndex: 1,
                         data: volumes
-                    }
-                ]
+                    },
+                    capitalSeries
+                ].filter(s => s !== null)
             };
             
             klineChart.setOption(option);

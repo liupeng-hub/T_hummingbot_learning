@@ -8,10 +8,11 @@ Autofish V2 核心算法模块
 - Autofish_OrderCalculator: 订单计算器
 - Autofish_AmplitudeAnalyzer: 振幅分析器
 - Autofish_AmplitudeConfig: 振幅配置加载器
+- Autofish_CapitalPool: 资金池管理类
 """
 
 from decimal import Decimal
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Union
 from dataclasses import dataclass, field
 from datetime import datetime
 import json
@@ -1806,6 +1807,22 @@ class Autofish_ExternStrategy:
                 "threshold": 25
             },
             "trading_statuses": ["ranging"]
+        },
+        "capital_pool_strategy": {
+            "strategy": "guding",
+            "baoshou": {
+                "withdrawal_threshold": 2.0,
+                "withdrawal_retain": 1.5
+            },
+            "wenjian": {
+                "withdrawal_threshold": 3.0,
+                "withdrawal_retain": 2.0
+            },
+            "jijin": {
+                "withdrawal_threshold": 1.5,
+                "withdrawal_retain": 1.2
+            },
+            "zidingyi": {}
         }
     }
     
@@ -1963,4 +1980,376 @@ async def main():
 if __name__ == "__main__":
     from dotenv import load_dotenv
     load_dotenv()
-    asyncio.run(main())
+
+
+# ============================================================================
+# 资金池管理
+# ============================================================================
+
+@dataclass
+class FixedCapitalTracker:
+    """固定模式资金追踪器
+    
+    用于固定模式下的资金追踪，记录每轮交易盈亏。
+    每轮交易使用固定的初始资金，不进行提现和爆仓恢复。
+    
+    Attributes:
+        initial_capital: 初始资金（来自 total_amount_quote）
+        round_profits: 每轮交易盈亏列表
+        total_round_profit: 总轮次盈亏
+        capital_history: 资金变化历史
+    """
+    
+    initial_capital: Decimal
+    round_profits: List[Decimal] = field(default_factory=list)
+    total_round_profit: Decimal = Decimal('0')
+    capital_history: List[Dict] = field(default_factory=list)
+    
+    @property
+    def trading_capital(self) -> Decimal:
+        """固定模式始终返回初始资金"""
+        return self.initial_capital
+    
+    @property
+    def strategy(self) -> str:
+        return 'guding'
+    
+    def process_trade_profit(self, profit: Decimal, kline_time: datetime = None) -> Dict:
+        """处理交易盈亏
+        
+        Args:
+            profit: 本次交易盈亏
+            kline_time: K线时间
+            
+        Returns:
+            处理结果字典
+        """
+        self.round_profits.append(profit)
+        self.total_round_profit += profit
+        
+        result = {
+            'strategy': 'guding',
+            'profit': profit,
+            'total_round_profit': float(self.total_round_profit),
+            'round_count': len(self.round_profits),
+        }
+        
+        self.capital_history.append({
+            'timestamp': (kline_time or datetime.now()).isoformat(),
+            'profit': float(profit),
+            'total_profit': float(self.total_round_profit),
+            'event_type': 'trade',
+        })
+        
+        return result
+    
+    def get_statistics(self) -> Dict:
+        """获取统计数据"""
+        win_rounds = sum(1 for p in self.round_profits if p > 0)
+        loss_rounds = sum(1 for p in self.round_profits if p < 0)
+        
+        return {
+            'strategy': 'guding',
+            'initial_capital': round(float(self.initial_capital), 2),
+            'final_capital': round(float(self.initial_capital + self.total_round_profit), 2),
+            'trading_capital': round(float(self.initial_capital), 2),
+            'total_round_profit': round(float(self.total_round_profit), 2),
+            'round_count': len(self.round_profits),
+            'win_rounds': win_rounds,
+            'loss_rounds': loss_rounds,
+            'win_rate': round(win_rounds / len(self.round_profits) * 100, 2) if self.round_profits else 0,
+            'avg_round_profit': round(float(self.total_round_profit / len(self.round_profits)), 2) if self.round_profits else 0,
+            'capital_history': self.capital_history,
+        }
+
+
+@dataclass
+class ProgressiveCapitalTracker:
+    """递进模式资金追踪器
+    
+    管理交易资金的动态变化，支持提现和爆仓恢复机制。
+    
+    Attributes:
+        initial_capital: 初始资金
+        trading_capital: 当前交易资金（动态变化）
+        profit_pool: 利润池（锁定的利润）
+        total_profit: 累计利润
+        total_loss: 累计亏损
+        max_capital: 历史最高资金
+        withdrawal_count: 提现次数
+        liquidation_count: 爆仓次数
+        withdrawal_threshold: 提现阈值倍数
+        withdrawal_retain: 提现后保留倍数
+        liquidation_threshold: 爆仓阈值倍数
+        round_profits: 每轮交易盈亏列表
+        total_round_profit: 总轮次盈亏
+        capital_history: 资金变化历史
+    """
+    
+    initial_capital: Decimal
+    trading_capital: Decimal = None
+    profit_pool: Decimal = Decimal('0')
+    total_profit: Decimal = Decimal('0')
+    total_loss: Decimal = Decimal('0')
+    total_withdrawal: Decimal = Decimal('0')
+    max_capital: Decimal = Decimal('0')
+    withdrawal_count: int = 0
+    liquidation_count: int = 0
+    
+    withdrawal_threshold: Decimal = Decimal('2.0')
+    withdrawal_retain: Decimal = Decimal('1.5')
+    liquidation_threshold: Decimal = Decimal('0.2')
+    _strategy: str = 'baoshou'
+    
+    round_profits: List[Decimal] = field(default_factory=list)
+    total_round_profit: Decimal = Decimal('0')
+    capital_history: List[Dict] = field(default_factory=list)
+    
+    @property
+    def strategy(self) -> str:
+        return self._strategy
+    
+    def __post_init__(self):
+        if self.trading_capital is None:
+            self.trading_capital = self.initial_capital
+        self.max_capital = self.initial_capital
+    
+    def update_capital(self, profit: Decimal, kline_time: datetime = None) -> Dict:
+        """更新资金池
+        
+        Args:
+            profit: 本次交易盈亏（正数为盈利，负数为亏损）
+            kline_time: K线时间
+            
+        Returns:
+            更新结果字典
+        """
+        old_trading_capital = self.trading_capital
+        
+        if profit > 0:
+            self.trading_capital += profit
+            self.total_profit += profit
+        else:
+            self.trading_capital += profit
+            self.total_loss += abs(profit)
+        
+        if self.trading_capital > self.max_capital:
+            self.max_capital = self.trading_capital
+        
+        result = {
+            'old_capital': old_trading_capital,
+            'new_capital': self.trading_capital,
+            'profit': profit,
+            'withdrawal_triggered': False,
+            'liquidation_triggered': False,
+        }
+        
+        self.capital_history.append({
+            'timestamp': (kline_time or datetime.now()).isoformat(),
+            'old_capital': float(old_trading_capital),
+            'new_capital': float(self.trading_capital),
+            'profit': float(profit),
+            'total_capital': float(self.trading_capital + self.profit_pool),
+            'event_type': 'trade',
+        })
+        
+        return result
+    
+    def check_withdrawal(self, kline_time: datetime = None) -> Optional[Dict]:
+        """检查是否触发提现
+        
+        Args:
+            kline_time: K线时间
+            
+        Returns:
+            提现信息字典，如果未触发则返回 None
+        """
+        threshold_amount = self.initial_capital * self.withdrawal_threshold
+        
+        if self.trading_capital >= threshold_amount:
+            retain_amount = self.initial_capital * self.withdrawal_retain
+            withdrawal_amount = self.trading_capital - retain_amount
+            old_total = self.trading_capital + self.profit_pool
+            
+            if withdrawal_amount > 0:
+                self.profit_pool += withdrawal_amount
+                self.trading_capital = retain_amount
+                self.withdrawal_count += 1
+                self.total_withdrawal += withdrawal_amount
+                
+                # 记录提现资金历史，使用 K 线时间
+                self.capital_history.append({
+                    'timestamp': (kline_time or datetime.now()).isoformat(),
+                    'old_capital': float(retain_amount + withdrawal_amount),
+                    'new_capital': float(self.trading_capital),
+                    'profit': -float(withdrawal_amount),
+                    'total_capital': float(self.trading_capital + self.profit_pool),
+                    'event_type': 'withdrawal',
+                })
+                
+                return {
+                    'withdrawal_amount': withdrawal_amount,
+                    'profit_pool': self.profit_pool,
+                    'trading_capital': self.trading_capital,
+                    'withdrawal_count': self.withdrawal_count,
+                }
+        
+        return None
+    
+    def check_liquidation(self) -> bool:
+        """检查是否爆仓
+        
+        Returns:
+            是否爆仓
+        """
+        threshold_amount = self.initial_capital * self.liquidation_threshold
+        return self.trading_capital < threshold_amount
+    
+    def recover_from_liquidation(self) -> bool:
+        """爆仓恢复
+        
+        Returns:
+            是否成功恢复
+        """
+        if self.profit_pool >= self.initial_capital:
+            self.profit_pool -= self.initial_capital
+            self.trading_capital = self.initial_capital
+            self.liquidation_count += 1
+            return True
+        
+        return False
+    
+    def set_strategy(self, strategy: str, stop_loss: float = 0.08, leverage: int = 10):
+        """设置提现策略
+        
+        Args:
+            strategy: 策略名称 (baoshou/wenjian/jijin/zidingyi)
+            stop_loss: 止损比例（默认 0.08 = 8%）
+            leverage: 杠杆倍数（默认 10）
+        """
+        self._strategy = strategy
+        auto_liquidation_threshold = 1 - (stop_loss * leverage)
+        self.liquidation_threshold = Decimal(str(auto_liquidation_threshold))
+        
+        if strategy == 'baoshou':
+            self.withdrawal_threshold = Decimal('2.0')
+            self.withdrawal_retain = Decimal('1.5')
+        elif strategy == 'wenjian':
+            self.withdrawal_threshold = Decimal('3.0')
+            self.withdrawal_retain = Decimal('2.0')
+        elif strategy == 'jijin':
+            self.withdrawal_threshold = Decimal('1.5')
+            self.withdrawal_retain = Decimal('1.2')
+        elif strategy == 'zidingyi':
+            pass
+    
+    def process_trade_profit(self, profit: Decimal, kline_time: datetime = None) -> Dict:
+        """处理交易盈亏（封装完整流程）
+        
+        Args:
+            profit: 本次交易盈亏
+            kline_time: K线时间
+            
+        Returns:
+            处理结果字典
+        """
+        result = self.update_capital(profit, kline_time)
+        
+        self.round_profits.append(profit)
+        self.total_round_profit += profit
+        
+        withdrawal = self.check_withdrawal(kline_time)
+        if withdrawal:
+            result['withdrawal'] = withdrawal
+        
+        if self.check_liquidation():
+            result['liquidation_triggered'] = True
+            self.recover_from_liquidation()
+        
+        return result
+    
+    def get_statistics(self) -> Dict:
+        """获取统计数据"""
+        total_return = (self.trading_capital + self.profit_pool - self.initial_capital) / self.initial_capital * 100
+        
+        max_drawdown = Decimal('0')
+        if self.max_capital > self.initial_capital:
+            max_drawdown = (self.max_capital - self.trading_capital) / self.max_capital * 100
+        
+        win_rounds = sum(1 for p in self.round_profits if p > 0)
+        loss_rounds = sum(1 for p in self.round_profits if p < 0)
+        
+        return {
+            'strategy': self._strategy,
+            'initial_capital': round(float(self.initial_capital), 2),
+            'final_capital': round(float(self.trading_capital + self.profit_pool), 2),
+            'trading_capital': round(float(self.trading_capital), 2),
+            'profit_pool': round(float(self.profit_pool), 2),
+            'total_return': round(float(total_return), 2),
+            'total_profit': round(float(self.total_profit), 2),
+            'total_loss': round(float(self.total_loss), 2),
+            'max_capital': round(float(self.max_capital), 2),
+            'max_drawdown': round(float(max_drawdown), 2),
+            'withdrawal_threshold': round(float(self.withdrawal_threshold), 2),
+            'withdrawal_retain': round(float(self.withdrawal_retain), 2),
+            'liquidation_threshold': round(float(self.liquidation_threshold), 2),
+            'withdrawal_count': self.withdrawal_count,
+            'total_withdrawal': round(float(self.total_withdrawal), 2),
+            'liquidation_count': self.liquidation_count,
+            'round_count': len(self.round_profits),
+            'win_rounds': win_rounds,
+            'loss_rounds': loss_rounds,
+            'win_rate': round(win_rounds / len(self.round_profits) * 100, 2) if self.round_profits else 0,
+            'avg_round_profit': round(float(self.total_round_profit / len(self.round_profits)), 2) if self.round_profits else 0,
+            'capital_history': self.capital_history,
+        }
+
+
+class CapitalPoolFactory:
+    """资金池工厂类
+    
+    封装资金池初始化逻辑，提供统一的创建接口
+    """
+    
+    @staticmethod
+    def create(
+        initial_capital: Decimal,
+        capital_config: Dict,
+        stop_loss: float = 0.08,
+        leverage: int = 10
+    ) -> Union[FixedCapitalTracker, ProgressiveCapitalTracker]:
+        """创建资金池实例
+        
+        Args:
+            initial_capital: 初始资金（来自 total_amount_quote）
+            capital_config: 资金配置
+            stop_loss: 止损比例（默认 0.08 = 8%）
+            leverage: 杠杆倍数（默认 10）
+            
+        Returns:
+            资金池实例
+        """
+        strategy = capital_config.get('strategy', 'guding')
+        
+        if strategy == 'guding':
+            return FixedCapitalTracker(initial_capital)
+        
+        tracker = ProgressiveCapitalTracker(initial_capital)
+        tracker._strategy = strategy
+        
+        auto_liquidation_threshold = 1 - (stop_loss * leverage)
+        
+        strategy_params = capital_config.get(strategy, {})
+        
+        if strategy == 'zidingyi':
+            tracker.withdrawal_threshold = Decimal(str(strategy_params.get('withdrawal_threshold', 2.0)))
+            tracker.withdrawal_retain = Decimal(str(strategy_params.get('withdrawal_retain', 1.5)))
+            tracker.liquidation_threshold = Decimal(str(strategy_params.get('liquidation_threshold', auto_liquidation_threshold)))
+        else:
+            tracker.set_strategy(strategy, stop_loss, leverage)
+            if 'withdrawal_threshold' in strategy_params:
+                tracker.withdrawal_threshold = Decimal(str(strategy_params['withdrawal_threshold']))
+            if 'withdrawal_retain' in strategy_params:
+                tracker.withdrawal_retain = Decimal(str(strategy_params['withdrawal_retain']))
+        
+        return tracker
