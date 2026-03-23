@@ -790,6 +790,7 @@
                                             <option value="baoshou">保守策略 (baoshou)</option>
                                             <option value="wenjian">稳健策略 (wenjian)</option>
                                             <option value="jijin">激进策略 (jijin)</option>
+                                            <option value="fuli">复利策略 (fuli)</option>
                                             <option value="zidingyi">自定义策略 (zidingyi)</option>
                                         </select>
                                         <small class="text-muted">固定模式: 每轮使用初始资金; 递进模式: 支持提现和资金增长</small>
@@ -898,6 +899,26 @@
         </div>
     </div>
     
+    <div class="modal fade" id="tradeModal" tabindex="-1">
+        <div class="modal-dialog modal-xl" style="max-width: 95%; width: 95%;">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">交易详情列表</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div id="tradeDetailsContent">
+                        <div class="text-center text-muted py-5">
+                            <div class="spinner-border" role="status">
+                                <span class="visually-hidden">加载中...</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <script>
         const API_BASE = window.location.origin;
@@ -956,7 +977,8 @@
                 strategy: 'guding',
                 baoshou: { withdrawal_threshold: 2.0, withdrawal_retain: 1.5 },
                 wenjian: { withdrawal_threshold: 3.0, withdrawal_retain: 2.0 },
-                jijin: { withdrawal_threshold: 1.5, withdrawal_retain: 1.2 }
+                jijin: { withdrawal_threshold: 1.5, withdrawal_retain: 1.2 },
+                fuli: { withdrawal_threshold: 999.0, withdrawal_retain: 1.0 }
             }
         };
         
@@ -1417,6 +1439,7 @@
                 'baoshou': { withdrawal_threshold: 2.0, withdrawal_retain: 1.5, desc: '保守策略: 提现阈值 2.0 倍, 保留 1.5 倍' },
                 'wenjian': { withdrawal_threshold: 3.0, withdrawal_retain: 2.0, desc: '稳健策略: 提现阈值 3.0 倍, 保留 2.0 倍' },
                 'jijin': { withdrawal_threshold: 1.5, withdrawal_retain: 1.2, desc: '激进策略: 提现阈值 1.5 倍, 保留 1.2 倍' },
+                'fuli': { withdrawal_threshold: 999.0, withdrawal_retain: 1.0, desc: '复利策略: 永不提现，全量资金复投（参数不可修改）' },
                 'zidingyi': { withdrawal_threshold: null, withdrawal_retain: null, desc: '自定义策略: 请手动设置提现阈值和保留比例' }
             };
             
@@ -1425,6 +1448,14 @@
             
             if (strategy === 'guding') {
                 paramsSection.style.display = 'none';
+            } else if (strategy === 'fuli') {
+                paramsSection.style.display = 'block';
+                thresholdInput.value = config.withdrawal_threshold;
+                retainInput.value = config.withdrawal_retain;
+                thresholdInput.readOnly = true;
+                retainInput.readOnly = true;
+                thresholdInput.disabled = true;
+                retainInput.disabled = true;
             } else {
                 paramsSection.style.display = 'block';
                 if (config.withdrawal_threshold !== null) {
@@ -1881,6 +1912,7 @@
                         <button class="btn btn-sm btn-outline-primary" onclick="showResultDetail('${r.result_id}')">详情</button>
                         <button class="btn btn-sm btn-outline-info" onclick="showChart('${r.result_id}')">图表</button>
                         <button class="btn btn-sm btn-outline-success" onclick="showCapitalDetail('${r.result_id}')">资金</button>
+                        <button class="btn btn-sm btn-outline-warning" onclick="showTradeDetails('${r.result_id}')">交易</button>
                     </td>
                 `;
                 tbody.appendChild(row);
@@ -2210,7 +2242,7 @@
                                 <h6>资金池参数</h6>
                                 <table class="table table-sm">
                                     ${r.capital ? `
-                                        <tr><td>策略</td><td>${r.capital.strategy === 'guding' ? '固定模式' : r.capital.strategy === 'baoshou' ? '保守策略' : r.capital.strategy === 'wenjian' ? '稳健策略' : r.capital.strategy === 'jijin' ? '激进策略' : '自定义策略'}</td></tr>
+                                        <tr><td>策略</td><td>${r.capital.strategy === 'guding' ? '固定模式' : r.capital.strategy === 'baoshou' ? '保守策略' : r.capital.strategy === 'wenjian' ? '稳健策略' : r.capital.strategy === 'jijin' ? '激进策略' : r.capital.strategy === 'fuli' ? '复利策略' : '自定义策略'}</td></tr>
                                         ${r.capital.strategy && r.capital.strategy !== 'guding' ? `
                                             <tr><td>提现阈值</td><td>${(r.capital[r.capital.strategy] || {}).withdrawal_threshold || 2.0} 倍</td></tr>
                                             <tr><td>保留比例</td><td>${(r.capital[r.capital.strategy] || {}).withdrawal_retain || 1.5} 倍</td></tr>
@@ -2486,6 +2518,413 @@
             if (currentChartData) {
                 renderKlineChart();
             }
+        }
+        
+        async function showTradeDetails(resultId) {
+            try {
+                const response = await fetch(`${API_BASE}/api/results/${resultId}/trades`);
+                const data = await response.json();
+                
+                if (data.success) {
+                    const trades = data.data || [];
+                    const modal = new bootstrap.Modal(document.getElementById('tradeModal'));
+                    modal.show();
+                    
+                    setTimeout(() => {
+                        renderTradeDetailsTable(trades);
+                    }, 300);
+                } else {
+                    showError('加载交易详情失败', data.error);
+                }
+            } catch (error) {
+                console.error('加载交易详情失败:', error);
+                showError('加载交易详情失败', error.message);
+            }
+        }
+        
+        function renderTradeDetailsTable(trades) {
+            const container = document.getElementById('tradeDetailsContent');
+            
+            if (!trades || trades.length === 0) {
+                container.innerHTML = '<div class="text-center text-muted py-5">暂无交易记录</div>';
+                return;
+            }
+            
+            let totalProfit = 0;
+            let winCount = 0;
+            let lossCount = 0;
+            let groupIds = new Set();
+            
+            trades.forEach(t => {
+                const profit = t.profit || 0;
+                totalProfit += profit;
+                if (profit >= 0) winCount++;
+                else lossCount++;
+                if (t.order_group_id) groupIds.add(t.order_group_id);
+            });
+            
+            const groupCount = groupIds.size;
+            
+            const levelCounts = { 1: 0, 2: 0, 3: 0, 4: 0 };
+            let totalDuration = 0;
+            let durationCount = 0;
+            
+            trades.forEach(t => {
+                const level = parseInt(t.level) || 0;
+                if (level >= 1 && level <= 4) {
+                    levelCounts[level]++;
+                }
+                
+                if (t.entry_time && t.exit_time) {
+                    const entryTime = new Date(t.entry_time);
+                    const exitTime = new Date(t.exit_time);
+                    const duration = (exitTime - entryTime) / (1000 * 60);
+                    if (duration >= 0) {
+                        totalDuration += duration;
+                        durationCount++;
+                    }
+                }
+            });
+            
+            const avgDuration = durationCount > 0 ? totalDuration / durationCount : 0;
+            const avgDurationStr = avgDuration < 60 
+                ? `${avgDuration.toFixed(0)}分钟` 
+                : `${(avgDuration / 60).toFixed(1)}小时`;
+            
+            let html = `
+                <div id="tradeCapitalChart" style="height: 300px; margin-bottom: 20px;"></div>
+                <div class="row mb-3 g-2">
+                    <div class="col">
+                        <div class="card text-center h-100">
+                            <div class="card-body py-2">
+                                <h6 class="text-muted mb-0">总交易次数</h6>
+                                <h4 class="mb-0">${trades.length}</h4>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col">
+                        <div class="card text-center h-100">
+                            <div class="card-body py-2">
+                                <h6 class="text-muted mb-0">轮次数</h6>
+                                <h4 class="mb-0">${groupCount}</h4>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col">
+                        <div class="card text-center h-100">
+                            <div class="card-body py-2 d-flex flex-column justify-content-center">
+                                <h6 class="text-muted mb-0">级别分布</h6>
+                                <h4 class="mb-0">
+                                    <span class="text-primary">${levelCounts[1]}</span> 
+                                    <span class="text-muted">|</span> 
+                                    <span class="text-success">${levelCounts[2]}</span> 
+                                    <span class="text-muted">|</span> 
+                                    <span class="text-warning">${levelCounts[3]}</span> 
+                                    <span class="text-muted">|</span> 
+                                    <span class="text-danger">${levelCounts[4]}</span>
+                                </h4>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col">
+                        <div class="card text-center h-100">
+                            <div class="card-body py-2">
+                                <h6 class="text-muted mb-0">累计盈亏</h6>
+                                <h4 class="mb-0 ${totalProfit >= 0 ? 'text-success' : 'text-danger'}">${totalProfit >= 0 ? '+' : ''}${totalProfit.toFixed(2)}</h4>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col">
+                        <div class="card text-center h-100">
+                            <div class="card-body py-2">
+                                <h6 class="text-muted mb-0">平均盈亏</h6>
+                                <h4 class="mb-0 ${totalProfit >= 0 ? 'text-success' : 'text-danger'}">${(totalProfit / trades.length).toFixed(2)}</h4>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col">
+                        <div class="card text-center h-100">
+                            <div class="card-body py-2">
+                                <h6 class="text-muted mb-0">盈利/亏损</h6>
+                                <h4 class="mb-0"><span class="text-success">${winCount}</span> / <span class="text-danger">${lossCount}</span></h4>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col">
+                        <div class="card text-center h-100">
+                            <div class="card-body py-2">
+                                <h6 class="text-muted mb-0">平均持续时间</h6>
+                                <h4 class="mb-0">${avgDurationStr}</h4>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="table-responsive">
+                    <table class="table table-sm table-hover" id="tradeDetailsTable" style="white-space: nowrap;">
+                        <thead class="table-light">
+                            <tr>
+                                <th class="sortable" data-sort="index" style="width: 50px;"># <span class="sort-icon">↕</span></th>
+                                <th class="sortable" data-sort="group_id" style="width: 60px;">轮次 <span class="sort-icon">↕</span></th>
+                                <th class="sortable" data-sort="level" style="width: 50px;">级别 <span class="sort-icon">↕</span></th>
+                                <th class="sortable" data-sort="entry_time" style="width: 140px;">入场时间 <span class="sort-icon">↕</span></th>
+                                <th class="sortable" data-sort="exit_time" style="width: 140px;">出场时间 <span class="sort-icon">↕</span></th>
+                                <th class="sortable" data-sort="entry_price" style="width: 90px;">入场价 <span class="sort-icon">↕</span></th>
+                                <th class="sortable" data-sort="exit_price" style="width: 90px;">出场价 <span class="sort-icon">↕</span></th>
+                                <th class="sortable" data-sort="quantity" style="width: 90px;">数量 <span class="sort-icon">↕</span></th>
+                                <th class="sortable" data-sort="stake" style="width: 80px;">金额 <span class="sort-icon">↕</span></th>
+                                <th class="sortable" data-sort="entry_capital" style="width: 90px;">入场资金 <span class="sort-icon">↕</span></th>
+                                <th class="sortable" data-sort="entry_total_capital" style="width: 100px;">入场总资金 <span class="sort-icon">↕</span></th>
+                                <th class="sortable" data-sort="profit" style="width: 80px;">盈亏 <span class="sort-icon">↕</span></th>
+                                <th class="sortable" data-sort="trade_type" style="width: 50px;">类型 <span class="sort-icon">↕</span></th>
+                            </tr>
+                        </thead>
+                        <tbody id="tradeDetailsBody">
+            `;
+            
+            const sortedTrades = [...trades].sort((a, b) => {
+                const timeA = a.exit_time || '';
+                const timeB = b.exit_time || '';
+                return timeA.localeCompare(timeB);
+            });
+            
+            sortedTrades.forEach((t, index) => {
+                const profit = t.profit || 0;
+                const profitClass = profit >= 0 ? 'text-success' : 'text-danger';
+                const typeClass = t.trade_type === 'take_profit' ? 'text-success' : 'text-danger';
+                const rowClass = t.trade_type === 'take_profit' ? 'table-success' : 'table-danger';
+                
+                html += `
+                    <tr data-index="${index}" data-group-id="${t.order_group_id || 0}" 
+                        data-entry-time="${t.entry_time || ''}" data-exit-time="${t.exit_time || ''}"
+                        data-level="${t.level}" data-profit="${profit}" data-trade-type="${t.trade_type}"
+                        class="${rowClass}">
+                        <td>${index + 1}</td>
+                        <td><span class="badge bg-secondary">${t.order_group_id || '-'}</span></td>
+                        <td>A${t.level}</td>
+                        <td><small>${t.entry_time || '-'}</small></td>
+                        <td><small>${t.exit_time || '-'}</small></td>
+                        <td>${t.entry_price ? parseFloat(t.entry_price).toFixed(2) : '-'}</td>
+                        <td>${t.exit_price ? parseFloat(t.exit_price).toFixed(2) : '-'}</td>
+                        <td>${t.quantity ? parseFloat(t.quantity).toFixed(6) : '-'}</td>
+                        <td>${t.stake ? parseFloat(t.stake).toFixed(2) : '-'}</td>
+                        <td>${t.entry_capital ? parseFloat(t.entry_capital).toFixed(2) : '-'}</td>
+                        <td>${t.entry_total_capital ? parseFloat(t.entry_total_capital).toFixed(2) : '-'}</td>
+                        <td class="${profitClass}">${profit >= 0 ? '+' : ''}${profit.toFixed(2)}</td>
+                        <td class="${typeClass}">${t.trade_type === 'take_profit' ? '止盈' : '止损'}</td>
+                    </tr>
+                `;
+            });
+            
+            html += `
+                        </tbody>
+                    </table>
+                </div>
+            `;
+            
+            container.innerHTML = html;
+            renderTradeCapitalChart(trades);
+            setupTableSort(trades);
+        }
+        
+        function setupTableSort(trades) {
+            const table = document.getElementById('tradeDetailsTable');
+            if (!table) return;
+            
+            const headers = table.querySelectorAll('th.sortable');
+            let currentSort = { column: null, direction: 'asc' };
+            
+            headers.forEach(header => {
+                header.style.cursor = 'pointer';
+                header.addEventListener('click', function() {
+                    const sortKey = this.dataset.sort;
+                    if (!sortKey) return;
+                    
+                    if (currentSort.column === sortKey) {
+                        currentSort.direction = currentSort.direction === 'asc' ? 'desc' : 'asc';
+                    } else {
+                        currentSort.column = sortKey;
+                        currentSort.direction = 'asc';
+                    }
+                    
+                    headers.forEach(h => h.classList.remove('sort-asc', 'sort-desc'));
+                    this.classList.add(currentSort.direction === 'asc' ? 'sort-asc' : 'sort-desc');
+                    
+                    sortTable(trades, sortKey, currentSort.direction);
+                });
+            });
+        }
+        
+        function sortTable(trades, key, direction) {
+            const tbody = document.getElementById('tradeDetailsBody');
+            if (!tbody) return;
+            
+            const rows = Array.from(tbody.querySelectorAll('tr'));
+            
+            rows.sort((a, b) => {
+                let valA, valB;
+                
+                switch(key) {
+                    case 'index':
+                        valA = parseInt(a.dataset.index);
+                        valB = parseInt(b.dataset.index);
+                        break;
+                    case 'group_id':
+                        valA = parseInt(a.dataset.groupId) || 0;
+                        valB = parseInt(b.dataset.groupId) || 0;
+                        break;
+                    case 'entry_time':
+                        valA = a.dataset.entryTime || '';
+                        valB = b.dataset.entryTime || '';
+                        break;
+                    case 'exit_time':
+                        valA = a.dataset.exitTime || '';
+                        valB = b.dataset.exitTime || '';
+                        break;
+                    case 'level':
+                        valA = parseInt(a.dataset.level) || 0;
+                        valB = parseInt(b.dataset.level) || 0;
+                        break;
+                    case 'profit':
+                        valA = parseFloat(a.dataset.profit) || 0;
+                        valB = parseFloat(b.dataset.profit) || 0;
+                        break;
+                    case 'trade_type':
+                        valA = a.dataset.tradeType || '';
+                        valB = b.dataset.tradeType || '';
+                        break;
+                    default:
+                        valA = a.querySelector(`td:nth-child(${getColumnIndex(key)})`)?.textContent || '';
+                        valB = b.querySelector(`td:nth-child(${getColumnIndex(key)})`)?.textContent || '';
+                }
+                
+                if (typeof valA === 'number' && typeof valB === 'number') {
+                    return direction === 'asc' ? valA - valB : valB - valA;
+                } else {
+                    if (valA < valB) return direction === 'asc' ? -1 : 1;
+                    if (valA > valB) return direction === 'asc' ? 1 : -1;
+                    return 0;
+                }
+            });
+            
+            rows.forEach((row, index) => {
+                row.querySelector('td:first-child').textContent = index + 1;
+                tbody.appendChild(row);
+            });
+        }
+        
+        function getColumnIndex(key) {
+            const columns = ['index', 'group_id', 'entry_time', 'exit_time', 'level', 'entry_price', 'exit_price', 'quantity', 'stake', 'entry_capital', 'entry_total_capital', 'profit', 'trade_type'];
+            return columns.indexOf(key) + 1;
+        }
+        
+        function renderTradeCapitalChart(trades) {
+            const chartDom = document.getElementById('tradeCapitalChart');
+            if (!chartDom) return;
+            
+            const existingChart = echarts.getInstanceByDom(chartDom);
+            if (existingChart) {
+                existingChart.dispose();
+            }
+            
+            const chart = echarts.init(chartDom);
+            
+            const xData = trades.map((t, i) => `#${i + 1}`);
+            const capitalData = trades.map(t => t.entry_capital || 0);
+            const totalCapitalData = trades.map(t => t.entry_total_capital || 0);
+            
+            const option = {
+                title: {
+                    text: '资金曲线',
+                    left: 'center',
+                    textStyle: { fontSize: 14 }
+                },
+                tooltip: {
+                    trigger: 'axis',
+                    formatter: function(params) {
+                        let result = params[0].axisValue + '<br/>';
+                        params.forEach(p => {
+                            result += `${p.marker} ${p.seriesName}: ${p.value.toFixed(2)} USDT<br/>`;
+                        });
+                        return result;
+                    }
+                },
+                legend: {
+                    data: ['交易资金', '总资金'],
+                    top: 25
+                },
+                grid: {
+                    left: '10%',
+                    right: '10%',
+                    top: 70,
+                    bottom: 80
+                },
+                dataZoom: [
+                    {
+                        type: 'inside',
+                        start: 0,
+                        end: 100,
+                        zoomOnMouseWheel: true,
+                        moveOnMouseMove: true
+                    },
+                    {
+                        type: 'slider',
+                        show: true,
+                        start: 0,
+                        end: 100,
+                        height: 20,
+                        bottom: 10
+                    }
+                ],
+                xAxis: {
+                    type: 'category',
+                    data: xData,
+                    axisLabel: { 
+                        rotate: 45, 
+                        fontSize: 10,
+                        interval: 0
+                    }
+                },
+                yAxis: {
+                    type: 'value',
+                    name: 'USDT',
+                    axisLabel: { formatter: '{value}' },
+                    splitLine: {
+                        lineStyle: { type: 'dashed' }
+                    },
+                    min: function(value) {
+                        return Math.floor(value.min * 0.98);
+                    },
+                    max: function(value) {
+                        return Math.ceil(value.max * 1.02);
+                    }
+                },
+                series: [
+                    {
+                        name: '交易资金',
+                        type: 'line',
+                        data: capitalData,
+                        smooth: true,
+                        lineStyle: { width: 2, color: '#3b82f6' },
+                        itemStyle: { color: '#3b82f6' },
+                        areaStyle: { opacity: 0.1, color: '#3b82f6' }
+                    },
+                    {
+                        name: '总资金',
+                        type: 'line',
+                        data: totalCapitalData,
+                        smooth: true,
+                        lineStyle: { width: 2, color: '#22c55e' },
+                        itemStyle: { color: '#22c55e' },
+                        areaStyle: { opacity: 0.1, color: '#22c55e' }
+                    }
+                ]
+            };
+            
+            chart.setOption(option);
+            
+            window.addEventListener('resize', function() {
+                chart.resize();
+            });
         }
         
         async function loadTestHistory() {

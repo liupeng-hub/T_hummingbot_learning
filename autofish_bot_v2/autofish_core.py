@@ -117,6 +117,9 @@ class Autofish_Order:
     closed_at: Optional[str] = None
     tp_supplemented: bool = False
     sl_supplemented: bool = False
+    entry_capital: Optional[Decimal] = None
+    entry_total_capital: Optional[Decimal] = None
+    group_id: int = 0  # 默认 0，入场时设置
     
     def set_state(self, new_state: str, reason: str = ""):
         """设置订单状态"""
@@ -153,6 +156,9 @@ class Autofish_Order:
             "closed_at": self.closed_at,
             "tp_supplemented": self.tp_supplemented,
             "sl_supplemented": self.sl_supplemented,
+            "entry_capital": str(self.entry_capital) if self.entry_capital else None,
+            "entry_total_capital": str(self.entry_total_capital) if self.entry_total_capital else None,
+            "group_id": self.group_id,
         }
     
     @classmethod
@@ -177,6 +183,9 @@ class Autofish_Order:
             closed_at=data.get("closed_at"),
             tp_supplemented=data.get("tp_supplemented", False),
             sl_supplemented=data.get("sl_supplemented", False),
+            entry_capital=Decimal(data.get("entry_capital")) if data.get("entry_capital") else None,
+            entry_total_capital=Decimal(data.get("entry_total_capital")) if data.get("entry_total_capital") else None,
+            group_id=data.get("group_id", 0),
         )
 
 
@@ -208,6 +217,9 @@ class Autofish_ChainState:
     base_price: Decimal
     orders: List[Autofish_Order] = field(default_factory=list)
     is_active: bool = True
+    round_entry_capital: Optional[Decimal] = None
+    round_entry_total_capital: Optional[Decimal] = None
+    group_id: int = 0
     
     def get_order_by_order_id(self, order_id: int) -> Optional[Autofish_Order]:
         """根据订单ID查找订单"""
@@ -243,6 +255,19 @@ class Autofish_ChainState:
         for order in self.orders:
             if order.state == "pending":
                 order.state = "cancelled"
+    
+    def is_order_chain_finished(self) -> bool:
+        """检查一轮订单链是否结束
+        
+        一轮订单链结束的条件：
+        1. 没有已成交的订单（所有订单都已出场）
+        
+        返回:
+            True: 一轮订单链已结束
+            False: 还有订单在场内
+        """
+        filled_orders = [o for o in self.orders if o.state == "filled"]
+        return len(filled_orders) == 0
     
     def get_pending_first_entry(self) -> Optional['Autofish_Order']:
         """获取待成交的第一笔入场订单（Level 1）"""
@@ -733,7 +758,7 @@ class Autofish_OrderCalculator:
         stop_loss: Decimal = Decimal("0.08"),
         leverage: Decimal = Decimal("10"),
         entry_strategy: Optional[EntryPriceStrategy] = None
-    ):
+        ):
         """
         参数:
             grid_spacing: 网格间距 (小数，如 0.01 表示 1%)
@@ -783,7 +808,7 @@ class Autofish_OrderCalculator:
         atr_multiplier: Decimal = Decimal("0.5"),
         min_spacing: Decimal = Decimal("0.005"),
         max_spacing: Decimal = Decimal("0.03")
-    ) -> Decimal:
+        ) -> Decimal:
         """计算动态入场价格（基于 ATR）
         
         参数:
@@ -841,7 +866,7 @@ class Autofish_OrderCalculator:
         weights: List[Decimal] = None,
         max_entries: int = 4,
         klines: List[Dict] = None
-    ) -> Autofish_Order:
+        ) -> Autofish_Order:
         """创建订单
         
         参数:
@@ -2240,6 +2265,9 @@ class ProgressiveCapitalTracker:
         elif strategy == 'jijin':
             self.withdrawal_threshold = Decimal('1.5')
             self.withdrawal_retain = Decimal('1.2')
+        elif strategy == 'fuli':
+            self.withdrawal_threshold = Decimal('999.0')
+            self.withdrawal_retain = Decimal('1.0')
         elif strategy == 'zidingyi':
             pass
     

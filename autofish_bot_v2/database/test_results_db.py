@@ -72,22 +72,26 @@ class TestResult:
     executed_at: str = ""
     duration_ms: int = 0
     status: str = "running"
+    order_group_count: int = 0
 
 
 @dataclass
 class TradeDetail:
     """交易详情数据类"""
     result_id: str
-    trade_seq: int
-    level: str
-    entry_price: float
-    exit_price: float
-    trade_type: str
-    profit: float
+    order_group_id: int = 0
+    trade_seq: int = 0
+    level: str = ""
+    entry_price: float = 0.0
+    exit_price: float = 0.0
+    trade_type: str = ""
+    profit: float = 0.0
     entry_time: str = ""
     exit_time: str = ""
     quantity: float = 0.0
     stake: float = 0.0
+    entry_capital: float = 0.0
+    entry_total_capital: float = 0.0
 
 
 @dataclass
@@ -153,6 +157,7 @@ class TestResultsDB:
     def _get_connection(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA foreign_keys = ON")
         return conn
     
     def _ensure_tables(self):
@@ -218,6 +223,7 @@ class TestResultsDB:
                 executed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 duration_ms INTEGER DEFAULT 0,
                 status TEXT DEFAULT 'running',
+                order_group_count INTEGER DEFAULT 0,
                 FOREIGN KEY (case_id) REFERENCES test_cases(case_id)
             )
         """)
@@ -227,6 +233,7 @@ class TestResultsDB:
             CREATE TABLE IF NOT EXISTS trade_details (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 result_id TEXT NOT NULL,
+                order_group_id INTEGER DEFAULT 0,
                 trade_seq INTEGER NOT NULL,
                 level TEXT,
                 entry_price REAL,
@@ -237,6 +244,8 @@ class TestResultsDB:
                 profit REAL,
                 quantity REAL DEFAULT 0,
                 stake REAL DEFAULT 0,
+                entry_capital REAL DEFAULT 0,
+                entry_total_capital REAL DEFAULT 0,
                 FOREIGN KEY (result_id) REFERENCES test_results(result_id)
             )
         """)
@@ -470,6 +479,32 @@ class TestResultsDB:
             if 'liquidation_threshold' not in cs_columns:
                 cursor.execute("ALTER TABLE capital_statistics ADD COLUMN liquidation_threshold REAL DEFAULT 0.2")
                 print("迁移: capital_statistics 添加 liquidation_threshold 字段")
+            
+            # trade_details 表添加资金字段
+            cursor.execute("PRAGMA table_info(trade_details)")
+            td_columns = [row[1] for row in cursor.fetchall()]
+            
+            if 'entry_capital' not in td_columns:
+                cursor.execute("ALTER TABLE trade_details ADD COLUMN entry_capital REAL DEFAULT 0")
+                print("迁移: trade_details 添加 entry_capital 字段")
+            
+            if 'entry_total_capital' not in td_columns:
+                cursor.execute("ALTER TABLE trade_details ADD COLUMN entry_total_capital REAL DEFAULT 0")
+                print("迁移: trade_details 添加 entry_total_capital 字段")
+            
+            if 'order_group_id' not in td_columns:
+                cursor.execute("ALTER TABLE trade_details ADD COLUMN order_group_id INTEGER DEFAULT 0")
+                print("迁移: trade_details 添加 order_group_id 字段")
+            
+            conn.commit()
+            
+            # test_results 表添加 order_group_count 字段
+            cursor.execute("PRAGMA table_info(test_results)")
+            tr_columns = [row[1] for row in cursor.fetchall()]
+            
+            if 'order_group_count' not in tr_columns:
+                cursor.execute("ALTER TABLE test_results ADD COLUMN order_group_count INTEGER DEFAULT 0")
+                print("迁移: test_results 添加 order_group_count 字段")
             
             conn.commit()
             
@@ -766,6 +801,8 @@ class TestResultsDB:
             
             for result_id in result_ids:
                 cursor.execute("DELETE FROM trade_details WHERE result_id = ?", (result_id,))
+                cursor.execute("DELETE FROM capital_history WHERE result_id = ?", (result_id,))
+                cursor.execute("DELETE FROM capital_statistics WHERE result_id = ?", (result_id,))
             
             cursor.execute("DELETE FROM test_results WHERE case_id = ?", (case_id,))
             
@@ -801,8 +838,8 @@ class TestResultsDB:
                  net_profit, roi, price_change, excess_return, profit_factor, sharpe_ratio,
                  max_profit_trade, max_loss_trade, trading_time_ratio, stopped_time_ratio,
                  market_status_changes, market_algorithm, trading_statuses, extra_metrics,
-                 capital, executed_at, duration_ms, status)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 capital, executed_at, duration_ms, status, order_group_count)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (result.result_id, result.case_id, result.symbol, result.interval,
                   result.start_time, result.end_time, result.klines_count,
                   result.total_trades, result.win_trades, result.loss_trades,
@@ -811,7 +848,8 @@ class TestResultsDB:
                   result.profit_factor, result.sharpe_ratio, result.max_profit_trade,
                   result.max_loss_trade, result.trading_time_ratio, result.stopped_time_ratio,
                   result.market_status_changes, result.market_algorithm, result.trading_statuses,
-                  result.extra_metrics, result.capital, now, result.duration_ms, result.status))
+                  result.extra_metrics, result.capital, now, result.duration_ms, result.status,
+                  result.order_group_count))
             
             # 更新用例状态为 running
             cursor.execute("""
@@ -837,7 +875,7 @@ class TestResultsDB:
                             'price_change', 'excess_return', 'profit_factor', 'sharpe_ratio',
                             'max_profit_trade', 'max_loss_trade', 'trading_time_ratio',
                             'stopped_time_ratio', 'market_status_changes', 'market_algorithm',
-                            'trading_statuses', 'extra_metrics', 'duration_ms', 'status']
+                            'trading_statuses', 'extra_metrics', 'duration_ms', 'status', 'order_group_count']
             
             set_clauses = []
             params = []
@@ -1027,12 +1065,13 @@ class TestResultsDB:
             for trade in trades:
                 cursor.execute("""
                     INSERT INTO trade_details 
-                    (result_id, trade_seq, level, entry_price, exit_price, entry_time,
-                     exit_time, trade_type, profit, quantity, stake)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, (result_id, trade.trade_seq, trade.level, trade.entry_price,
+                    (result_id, order_group_id, trade_seq, level, entry_price, exit_price, entry_time,
+                     exit_time, trade_type, profit, quantity, stake, entry_capital, entry_total_capital)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (result_id, trade.order_group_id, trade.trade_seq, trade.level, trade.entry_price,
                       trade.exit_price, trade.entry_time, trade.exit_time,
-                      trade.trade_type, trade.profit, trade.quantity, trade.stake))
+                      trade.trade_type, trade.profit, trade.quantity, trade.stake,
+                      trade.entry_capital, trade.entry_total_capital))
             
             conn.commit()
             return True

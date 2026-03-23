@@ -144,13 +144,14 @@ class BacktestEngine:
             weights[i + 1] = w
         return weights
     
-    def _create_order(self, level: int, base_price: Decimal, klines: List[Dict] = None) -> Autofish_Order:
+    def _create_order(self, level: int, base_price: Decimal, klines: List[Dict] = None, group_id: int = None) -> Autofish_Order:
         """创建订单
         
         参数:
             level: 层级
             base_price: 基准价格
             klines: K 线数据（用于策略计算，仅 A1 使用）
+            group_id: 轮次 ID（可选，如果不传则使用 chain_state.group_id）
         """
         from autofish_core import EntryPriceStrategyFactory
         
@@ -174,6 +175,17 @@ class BacktestEngine:
             stop_loss=stop_loss,
             entry_strategy=strategy
         )
+        
+        # 确定 group_id
+        if group_id is None:
+            if level == 1:
+                # A1 订单默认使用 group_id + 1
+                actual_group_id = self.chain_state.group_id + 1
+            else:
+                # A2/A3/A4 订单使用当前 group_id
+                actual_group_id = self.chain_state.group_id
+        else:
+            actual_group_id = group_id
         
         weights = self._get_weights()
         if weights and level in weights:
@@ -203,18 +215,19 @@ class BacktestEngine:
                 stop_loss_price=stop_loss_price,
                 state="pending",
                 created_at=datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                group_id=actual_group_id,
             )
             
             logger.info(f"[创建订单] A{level}: entry={entry_price:.2f}, "
                        f"tp={take_profit_price:.2f}, sl={stop_loss_price:.2f}, "
                        f"stake={stake_amount:.2f} USDT, qty={quantity:.6f} BTC, "
-                       f"weight={weight:.4f}, strategy={strategy.name}")
+                       f"weight={weight:.4f}, strategy={strategy.name}, group_id={actual_group_id}")
             
             return order
         
         weights_list = [Decimal(str(w)) for w in self.config.get("weights", [])]
         max_entries = self.config.get('max_entries', 4)
-        return order_calculator.create_order(
+        order = order_calculator.create_order(
             level=level,
             base_price=base_price,
             total_amount=total_amount,
@@ -222,6 +235,9 @@ class BacktestEngine:
             max_entries=max_entries,
             klines=klines
         )
+        order.group_id = actual_group_id
+        logger.info(f"[创建订单] A{level}: entry={order.entry_price:.2f}, group_id={actual_group_id}")
+        return order
     
     def _process_entry(self, low_price: Decimal, current_price: Decimal, kline_time: datetime = None):
         """处理入场"""
@@ -233,6 +249,35 @@ class BacktestEngine:
                 pending_order.set_state("filled", "K线触发入场")
                 pending_order.filled_at = kline_time.strftime('%Y-%m-%d %H:%M:%S') if kline_time else datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                 
+                if pending_order.level == 1:
+                    # A1 成交时，group_id 已经在创建时设置为 chain_state.group_id + 1
+                    # 这里只需要更新 chain_state.group_id 为当前订单的 group_id
+                    old_group_id = self.chain_state.group_id
+                    self.chain_state.group_id = pending_order.group_id
+                    logger.info(f"[新轮次开始] A1 成交: group_id 从 {old_group_id} 变更为 {pending_order.group_id}, chain_state.group_id={self.chain_state.group_id}")
+                else:
+                    # A2/A3/A4 成交时，group_id 应该已经在创建时设置
+                    if pending_order.group_id == 0:
+                        logger.warning(f"[入场异常] A{pending_order.level} 成交: group_id=0，应该在创建时设置! 使用当前 chain_state.group_id={self.chain_state.group_id}")
+                        pending_order.group_id = self.chain_state.group_id
+                    else:
+                        logger.info(f"[入场确认] A{pending_order.level} 成交: group_id={pending_order.group_id}")
+                
+                if self.capital_pool.strategy == 'guding':
+                    pending_order.entry_capital = self.capital_pool.initial_capital
+                    pending_order.entry_total_capital = self.capital_pool.initial_capital
+                else:
+                    if pending_order.level == 1:
+                        self.chain_state.round_entry_capital = self.capital_pool.trading_capital
+                        self.chain_state.round_entry_total_capital = self.capital_pool.trading_capital + (
+                            self.capital_pool.profit_pool if hasattr(self.capital_pool, 'profit_pool') else Decimal('0')
+                        )
+                    
+                    pending_order.entry_capital = self.chain_state.round_entry_capital
+                    pending_order.entry_total_capital = self.chain_state.round_entry_total_capital
+                
+                logger.info(f"[入场资金记录] A{pending_order.level}: entry_capital={pending_order.entry_capital}, entry_total_capital={pending_order.entry_total_capital}, group_id={pending_order.group_id}")
+                
                 weights = self._get_weights()
                 weight_pct = float(weights.get(pending_order.level, Decimal("0"))) * 100
                 logger.info(f"[入场成交] A{pending_order.level} (权重 {weight_pct:.2f}%): "
@@ -241,16 +286,19 @@ class BacktestEngine:
                            f"金额={pending_order.stake_amount:.2f} USDT")
                 print(f"[{datetime.now().strftime('%H:%M:%S')}] ✅ A{pending_order.level} 成交: 入场价={pending_order.entry_price:.2f}")
                 
+                # A1 成交后创建 A2 挂单，传入当前 group_id
                 next_level = pending_order.level + 1
                 if next_level <= max_level:
-                    new_order = self._create_order(next_level, pending_order.entry_price)
+                    new_order = self._create_order(next_level, pending_order.entry_price, group_id=self.chain_state.group_id)
                     self.chain_state.orders.append(new_order)
-                    logger.info(f"[链式下单] 创建 A{next_level}: 入场价={new_order.entry_price:.2f}")
+                    logger.info(f"[链式下单] 创建 A{next_level}: 入场价={new_order.entry_price:.2f}, group_id={new_order.group_id}")
     
     def _process_exit(self, open_price: Decimal, high_price: Decimal, low_price: Decimal, current_price: Decimal, kline_time: datetime = None):
         """处理出场
         
-        改进：当 K 线同时触及止盈止损时，根据 K 线形态判断触发顺序
+        改进：
+        1. 按触发顺序处理所有订单
+        2. A1 止损后，等待所有订单出场再创建新的 A1（方案 B）
         
         参数:
             open_price: K 线开盘价
@@ -263,76 +311,62 @@ class BacktestEngine:
         
         filled_orders = self.chain_state.get_filled_orders()
         
-        for order in filled_orders:
-            if order.state != "filled":
-                continue
-            
-            tp_triggered = high_price >= order.take_profit_price
-            sl_triggered = low_price <= order.stop_loss_price
-            
-            if tp_triggered and sl_triggered:
-                self.results["simultaneous_triggers"] += 1
-                
-                exit_type = self._determine_exit_order(order, open_price, high_price, low_price, current_price)
-                
-                logger.warning(
-                    f"[同时触发] K线同时触及止盈止损: "
-                    f"A{order.level}, TP={order.take_profit_price:.2f}, SL={order.stop_loss_price:.2f}, "
-                    f"K线 O={open_price:.2f} H={high_price:.2f} L={low_price:.2f} C={current_price:.2f}, "
-                    f"判断结果: {exit_type}"
-                )
-                
-                if exit_type == "take_profit":
-                    self._close_order(order, "take_profit", order.take_profit_price, leverage, kline_time)
-                else:
-                    self._close_order(order, "stop_loss", order.stop_loss_price, leverage, kline_time)
-                
-                self.chain_state.cancel_pending_orders()
-                new_order = self._create_order(order.level, current_price)
-                self.chain_state.orders.append(new_order)
-                logger.info(f"[{'止盈' if exit_type == 'take_profit' else '止损'}后重建] 创建 A{new_order.level}: 入场价={new_order.entry_price:.2f}")
-                break
-                
-            elif tp_triggered:
-                self._close_order(order, "take_profit", order.take_profit_price, leverage, kline_time)
-                self.chain_state.cancel_pending_orders()
-                new_order = self._create_order(order.level, current_price)
-                self.chain_state.orders.append(new_order)
-                logger.info(f"[止盈后重建] 创建 A{new_order.level}: 入场价={new_order.entry_price:.2f}")
-                break
-                
-            elif sl_triggered:
+        tp_orders = [o for o in filled_orders if o.state == "filled" and high_price >= o.take_profit_price]
+        sl_orders = [o for o in filled_orders if o.state == "filled" and low_price <= o.stop_loss_price]
+        
+        # 对止盈订单列表按止盈价格进行 升序 排序; 原理 ：价格低的止盈订单更容易触发，所以排在前面先处理
+        tp_orders.sort(key=lambda o: o.take_profit_price)
+        # 对止损订单列表按止损价格进行 降序 排序; 原理 ：价格高的止损订单更容易触发，所以排在前面先处理
+        sl_orders.sort(key=lambda o: o.stop_loss_price, reverse=True)
+        
+        closed_levels = []
+        
+        if current_price >= open_price:
+            # 阳线 - 假设先跌后涨，止损先触发
+            for order in sl_orders:
                 self._close_order(order, "stop_loss", order.stop_loss_price, leverage, kline_time)
-                self.chain_state.cancel_pending_orders()
-                new_order = self._create_order(order.level, current_price)
-                self.chain_state.orders.append(new_order)
-                logger.info(f"[止损后重建] 创建 A{new_order.level}: 入场价={new_order.entry_price:.2f}")
-                break
-    
-    def _determine_exit_order(self, order: Autofish_Order, open_price: Decimal, high_price: Decimal, low_price: Decimal, close_price: Decimal) -> str:
-        """判断止盈止损触发顺序
-        
-        当 K 线同时触及止盈止损时，根据 K 线形态判断触发顺序：
-        - 阳线（close > open）：假设先跌后涨，止损先触发
-        - 阴线（close < open）：假设先涨后跌，止盈先触发
-        - 十字星（close ≈ open）：假设止损先触发（保守估计）
-        
-        参数:
-            order: 订单对象
-            open_price: K 线开盘价
-            high_price: K 线最高价
-            low_price: K 线最低价
-            close_price: K 线收盘价
+                closed_levels.append(order.level)
+                logger.info(f"[止损] A{order.level}: 出场价={order.stop_loss_price:.2f}")
             
-        返回:
-            "take_profit" 或 "stop_loss"
-        """
-        if close_price > open_price:
-            return "stop_loss"
-        elif close_price < open_price:
-            return "take_profit"
+            for order in tp_orders:
+                if order.level not in closed_levels:
+                    self._close_order(order, "take_profit", order.take_profit_price, leverage, kline_time)
+                    closed_levels.append(order.level)
+                    logger.info(f"[止盈] A{order.level}: 出场价={order.take_profit_price:.2f}")
         else:
-            return "stop_loss"
+            # 阴线 - 假设先涨后跌，止盈先触发
+            for order in tp_orders:
+                self._close_order(order, "take_profit", order.take_profit_price, leverage, kline_time)
+                closed_levels.append(order.level)
+                logger.info(f"[止盈] A{order.level}: 出场价={order.take_profit_price:.2f}")
+            
+            for order in sl_orders:
+                if order.level not in closed_levels:
+                    self._close_order(order, "stop_loss", order.stop_loss_price, leverage, kline_time)
+                    closed_levels.append(order.level)
+                    logger.info(f"[止损] A{order.level}: 出场价={order.stop_loss_price:.2f}")
+        
+        # 为每个出场的级别创建新的订单，保持策略的完整性
+        if closed_levels:
+            self.chain_state.cancel_pending_orders()
+            
+            # 检查行情状态
+            if not self.trading_enabled:
+                logger.info(f"[出场后重建] 行情为趋势，暂停交易")
+                return
+
+            # 检查是否一轮订单链结束
+            if self.chain_state.is_order_chain_finished():
+                # 一轮订单链结束，只创建新的 A1
+                new_order = self._create_order(1, current_price, klines=self.klines_history)
+                self.chain_state.orders.append(new_order)
+                logger.info(f"[一轮结束] 创建 A1: 入场价={new_order.entry_price:.2f}, group_id={new_order.group_id}")
+            else:
+                # 还有其他订单在场内，重建同级别的挂单, group_id 保持不变
+                for level in closed_levels:
+                    new_order = self._create_order(level, current_price, group_id=self.chain_state.group_id)
+                    self.chain_state.orders.append(new_order)
+                    logger.info(f"[出场后重建] 创建 A{new_order.level}: 入场价={new_order.entry_price:.2f}, group_id={new_order.group_id}")
     
     def _close_order(self, order: Autofish_Order, reason: str, close_price: Decimal, leverage: Decimal, kline_time: datetime = None):
         """平仓"""
@@ -364,8 +398,10 @@ class BacktestEngine:
             print(f"[{datetime.now().strftime('%H:%M:%S')}] 🛑 A{order.level} 止损: 出场价={close_price:.2f}, 亏损={order.profit:.2f} USDT")
         
         self.results["total_trades"] += 1
+        logger.info(f"[保存交易记录] A{order.level}: group_id={order.group_id}, id(order)={id(order)}, 入场时间={order.filled_at}, 出场时间={order.closed_at}, 类型={reason}")
         self.results["trades"].append({
             "level": order.level,
+            "group_id": order.group_id,
             "entry_price": float(order.entry_price),
             "exit_price": float(close_price),
             "entry_time": order.filled_at,
@@ -375,7 +411,11 @@ class BacktestEngine:
             "trade_type": "take_profit" if reason == "take_profit" else "stop_loss",
             "quantity": float(order.quantity) if order.quantity else 0,
             "stake": float(order.stake_amount) if order.stake_amount else 0,
+            "entry_capital": float(order.entry_capital) if order.entry_capital else 0,
+            "entry_total_capital": float(order.entry_total_capital) if order.entry_total_capital else 0,
         })
+        
+        logger.info(f"[出场资金记录] A{order.level}: order.entry_capital={order.entry_capital}, order.entry_total_capital={order.entry_total_capital}")
         
         self._update_capital_after_trade(order.profit, kline_time)
     
@@ -670,14 +710,7 @@ class MarketAwareBacktestEngine(BacktestEngine):
         'composite': CompositeAlgorithm,
     }
     
-    def __init__(
-        self,
-        amplitude: Dict,
-        market: Dict,
-        entry: Dict,
-        timeout: Dict,
-        capital: Dict = None,
-    ):
+    def __init__(self, amplitude: Dict, market: Dict, entry: Dict, timeout: Dict, capital: Dict = None,):
         config = amplitude.copy()
         config['a1_timeout_minutes'] = timeout.get('a1_timeout_minutes', 0)
         
@@ -733,13 +766,7 @@ class MarketAwareBacktestEngine(BacktestEngine):
         logger.warning(f"未找到算法 {algo_name}，使用默认 AlwaysRangingAlgorithm")
         return AlwaysRangingAlgorithm()
     
-    async def _fetch_multi_interval_klines(
-        self, 
-        symbol: str, 
-        interval: str, 
-        start_time: int = None, 
-        end_time: int = None
-    ) -> tuple:
+    async def _fetch_multi_interval_klines(self, symbol: str, interval: str, start_time: int = None, end_time: int = None) -> tuple:
         """获取多周期 K线数据
         
         返回:
@@ -797,14 +824,7 @@ class MarketAwareBacktestEngine(BacktestEngine):
         """获取指定时间之前的 1d K线"""
         return [k for k in self.daily_klines_cache if k['timestamp'] < timestamp]
     
-    def _on_market_status_change(
-        self, 
-        old_status: MarketStatus, 
-        new_status: MarketStatus, 
-        kline: dict,
-        confidence: float = 0.0,
-        reason: str = ''
-    ):
+    def _on_market_status_change(self, old_status: MarketStatus, new_status: MarketStatus, kline: dict, confidence: float = 0.0, reason: str = ''):
         """处理行情状态变化"""
         price = Decimal(str(kline['close']))
         timestamp = kline['timestamp']
@@ -857,9 +877,6 @@ class MarketAwareBacktestEngine(BacktestEngine):
         leverage = self.config.get("leverage", Decimal("10"))
         
         for order in filled_orders:
-            if order.state != "filled":
-                continue
-            
             order.set_state("closed", f"market_status_{reason}")
             order.close_price = price
             order.profit = self._calculate_profit(order, price, leverage)
@@ -895,7 +912,11 @@ class MarketAwareBacktestEngine(BacktestEngine):
                 "trade_type": "take_profit" if order.profit >= 0 else "stop_loss",
                 "quantity": float(order.quantity) if order.quantity else 0,
                 "stake": float(order.stake_amount) if order.stake_amount else 0,
+                "entry_capital": float(order.entry_capital) if order.entry_capital else 0,
+                "entry_total_capital": float(order.entry_total_capital) if order.entry_total_capital else 0,
             })
+            
+            logger.info(f"[强制平仓资金记录] A{order.level}: order.entry_capital={order.entry_capital}, order.entry_total_capital={order.entry_total_capital}")
         
         self.chain_state.cancel_pending_orders()
         self.chain_state.orders = []
@@ -908,15 +929,10 @@ class MarketAwareBacktestEngine(BacktestEngine):
     
     def _create_first_order(self, price: Decimal, kline: dict = None):
         """创建首个订单"""
-        from autofish_core import Autofish_ChainState
-        
-        if not self.chain_state:
-            self.chain_state = Autofish_ChainState(base_price=price)
-        
         klines = self.klines_history if hasattr(self, 'klines_history') and self.klines_history else None
         first_order = self._create_order(1, price, klines)
         self.chain_state.orders.append(first_order)
-        logger.info(f"[开始交易] 创建 A1: 入场价={first_order.entry_price:.2f}")
+        logger.info(f"[开始交易] 创建 A1: 入场价={first_order.entry_price:.2f}, group_id={first_order.group_id}")
     
     def _start_trading_period(self, time: datetime, status: MarketStatus):
         """开始交易时段"""
@@ -968,16 +984,10 @@ class MarketAwareBacktestEngine(BacktestEngine):
         
         self._check_first_entry_timeout(close_price, kline_time)
         
-        self._process_entry(low_price, close_price)
+        self._process_entry(low_price, close_price, kline_time)
         self._process_exit(open_price, high_price, low_price, close_price, kline_time)
     
-    async def run(
-        self, 
-        symbol: str = "BTCUSDT", 
-        interval: str = "1m", 
-        start_time: int = None, 
-        end_time: int = None
-    ):
+    async def run(self, symbol: str = "BTCUSDT", interval: str = "1m", start_time: int = None, end_time: int = None):
         """运行行情感知回测"""
         self.interval = interval
         
@@ -1024,6 +1034,7 @@ class MarketAwareBacktestEngine(BacktestEngine):
         
         first_price = Decimal(klines_1m[0]["open"])
         from autofish_core import Autofish_ChainState
+        # 初始化链状态 - group_id=0
         self.chain_state = Autofish_ChainState(base_price=first_price)
         
         self.klines_history = klines_1m[:30] if len(klines_1m) >= 30 else klines_1m
@@ -1318,6 +1329,7 @@ def _save_to_database(args, engine, date_range_str, amplitude, market, entry, ti
             market_status_changes=market_stats.get('total_events', 0),
             market_algorithm=market.get('algorithm', 'always_ranging'),
             capital=json.dumps(capital),
+            order_group_count=engine.chain_state.group_id,
         )
         db.save_result(result)
         
@@ -1329,11 +1341,13 @@ def _save_to_database(args, engine, date_range_str, amplitude, market, entry, ti
         
         trades = results.get('trades', [])
         if trades:
+            sorted_trades = sorted(trades, key=lambda x: (x.get('exit_time', ''), x.get('entry_time', '')))
             trade_details = []
-            for i, t in enumerate(trades):
+            for i, t in enumerate(sorted_trades):
                 from database.test_results_db import TradeDetail
                 trade_details.append(TradeDetail(
                     result_id=result_id,
+                    order_group_id=t.get('group_id', 0),
                     trade_seq=i + 1,
                     level=str(t.get('level', '')),
                     entry_price=float(t.get('entry_price', 0)),
@@ -1344,6 +1358,8 @@ def _save_to_database(args, engine, date_range_str, amplitude, market, entry, ti
                     profit=float(t.get('profit', 0)),
                     quantity=float(t.get('quantity', 0)),
                     stake=float(t.get('stake', 0)),
+                    entry_capital=float(t.get('entry_capital', 0)),
+                    entry_total_capital=float(t.get('entry_total_capital', 0)),
                 ))
             db.save_trade_details(result_id, trade_details)
             print(f"   交易详情已保存: {len(trade_details)} 条")
