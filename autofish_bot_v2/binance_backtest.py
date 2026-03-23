@@ -903,6 +903,7 @@ class MarketAwareBacktestEngine(BacktestEngine):
             self.results["total_trades"] += 1
             self.results["trades"].append({
                 "level": order.level,
+                "group_id": order.group_id,
                 "entry_price": float(order.entry_price),
                 "exit_price": float(price),
                 "entry_time": order.filled_at,
