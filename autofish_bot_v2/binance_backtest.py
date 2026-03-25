@@ -158,7 +158,24 @@ class BacktestEngine:
         grid_spacing = self.config.get("grid_spacing", Decimal("0.01"))
         exit_profit = self.config.get("exit_profit", Decimal("0.01"))
         stop_loss = self.config.get("stop_loss", Decimal("0.08"))
-        total_amount = self.config.get("total_amount_quote", Decimal("1200"))
+        
+        # 根据资金池策略动态获取 total_amount
+        if hasattr(self, 'capital_pool'):
+            if self.capital_pool.strategy == 'guding':
+                # 固定模式使用初始资金
+                total_amount = self.capital_pool.initial_capital
+            elif self.capital_pool.strategy == 'fuli':
+                # 福利策略使用总资金（交易资金 + 利润池）
+                if hasattr(self.capital_pool, 'profit_pool'):
+                    total_amount = self.capital_pool.trading_capital + self.capital_pool.profit_pool
+                else:
+                    total_amount = self.capital_pool.trading_capital
+            else:
+                # 其他策略使用当前交易资金
+                total_amount = self.capital_pool.trading_capital
+        else:
+            # 回退到配置值
+            total_amount = self.config.get("total_amount_quote", Decimal("1200"))
         
         strategy_config = self.config.get("entry_price_strategy", {"name": "fixed"})
         if "strategy" in strategy_config:
@@ -264,9 +281,22 @@ class BacktestEngine:
                         logger.info(f"[入场确认] A{pending_order.level} 成交: group_id={pending_order.group_id}")
                 
                 if self.capital_pool.strategy == 'guding':
+                    # 固定模式：入场资金和入场总资金都使用初始资金
                     pending_order.entry_capital = self.capital_pool.initial_capital
                     pending_order.entry_total_capital = self.capital_pool.initial_capital
+                elif self.capital_pool.strategy == 'fuli':
+                    # 福利策略：入场资金使用总资金（交易资金 + 利润池），入场总资金也使用总资金
+                    total_capital = self.capital_pool.trading_capital + (
+                        self.capital_pool.profit_pool if hasattr(self.capital_pool, 'profit_pool') else Decimal('0')
+                    )
+                    if pending_order.level == 1:
+                        self.chain_state.round_entry_capital = total_capital
+                        self.chain_state.round_entry_total_capital = total_capital
+                    
+                    pending_order.entry_capital = self.chain_state.round_entry_capital
+                    pending_order.entry_total_capital = self.chain_state.round_entry_total_capital
                 else:
+                    # 其他策略：入场资金使用当前交易资金，入场总资金使用交易资金 + 利润池
                     if pending_order.level == 1:
                         self.chain_state.round_entry_capital = self.capital_pool.trading_capital
                         self.chain_state.round_entry_total_capital = self.capital_pool.trading_capital + (
@@ -397,8 +427,15 @@ class BacktestEngine:
                        f"亏损={order.profit:.2f} USDT")
             print(f"[{datetime.now().strftime('%H:%M:%S')}] 🛑 A{order.level} 止损: 出场价={close_price:.2f}, 亏损={order.profit:.2f} USDT")
         
+        # 更新资金池，确保总资金反映最新状态
+        self._update_capital_after_trade(order.profit, kline_time)
+        
+        # 获取交易后的总资金（用于显示累计盈亏后的总资金）
+        entry_total_capital = self.chain_state.round_entry_total_capital
+        
         self.results["total_trades"] += 1
         logger.info(f"[保存交易记录] A{order.level}: group_id={order.group_id}, id(order)={id(order)}, 入场时间={order.filled_at}, 出场时间={order.closed_at}, 类型={reason}")
+        
         self.results["trades"].append({
             "level": order.level,
             "group_id": order.group_id,
@@ -412,12 +449,10 @@ class BacktestEngine:
             "quantity": float(order.quantity) if order.quantity else 0,
             "stake": float(order.stake_amount) if order.stake_amount else 0,
             "entry_capital": float(order.entry_capital) if order.entry_capital else 0,
-            "entry_total_capital": float(order.entry_total_capital) if order.entry_total_capital else 0,
+            "entry_total_capital": float(entry_total_capital) if entry_total_capital else 0,
         })
         
         logger.info(f"[出场资金记录] A{order.level}: order.entry_capital={order.entry_capital}, order.entry_total_capital={order.entry_total_capital}")
-        
-        self._update_capital_after_trade(order.profit, kline_time)
     
     def _update_capital_after_trade(self, profit: Decimal, kline_time: datetime = None) -> None:
         """交易后更新资金池
@@ -426,17 +461,32 @@ class BacktestEngine:
             profit: 本次交易盈亏
             kline_time: K线时间
         """
-        if self.capital_pool.strategy == 'guding':
-            return
-        
+        # 处理所有策略的资金更新
         result = self.capital_pool.process_trade_profit(profit, kline_time)
         
         if result.get('withdrawal'):
             logger.info(f"[资金池] 触发提现: 提现金额={result.get('withdrawal_amount', 0):.2f}, "
-                       f"保留资金={result.get('retained_capital', 0):.2f}")
+                       f"保留资金={result.get('trading_capital', 0):.2f}")
         
         if result.get('liquidation'):
             logger.warning(f"[资金池] 触发爆仓恢复: 恢复资金={result.get('recovered_capital', 0):.2f}")
+        
+        # 记录资金池状态
+        if hasattr(self.capital_pool, 'trading_capital'):
+            total_capital = self.capital_pool.trading_capital + (
+                self.capital_pool.profit_pool if hasattr(self.capital_pool, 'profit_pool') else Decimal('0')
+            )
+            logger.info(f"[资金池状态] 交易资金={self.capital_pool.trading_capital:.2f}, "
+                       f"利润池={getattr(self.capital_pool, 'profit_pool', Decimal('0')):.2f}, "
+                       f"总资金={total_capital:.2f}")
+        
+        # 更新轮次总资金，确保同一轮次中的总资金累积
+        # 交易资金（入场资金）保持不变，总资金随盈亏累积
+        new_total_capital = self.capital_pool.trading_capital + (
+            self.capital_pool.profit_pool if hasattr(self.capital_pool, 'profit_pool') else Decimal('0')
+        )
+        self.chain_state.round_entry_total_capital = new_total_capital
+        logger.info(f"[轮次资金更新] 总资金已更新为: {new_total_capital:.2f}")
     
     def _on_kline(self, kline: dict):
         """处理 K 线数据"""
@@ -900,6 +950,12 @@ class MarketAwareBacktestEngine(BacktestEngine):
                 self.results["total_loss"] += abs(order.profit)
                 logger.info(f"[强制平仓-止损] A{order.level}: 出场价={price:.2f}, 亏损={order.profit:.2f} USDT")
             
+            # 更新资金池，确保总资金反映最新状态
+            self._update_capital_after_trade(order.profit, kline_time)
+            
+            # 获取交易后的总资金（用于显示累计盈亏后的总资金）
+            entry_total_capital = self.chain_state.round_entry_total_capital
+            
             self.results["total_trades"] += 1
             self.results["trades"].append({
                 "level": order.level,
@@ -914,10 +970,10 @@ class MarketAwareBacktestEngine(BacktestEngine):
                 "quantity": float(order.quantity) if order.quantity else 0,
                 "stake": float(order.stake_amount) if order.stake_amount else 0,
                 "entry_capital": float(order.entry_capital) if order.entry_capital else 0,
-                "entry_total_capital": float(order.entry_total_capital) if order.entry_total_capital else 0,
+                "entry_total_capital": float(entry_total_capital) if entry_total_capital else 0,
             })
             
-            logger.info(f"[强制平仓资金记录] A{order.level}: order.entry_capital={order.entry_capital}, order.entry_total_capital={order.entry_total_capital}")
+            logger.info(f"[强制平仓资金记录] A{order.level}: order.entry_capital={order.entry_capital}, entry_total_capital={entry_total_capital}")
         
         self.chain_state.cancel_pending_orders()
         self.chain_state.orders = []

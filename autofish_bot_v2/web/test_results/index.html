@@ -921,7 +921,7 @@
     
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <script>
-        const API_BASE = window.location.origin;
+        const API_BASE = 'http://localhost:5002';
         let selectedResultIds = [];
         let currentChartData = null;
         let klineChart = null;
@@ -1015,6 +1015,16 @@
             }
             
             return { strategy: strategy };
+        }
+        
+        // 格式化数字为千分位
+        function formatNumber(num, decimals = 2) {
+            if (num === undefined || num === null || isNaN(num)) return '-';
+            const n = parseFloat(num);
+            if (isNaN(n)) return '-';
+            const parts = n.toFixed(decimals).split('.');
+            parts[0] = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+            return parts.join('.');
         }
         
         function showError(title, message) {
@@ -1900,13 +1910,13 @@
                     <td><small>${r.case_id ? r.case_id.substring(0, 8) + '...' : '-'}</small></td>
                     <td>${r.symbol}</td>
                     <td>${r.test_type}</td>
-                    <td>${r.total_trades}</td>
+                    <td>${formatNumber(r.total_trades, 0)}</td>
                     <td>${r.win_rate.toFixed(1)}%</td>
-                    <td class="${netProfitClass}">${r.net_profit.toFixed(2)}</td>
-                    <td class="${roiClass}">${r.roi.toFixed(2)}%</td>
-                    <td class="${capitalReturnClass}">${capitalReturn.toFixed(2)}%</td>
-                    <td>${r.price_change.toFixed(2)}%</td>
-                    <td class="${excessClass}">${r.excess_return.toFixed(2)}%</td>
+                    <td class="${netProfitClass}">${formatNumber(r.net_profit, 2)}</td>
+                    <td class="${roiClass}">${formatNumber(r.roi, 2)}%</td>
+                    <td class="${capitalReturnClass}">${formatNumber(capitalReturn, 2)}%</td>
+                    <td>${formatNumber(r.price_change, 2)}%</td>
+                    <td class="${excessClass}">${formatNumber(r.excess_return, 2)}%</td>
                     <td><small>${r.executed_at}</small></td>
                     <td>
                         <button class="btn btn-sm btn-outline-primary" onclick="showResultDetail('${r.result_id}')">详情</button>
@@ -1936,41 +1946,43 @@
                     if (Object.keys(stats).length === 0) {
                         statsContent.innerHTML = '<div class="col-12"><div class="alert alert-info">暂无资金统计数据（可能使用固定模式）</div></div>';
                     } else {
-                        const formatValue = (val, suffix = '') => {
-                            return val !== undefined && val !== null ? val.toFixed(2) + suffix : '-';
+                        const formatStatValue = (val, suffix = '') => {
+                            if (val === undefined || val === null) return '-';
+                            if (suffix === '%') return val.toFixed(2) + suffix;
+                            return formatNumber(val, 2) + suffix;
                         };
                         
                         statsContent.innerHTML = `
                             <div class="col-md-3">
                                 <div class="card metric-card">
-                                    <div class="metric-value">${formatValue(stats.initial_capital)}</div>
+                                    <div class="metric-value">${formatStatValue(stats.initial_capital)}</div>
                                     <div class="metric-label">初始资金</div>
                                 </div>
                             </div>
                             <div class="col-md-3">
                                 <div class="card metric-card">
-                                    <div class="metric-value">${formatValue(stats.final_capital)}</div>
+                                    <div class="metric-value">${formatStatValue(stats.final_capital)}</div>
                                     <div class="metric-label">最终资金</div>
                                 </div>
                             </div>
                             <div class="col-md-3">
                                 <div class="card metric-card">
-                                    <div class="metric-value ${stats.total_return >= 0 ? 'positive' : 'negative'}">${formatValue(stats.total_return, '%')}</div>
+                                    <div class="metric-value ${stats.total_return >= 0 ? 'positive' : 'negative'}">${formatStatValue(stats.total_return, '%')}</div>
                                     <div class="metric-label">总收益率</div>
                                 </div>
                             </div>
                             <div class="col-md-3">
                                 <div class="card metric-card">
-                                    <div class="metric-value ${stats.max_drawdown >= 0 ? 'negative' : 'positive'}">${formatValue(stats.max_drawdown, '%')}</div>
+                                    <div class="metric-value ${stats.max_drawdown >= 0 ? 'negative' : 'positive'}">${formatStatValue(stats.max_drawdown, '%')}</div>
                                     <div class="metric-label">最大回撤</div>
                                 </div>
                             </div>
                             <div class="col-md-6">
                                 <table class="table table-sm">
-                                    <tr><td>交易资金</td><td>${formatValue(stats.trading_capital)}</td></tr>
-                                    <tr><td>利润池</td><td>${formatValue(stats.profit_pool)}</td></tr>
-                                    <tr><td>累计盈利</td><td class="positive">${formatValue(stats.total_profit)}</td></tr>
-                                    <tr><td>累计亏损</td><td class="negative">${formatValue(stats.total_loss)}</td></tr>
+                                    <tr><td>交易资金</td><td>${formatStatValue(stats.trading_capital)}</td></tr>
+                                    <tr><td>利润池</td><td>${formatStatValue(stats.profit_pool)}</td></tr>
+                                    <tr><td>累计盈利</td><td class="positive">${formatStatValue(stats.total_profit)}</td></tr>
+                                    <tr><td>累计亏损</td><td class="negative">${formatStatValue(stats.total_loss)}</td></tr>
                                 </table>
                             </div>
                             <div class="col-md-6">
@@ -1999,9 +2011,9 @@
                                 <tr>
                                     <td><small>${h.timestamp}</small></td>
                                     <td>${eventTypeMap[h.event_type] || h.event_type}</td>
-                                    <td>${h.old_capital.toFixed(2)}</td>
-                                    <td>${h.new_capital.toFixed(2)}</td>
-                                    <td class="${profitClass}">${h.profit.toFixed(2)}</td>
+                                    <td>${formatNumber(h.old_capital, 2)}</td>
+                                    <td>${formatNumber(h.new_capital, 2)}</td>
+                                    <td class="${profitClass}">${formatNumber(h.profit, 2)}</td>
                                 </tr>
                             `;
                         });
@@ -2075,9 +2087,9 @@
                         return `
                             <div style="font-size: 12px;">
                                 <div><strong>${times[idx]}</strong></div>
-                                <div>交易资金: ${h.new_capital.toFixed(2)} USDT</div>
-                                <div>总资金: ${totalCap.toFixed(2)} USDT</div>
-                                <div style="color: ${h.profit >= 0 ? '#22c55e' : '#ef4444'}">盈亏: ${h.profit >= 0 ? '+' : ''}${h.profit.toFixed(2)}</div>
+                                <div>交易资金: ${formatNumber(h.new_capital, 2)} USDT</div>
+                                <div>总资金: ${formatNumber(totalCap, 2)} USDT</div>
+                                <div style="color: ${h.profit >= 0 ? '#22c55e' : '#ef4444'}">盈亏: ${h.profit >= 0 ? '+' : ''}${formatNumber(h.profit, 2)}</div>
                             </div>
                         `;
                     }
@@ -2202,10 +2214,10 @@
                                                 <tr>
                                                     <td>${t.trade_seq}</td>
                                                     <td>A${t.level}</td>
-                                                    <td>${parseFloat(t.entry_price).toFixed(2)}</td>
-                                                    <td>${parseFloat(t.exit_price).toFixed(2)}</td>
+                                                    <td>${formatNumber(t.entry_price, 2)}</td>
+                                                    <td>${formatNumber(t.exit_price, 2)}</td>
                                                     <td>${t.trade_type === 'take_profit' ? '止盈' : '止损'}</td>
-                                                    <td class="${parseFloat(t.profit) >= 0 ? 'positive' : 'negative'}">${parseFloat(t.profit).toFixed(2)}</td>
+                                                    <td class="${parseFloat(t.profit) >= 0 ? 'positive' : 'negative'}">${formatNumber(t.profit, 2)}</td>
                                                 </tr>
                                             `).join('')}
                                         </tbody>
@@ -2231,9 +2243,9 @@
                             <div class="col-md-6">
                                 <h6>交易统计</h6>
                                 <table class="table table-sm">
-                                    <tr><td>总交易</td><td>${r.total_trades}</td></tr>
+                                    <tr><td>总交易</td><td>${formatNumber(r.total_trades, 0)}</td></tr>
                                     <tr><td>胜率</td><td>${r.win_rate.toFixed(1)}%</td></tr>
-                                    <tr><td>净收益</td><td>${r.net_profit.toFixed(2)} USDT</td></tr>
+                                    <tr><td>净收益</td><td>${formatNumber(r.net_profit, 2)} USDT</td></tr>
                                     <tr><td>收益率</td><td>${r.roi.toFixed(2)}%</td></tr>
                                     <tr><td>超额收益</td><td>${r.excess_return.toFixed(2)}%</td></tr>
                                 </table>
@@ -2556,7 +2568,7 @@
             let groupIds = new Set();
             
             trades.forEach(t => {
-                const profit = t.profit || 0;
+                const profit = parseFloat(t.profit) || 0;
                 totalProfit += profit;
                 if (profit >= 0) winCount++;
                 else lossCount++;
@@ -2630,7 +2642,7 @@
                         <div class="card text-center h-100">
                             <div class="card-body py-2">
                                 <h6 class="text-muted mb-0">累计盈亏</h6>
-                                <h4 class="mb-0 ${totalProfit >= 0 ? 'text-success' : 'text-danger'}">${totalProfit >= 0 ? '+' : ''}${totalProfit.toFixed(2)}</h4>
+                                <h4 class="mb-0 ${totalProfit >= 0 ? 'text-success' : 'text-danger'}">${totalProfit >= 0 ? '+' : ''}${formatNumber(totalProfit, 2)}</h4>
                             </div>
                         </div>
                     </div>
@@ -2638,7 +2650,7 @@
                         <div class="card text-center h-100">
                             <div class="card-body py-2">
                                 <h6 class="text-muted mb-0">平均盈亏</h6>
-                                <h4 class="mb-0 ${totalProfit >= 0 ? 'text-success' : 'text-danger'}">${(totalProfit / trades.length).toFixed(2)}</h4>
+                                <h4 class="mb-0 ${totalProfit >= 0 ? 'text-success' : 'text-danger'}">${formatNumber(totalProfit / trades.length, 2)}</h4>
                             </div>
                         </div>
                     </div>
@@ -2646,7 +2658,7 @@
                         <div class="card text-center h-100">
                             <div class="card-body py-2">
                                 <h6 class="text-muted mb-0">盈利/亏损</h6>
-                                <h4 class="mb-0"><span class="text-success">${winCount}</span> / <span class="text-danger">${lossCount}</span></h4>
+                                <h4 class="mb-0"><span class="text-success">${formatNumber(winCount, 0)}</span> / <span class="text-danger">${formatNumber(lossCount, 0)}</span></h4>
                             </div>
                         </div>
                     </div>
@@ -2687,29 +2699,52 @@
                 return timeA.localeCompare(timeB);
             });
             
+            // 定义轮次颜色数组
+            const groupColors = [
+                'bg-light', 'bg-info', 'bg-success', 'bg-warning', 'bg-danger',
+                'bg-primary', 'bg-secondary', 'bg-dark', 'bg-light', 'bg-info'
+            ];
+            
+            // 为每个轮次分配颜色
+            const groupColorMap = {};
+            let colorIndex = 0;
+            
+            // 先遍历所有交易，为每个轮次分配颜色
+            sortedTrades.forEach(t => {
+                const groupId = t.group_id || t.order_group_id || 0;
+                if (!groupId) return;
+                if (!groupColorMap[groupId]) {
+                    groupColorMap[groupId] = groupColors[colorIndex % groupColors.length];
+                    colorIndex++;
+                }
+            });
+            
             sortedTrades.forEach((t, index) => {
                 const profit = t.profit || 0;
                 const profitClass = profit >= 0 ? 'text-success' : 'text-danger';
                 const typeClass = t.trade_type === 'take_profit' ? 'text-success' : 'text-danger';
-                const rowClass = t.trade_type === 'take_profit' ? 'table-success' : 'table-danger';
+                
+                // 获取轮次颜色
+                const groupId = t.group_id || t.order_group_id || 0;
+                const groupColor = groupId ? groupColorMap[groupId] : '';
                 
                 html += `
-                    <tr data-index="${index}" data-group-id="${t.order_group_id || 0}" 
+                    <tr data-index="${index}" data-group-id="${t.group_id || t.order_group_id || 0}" 
                         data-entry-time="${t.entry_time || ''}" data-exit-time="${t.exit_time || ''}"
                         data-level="${t.level}" data-profit="${profit}" data-trade-type="${t.trade_type}"
-                        class="${rowClass}">
+                        class="${groupColor}">
                         <td>${index + 1}</td>
-                        <td><span class="badge bg-secondary">${t.order_group_id || '-'}</span></td>
+                        <td><span class="badge bg-secondary">${t.group_id || t.order_group_id || '-'}</span></td>
                         <td>A${t.level}</td>
                         <td><small>${t.entry_time || '-'}</small></td>
                         <td><small>${t.exit_time || '-'}</small></td>
-                        <td>${t.entry_price ? parseFloat(t.entry_price).toFixed(2) : '-'}</td>
-                        <td>${t.exit_price ? parseFloat(t.exit_price).toFixed(2) : '-'}</td>
-                        <td>${t.quantity ? parseFloat(t.quantity).toFixed(6) : '-'}</td>
-                        <td>${t.stake ? parseFloat(t.stake).toFixed(2) : '-'}</td>
-                        <td>${t.entry_capital ? parseFloat(t.entry_capital).toFixed(2) : '-'}</td>
-                        <td>${t.entry_total_capital ? parseFloat(t.entry_total_capital).toFixed(2) : '-'}</td>
-                        <td class="${profitClass}">${profit >= 0 ? '+' : ''}${profit.toFixed(2)}</td>
+                        <td>${formatNumber(t.entry_price, 2)}</td>
+                        <td>${formatNumber(t.exit_price, 2)}</td>
+                        <td>${formatNumber(t.quantity, 6)}</td>
+                        <td>${formatNumber(t.stake, 2)}</td>
+                        <td>${formatNumber(t.entry_capital, 2)}</td>
+                        <td>${formatNumber(t.entry_total_capital, 2)}</td>
+                        <td class="${profitClass}">${profit >= 0 ? '+' : ''}${formatNumber(profit, 2)}</td>
                         <td class="${typeClass}">${t.trade_type === 'take_profit' ? '止盈' : '止损'}</td>
                     </tr>
                 `;

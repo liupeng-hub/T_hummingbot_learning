@@ -2125,6 +2125,7 @@ class ProgressiveCapitalTracker:
     withdrawal_retain: Decimal = Decimal('1.5')
     liquidation_threshold: Decimal = Decimal('0.2')
     _strategy: str = 'baoshou'
+    leverage: Decimal = Decimal('10')  # 杠杆倍数
     
     round_profits: List[Decimal] = field(default_factory=list)
     total_round_profit: Decimal = Decimal('0')
@@ -2151,12 +2152,16 @@ class ProgressiveCapitalTracker:
         """
         old_trading_capital = self.trading_capital
         
-        if profit > 0:
-            self.trading_capital += profit
-            self.total_profit += profit
+        # 直接使用包含杠杆的利润来更新资金池
+        # 这与实际交易一致：止盈后账户直接增加包含杠杆效应的盈利金额
+        actual_profit = profit
+        
+        if actual_profit > 0:
+            self.trading_capital += actual_profit
+            self.total_profit += actual_profit
         else:
-            self.trading_capital += profit
-            self.total_loss += abs(profit)
+            self.trading_capital += actual_profit
+            self.total_loss += abs(actual_profit)
         
         if self.trading_capital > self.max_capital:
             self.max_capital = self.trading_capital
@@ -2164,7 +2169,7 @@ class ProgressiveCapitalTracker:
         result = {
             'old_capital': old_trading_capital,
             'new_capital': self.trading_capital,
-            'profit': profit,
+            'profit': actual_profit,
             'withdrawal_triggered': False,
             'liquidation_triggered': False,
         }
@@ -2173,7 +2178,7 @@ class ProgressiveCapitalTracker:
             'timestamp': (kline_time or datetime.now()).isoformat(),
             'old_capital': float(old_trading_capital),
             'new_capital': float(self.trading_capital),
-            'profit': float(profit),
+            'profit': float(actual_profit),
             'total_capital': float(self.trading_capital + self.profit_pool),
             'event_type': 'trade',
         })
@@ -2253,6 +2258,7 @@ class ProgressiveCapitalTracker:
             leverage: 杠杆倍数（默认 10）
         """
         self._strategy = strategy
+        self.leverage = Decimal(str(leverage))  # 存储杠杆值
         auto_liquidation_threshold = 1 - (stop_loss * leverage)
         self.liquidation_threshold = Decimal(str(auto_liquidation_threshold))
         
@@ -2283,8 +2289,10 @@ class ProgressiveCapitalTracker:
         """
         result = self.update_capital(profit, kline_time)
         
-        self.round_profits.append(profit)
-        self.total_round_profit += profit
+        # 使用修正后的实际利润（不含杠杆）来更新轮次盈亏
+        actual_profit = result['profit']
+        self.round_profits.append(actual_profit)
+        self.total_round_profit += actual_profit
         
         withdrawal = self.check_withdrawal(kline_time)
         if withdrawal:
