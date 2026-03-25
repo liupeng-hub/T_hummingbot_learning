@@ -1232,7 +1232,13 @@ def create_flask_app():
     def get_trades(result_id):
         try:
             trades = db.get_trade_details(result_id)
-            return jsonify({'success': True, 'data': trades})
+            result = db.get_result(result_id)
+            response_data = {
+                'trades': trades,
+                'avg_holding_time': result.get('avg_holding_time', 0),
+                'avg_execution_time': result.get('avg_execution_time', 0)
+            }
+            return jsonify({'success': True, 'data': response_data})
         except Exception as e:
             return jsonify({'success': False, 'error': str(e)})
     

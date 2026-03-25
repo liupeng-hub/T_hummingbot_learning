@@ -2538,12 +2538,12 @@
                 const data = await response.json();
                 
                 if (data.success) {
-                    const trades = data.data || [];
+                    const trades = data.data.trades || [];
                     const modal = new bootstrap.Modal(document.getElementById('tradeModal'));
                     modal.show();
                     
                     setTimeout(() => {
-                        renderTradeDetailsTable(trades);
+                        renderTradeDetailsTable(trades, data.data);
                     }, 300);
                 } else {
                     showError('加载交易详情失败', data.error);
@@ -2554,8 +2554,9 @@
             }
         }
         
-        function renderTradeDetailsTable(trades) {
+        function renderTradeDetailsTable(trades, data) {
             const container = document.getElementById('tradeDetailsContent');
+            data = data || {};
             
             if (!trades || trades.length === 0) {
                 container.innerHTML = '<div class="text-center text-muted py-5">暂无交易记录</div>';
@@ -2580,6 +2581,8 @@
             const levelCounts = { 1: 0, 2: 0, 3: 0, 4: 0 };
             let totalDuration = 0;
             let durationCount = 0;
+            let totalExecutionTime = 0;
+            let executionTimeCount = 0;
             
             trades.forEach(t => {
                 const level = parseInt(t.level) || 0;
@@ -2596,12 +2599,28 @@
                         durationCount++;
                     }
                 }
+                
+                if (t.creation_time && t.entry_time) {
+                    const creationTime = new Date(t.creation_time);
+                    const entryTime = new Date(t.entry_time);
+                    const executionTime = (entryTime - creationTime) / (1000 * 60);
+                    if (executionTime >= 0) {
+                        totalExecutionTime += executionTime;
+                        executionTimeCount++;
+                    }
+                }
             });
             
-            const avgDuration = durationCount > 0 ? totalDuration / durationCount : 0;
-            const avgDurationStr = avgDuration < 60 
-                ? `${avgDuration.toFixed(0)}分钟` 
-                : `${(avgDuration / 60).toFixed(1)}小时`;
+            // 优先使用数据库计算的平均时间，如果没有则使用前端计算的
+            const avgHoldingTime = data.avg_holding_time || (durationCount > 0 ? totalDuration / durationCount : 0);
+            const avgHoldingTimeStr = avgHoldingTime < 60 
+                ? `${avgHoldingTime.toFixed(0)}分钟` 
+                : `${(avgHoldingTime / 60).toFixed(1)}小时`;
+            
+            const avgExecutionTime = data.avg_execution_time || (executionTimeCount > 0 ? totalExecutionTime / executionTimeCount : 0);
+            const avgExecutionTimeStr = avgExecutionTime < 60 
+                ? `${avgExecutionTime.toFixed(0)}分钟` 
+                : `${(avgExecutionTime / 60).toFixed(1)}小时`;
             
             let html = `
                 <div id="tradeCapitalChart" style="height: 300px; margin-bottom: 20px;"></div>
@@ -2624,15 +2643,15 @@
                     </div>
                     <div class="col">
                         <div class="card text-center h-100">
-                            <div class="card-body py-2 d-flex flex-column justify-content-center">
+                            <div class="card-body py-2">
                                 <h6 class="text-muted mb-0">级别分布</h6>
-                                <h4 class="mb-0">
-                                    <span class="text-primary">${levelCounts[1]}</span> 
-                                    <span class="text-muted">|</span> 
-                                    <span class="text-success">${levelCounts[2]}</span> 
-                                    <span class="text-muted">|</span> 
-                                    <span class="text-warning">${levelCounts[3]}</span> 
-                                    <span class="text-muted">|</span> 
+                                <h4 class="mb-0" style="font-size: 1.2rem;">
+                                    <span class="text-primary">${levelCounts[1]}</span>
+                                    <span class="text-muted">|</span>
+                                    <span class="text-success">${levelCounts[2]}</span>
+                                    <span class="text-muted">|</span>
+                                    <span class="text-warning">${levelCounts[3]}</span>
+                                    <span class="text-muted">|</span>
                                     <span class="text-danger">${levelCounts[4]}</span>
                                 </h4>
                             </div>
@@ -2665,8 +2684,16 @@
                     <div class="col">
                         <div class="card text-center h-100">
                             <div class="card-body py-2">
-                                <h6 class="text-muted mb-0">平均持续时间</h6>
-                                <h4 class="mb-0">${avgDurationStr}</h4>
+                                <h6 class="text-muted mb-0">平均持仓时间</h6>
+                                <h4 class="mb-0">${avgHoldingTimeStr}</h4>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col">
+                        <div class="card text-center h-100">
+                            <div class="card-body py-2">
+                                <h6 class="text-muted mb-0">平均订单成交时间</h6>
+                                <h4 class="mb-0">${avgExecutionTimeStr}</h4>
                             </div>
                         </div>
                     </div>
@@ -2678,6 +2705,7 @@
                                 <th class="sortable" data-sort="index" style="width: 50px;"># <span class="sort-icon">↕</span></th>
                                 <th class="sortable" data-sort="group_id" style="width: 60px;">轮次 <span class="sort-icon">↕</span></th>
                                 <th class="sortable" data-sort="level" style="width: 50px;">级别 <span class="sort-icon">↕</span></th>
+                                <th class="sortable" data-sort="creation_time" style="width: 140px;">挂单时间 <span class="sort-icon">↕</span></th>
                                 <th class="sortable" data-sort="entry_time" style="width: 140px;">入场时间 <span class="sort-icon">↕</span></th>
                                 <th class="sortable" data-sort="exit_time" style="width: 140px;">出场时间 <span class="sort-icon">↕</span></th>
                                 <th class="sortable" data-sort="entry_price" style="width: 90px;">入场价 <span class="sort-icon">↕</span></th>
@@ -2730,12 +2758,13 @@
                 
                 html += `
                     <tr data-index="${index}" data-group-id="${t.group_id || t.order_group_id || 0}" 
-                        data-entry-time="${t.entry_time || ''}" data-exit-time="${t.exit_time || ''}"
+                        data-creation-time="${t.creation_time || ''}" data-entry-time="${t.entry_time || ''}" data-exit-time="${t.exit_time || ''}"
                         data-level="${t.level}" data-profit="${profit}" data-trade-type="${t.trade_type}"
                         class="${groupColor}">
                         <td>${index + 1}</td>
                         <td><span class="badge bg-secondary">${t.group_id || t.order_group_id || '-'}</span></td>
                         <td>A${t.level}</td>
+                        <td><small>${t.creation_time || '-'}</small></td>
                         <td><small>${t.entry_time || '-'}</small></td>
                         <td><small>${t.exit_time || '-'}</small></td>
                         <td>${formatNumber(t.entry_price, 2)}</td>
@@ -2807,6 +2836,10 @@
                         valA = parseInt(a.dataset.groupId) || 0;
                         valB = parseInt(b.dataset.groupId) || 0;
                         break;
+                    case 'creation_time':
+                        valA = a.dataset.creationTime || '';
+                        valB = b.dataset.creationTime || '';
+                        break;
                     case 'entry_time':
                         valA = a.dataset.entryTime || '';
                         valB = b.dataset.entryTime || '';
@@ -2848,7 +2881,7 @@
         }
         
         function getColumnIndex(key) {
-            const columns = ['index', 'group_id', 'entry_time', 'exit_time', 'level', 'entry_price', 'exit_price', 'quantity', 'stake', 'entry_capital', 'entry_total_capital', 'profit', 'trade_type'];
+            const columns = ['index', 'group_id', 'creation_time', 'entry_time', 'exit_time', 'level', 'entry_price', 'exit_price', 'quantity', 'stake', 'entry_capital', 'entry_total_capital', 'profit', 'trade_type'];
             return columns.indexOf(key) + 1;
         }
         

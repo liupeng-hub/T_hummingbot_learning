@@ -144,7 +144,7 @@ class BacktestEngine:
             weights[i + 1] = w
         return weights
     
-    def _create_order(self, level: int, base_price: Decimal, klines: List[Dict] = None, group_id: int = None) -> Autofish_Order:
+    def _create_order(self, level: int, base_price: Decimal, klines: List[Dict] = None, group_id: int = None, kline_time: datetime = None) -> Autofish_Order:
         """创建订单
         
         参数:
@@ -152,6 +152,7 @@ class BacktestEngine:
             base_price: 基准价格
             klines: K 线数据（用于策略计算，仅 A1 使用）
             group_id: 轮次 ID（可选，如果不传则使用 chain_state.group_id）
+            kline_time: K 线时间（用于设置创建时间）
         """
         from autofish_core import EntryPriceStrategyFactory
         
@@ -223,6 +224,9 @@ class BacktestEngine:
             stop_loss_price = entry_price * (Decimal("1") - stop_loss)
             quantity = stake_amount / entry_price
             
+            # 使用 K 线时间作为创建时间，回退到当前时间
+            creation_time = kline_time.strftime('%Y-%m-%d %H:%M:%S') if kline_time else datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            
             order = Autofish_Order(
                 level=level,
                 entry_price=entry_price,
@@ -231,7 +235,7 @@ class BacktestEngine:
                 take_profit_price=take_profit_price,
                 stop_loss_price=stop_loss_price,
                 state="pending",
-                created_at=datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                created_at=creation_time,
                 group_id=actual_group_id,
             )
             
@@ -319,7 +323,7 @@ class BacktestEngine:
                 # A1 成交后创建 A2 挂单，传入当前 group_id
                 next_level = pending_order.level + 1
                 if next_level <= max_level:
-                    new_order = self._create_order(next_level, pending_order.entry_price, group_id=self.chain_state.group_id)
+                    new_order = self._create_order(next_level, pending_order.entry_price, group_id=self.chain_state.group_id, kline_time=kline_time)
                     self.chain_state.orders.append(new_order)
                     logger.info(f"[链式下单] 创建 A{next_level}: 入场价={new_order.entry_price:.2f}, group_id={new_order.group_id}")
     
@@ -388,13 +392,13 @@ class BacktestEngine:
             # 检查是否一轮订单链结束
             if self.chain_state.is_order_chain_finished():
                 # 一轮订单链结束，只创建新的 A1
-                new_order = self._create_order(1, current_price, klines=self.klines_history)
+                new_order = self._create_order(1, current_price, klines=self.klines_history, kline_time=kline_time)
                 self.chain_state.orders.append(new_order)
                 logger.info(f"[一轮结束] 创建 A1: 入场价={new_order.entry_price:.2f}, group_id={new_order.group_id}")
             else:
                 # 还有其他订单在场内，重建同级别的挂单, group_id 保持不变
                 for level in closed_levels:
-                    new_order = self._create_order(level, current_price, group_id=self.chain_state.group_id)
+                    new_order = self._create_order(level, current_price, group_id=self.chain_state.group_id, kline_time=kline_time)
                     self.chain_state.orders.append(new_order)
                     logger.info(f"[出场后重建] 创建 A{new_order.level}: 入场价={new_order.entry_price:.2f}, group_id={new_order.group_id}")
     
@@ -441,6 +445,7 @@ class BacktestEngine:
             "group_id": order.group_id,
             "entry_price": float(order.entry_price),
             "exit_price": float(close_price),
+            "creation_time": order.created_at,
             "entry_time": order.filled_at,
             "exit_time": order.closed_at,
             "profit": float(order.profit),
@@ -536,7 +541,7 @@ class BacktestEngine:
         
         self.chain_state.orders.remove(timeout_first_entry)
         
-        new_first_entry = self._create_order(1, current_price, self.klines_history)
+        new_first_entry = self._create_order(1, current_price, self.klines_history, kline_time=current_time)
         self.chain_state.orders.append(new_first_entry)
         self.chain_state.base_price = current_price
         
@@ -962,6 +967,7 @@ class MarketAwareBacktestEngine(BacktestEngine):
                 "group_id": order.group_id,
                 "entry_price": float(order.entry_price),
                 "exit_price": float(price),
+                "creation_time": order.created_at,
                 "entry_time": order.filled_at,
                 "exit_time": order.closed_at,
                 "profit": float(order.profit),
@@ -987,7 +993,11 @@ class MarketAwareBacktestEngine(BacktestEngine):
     def _create_first_order(self, price: Decimal, kline: dict = None):
         """创建首个订单"""
         klines = self.klines_history if hasattr(self, 'klines_history') and self.klines_history else None
-        first_order = self._create_order(1, price, klines)
+        # 从 kline 中提取时间
+        kline_time = None
+        if kline and 'timestamp' in kline:
+            kline_time = datetime.fromtimestamp(kline['timestamp'] / 1000)
+        first_order = self._create_order(1, price, klines, kline_time=kline_time)
         self.chain_state.orders.append(first_order)
         logger.info(f"[开始交易] 创建 A1: 入场价={first_order.entry_price:.2f}, group_id={first_order.group_id}")
     
@@ -1111,12 +1121,12 @@ class MarketAwareBacktestEngine(BacktestEngine):
                 self.trading_enabled = False
                 print(f"\n⚠️ 初始行情为下跌趋势，暂停交易")
             else:
-                first_order = self._create_order(1, first_price, self.klines_history)
+                first_order = self._create_order(1, first_price, self.klines_history, kline_time=self.start_time)
                 self.chain_state.orders.append(first_order)
                 print(f"\n📋 创建首个订单: A1 入场价={first_order.entry_price:.2f}")
                 self._start_trading_period(self.start_time, self.current_market_status)
         else:
-            first_order = self._create_order(1, first_price, self.klines_history)
+            first_order = self._create_order(1, first_price, self.klines_history, kline_time=self.start_time)
             self.chain_state.orders.append(first_order)
             print(f"\n📋 创建首个订单: A1 入场价={first_order.entry_price:.2f}")
             self._start_trading_period(self.start_time, MarketStatus.RANGING)
@@ -1319,7 +1329,7 @@ async def main():
 def _save_to_database(args, engine, date_range_str, amplitude, market, entry, timeout, capital):
     """保存行情感知回测结果到数据库"""
     try:
-        from database.test_results_db import TestResultsDB, TestResult
+        from database.test_results_db import TestResultsDB, TestResult, TradeDetail
         from datetime import datetime
         import uuid
         
@@ -1357,6 +1367,41 @@ def _save_to_database(args, engine, date_range_str, amplitude, market, entry, ti
         price_change = ((last_price - first_price) / first_price * 100) if first_price > 0 else 0
         excess_return = roi - price_change
         
+        # 计算平均订单成交时间和平均持仓时间
+        trades = results.get('trades', [])
+        total_execution_time = 0
+        total_holding_time = 0
+        valid_execution_trades = 0
+        valid_holding_trades = 0
+        
+        for trade in trades:
+            # 计算成交时间：entry_time - creation_time
+            if trade.get('creation_time') and trade.get('entry_time'):
+                try:
+                    creation_time = datetime.strptime(trade['creation_time'], '%Y-%m-%d %H:%M:%S')
+                    entry_time = datetime.strptime(trade['entry_time'], '%Y-%m-%d %H:%M:%S')
+                    execution_time = (entry_time - creation_time).total_seconds() / 60  # 转换为分钟
+                    if execution_time >= 0:
+                        total_execution_time += execution_time
+                        valid_execution_trades += 1
+                except:
+                    pass
+            
+            # 计算持仓时间：exit_time - entry_time
+            if trade.get('entry_time') and trade.get('exit_time'):
+                try:
+                    entry_time = datetime.strptime(trade['entry_time'], '%Y-%m-%d %H:%M:%S')
+                    exit_time = datetime.strptime(trade['exit_time'], '%Y-%m-%d %H:%M:%S')
+                    holding_time = (exit_time - entry_time).total_seconds() / 60  # 转换为分钟
+                    if holding_time >= 0:
+                        total_holding_time += holding_time
+                        valid_holding_trades += 1
+                except:
+                    pass
+        
+        avg_execution_time = total_execution_time / valid_execution_trades if valid_execution_trades > 0 else 0
+        avg_holding_time = total_holding_time / valid_holding_trades if valid_holding_trades > 0 else 0
+        
         capital_stats = engine.capital_pool.get_statistics() if engine.capital_pool and hasattr(engine.capital_pool, 'get_statistics') else {}
         
         result = TestResult(
@@ -1387,6 +1432,8 @@ def _save_to_database(args, engine, date_range_str, amplitude, market, entry, ti
             market_algorithm=market.get('algorithm', 'always_ranging'),
             capital=json.dumps(capital),
             order_group_count=engine.chain_state.group_id,
+            avg_execution_time=avg_execution_time,
+            avg_holding_time=avg_holding_time,
         )
         db.save_result(result)
         
@@ -1409,6 +1456,7 @@ def _save_to_database(args, engine, date_range_str, amplitude, market, entry, ti
                     level=str(t.get('level', '')),
                     entry_price=float(t.get('entry_price', 0)),
                     exit_price=float(t.get('exit_price', 0)),
+                    creation_time=t.get('creation_time', ''),
                     entry_time=t.get('entry_time', ''),
                     exit_time=t.get('exit_time', ''),
                     trade_type=t.get('trade_type', ''),

@@ -73,6 +73,8 @@ class TestResult:
     duration_ms: int = 0
     status: str = "running"
     order_group_count: int = 0
+    avg_execution_time: float = 0.0
+    avg_holding_time: float = 0.0
 
 
 @dataclass
@@ -86,6 +88,7 @@ class TradeDetail:
     exit_price: float = 0.0
     trade_type: str = ""
     profit: float = 0.0
+    creation_time: str = ""
     entry_time: str = ""
     exit_time: str = ""
     quantity: float = 0.0
@@ -224,9 +227,11 @@ class TestResultsDB:
                 duration_ms INTEGER DEFAULT 0,
                 status TEXT DEFAULT 'running',
                 order_group_count INTEGER DEFAULT 0,
+                avg_execution_time REAL DEFAULT 0,
+                avg_holding_time REAL DEFAULT 0,
                 FOREIGN KEY (case_id) REFERENCES test_cases(case_id)
             )
-        """)
+            """)
         
         # 交易详情表
         cursor.execute("""
@@ -496,6 +501,10 @@ class TestResultsDB:
                 cursor.execute("ALTER TABLE trade_details ADD COLUMN order_group_id INTEGER DEFAULT 0")
                 print("迁移: trade_details 添加 order_group_id 字段")
             
+            if 'creation_time' not in td_columns:
+                cursor.execute("ALTER TABLE trade_details ADD COLUMN creation_time DATETIME")
+                print("迁移: trade_details 添加 creation_time 字段")
+            
             conn.commit()
             
             # test_results 表添加 order_group_count 字段
@@ -505,6 +514,15 @@ class TestResultsDB:
             if 'order_group_count' not in tr_columns:
                 cursor.execute("ALTER TABLE test_results ADD COLUMN order_group_count INTEGER DEFAULT 0")
                 print("迁移: test_results 添加 order_group_count 字段")
+            
+            # test_results 表添加交易时间相关字段
+            if 'avg_execution_time' not in tr_columns:
+                cursor.execute("ALTER TABLE test_results ADD COLUMN avg_execution_time REAL DEFAULT 0")
+                print("迁移: test_results 添加 avg_execution_time 字段")
+            
+            if 'avg_holding_time' not in tr_columns:
+                cursor.execute("ALTER TABLE test_results ADD COLUMN avg_holding_time REAL DEFAULT 0")
+                print("迁移: test_results 添加 avg_holding_time 字段")
             
             conn.commit()
             
@@ -838,8 +856,9 @@ class TestResultsDB:
                  net_profit, roi, price_change, excess_return, profit_factor, sharpe_ratio,
                  max_profit_trade, max_loss_trade, trading_time_ratio, stopped_time_ratio,
                  market_status_changes, market_algorithm, trading_statuses, extra_metrics,
-                 capital, executed_at, duration_ms, status, order_group_count)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 capital, executed_at, duration_ms, status, order_group_count,
+                 avg_execution_time, avg_holding_time)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (result.result_id, result.case_id, result.symbol, result.interval,
                   result.start_time, result.end_time, result.klines_count,
                   result.total_trades, result.win_trades, result.loss_trades,
@@ -849,7 +868,7 @@ class TestResultsDB:
                   result.max_loss_trade, result.trading_time_ratio, result.stopped_time_ratio,
                   result.market_status_changes, result.market_algorithm, result.trading_statuses,
                   result.extra_metrics, result.capital, now, result.duration_ms, result.status,
-                  result.order_group_count))
+                  result.order_group_count, result.avg_execution_time, result.avg_holding_time))
             
             # 更新用例状态为 running
             cursor.execute("""
@@ -875,7 +894,8 @@ class TestResultsDB:
                             'price_change', 'excess_return', 'profit_factor', 'sharpe_ratio',
                             'max_profit_trade', 'max_loss_trade', 'trading_time_ratio',
                             'stopped_time_ratio', 'market_status_changes', 'market_algorithm',
-                            'trading_statuses', 'extra_metrics', 'duration_ms', 'status', 'order_group_count']
+                            'trading_statuses', 'extra_metrics', 'duration_ms', 'status', 'order_group_count',
+                            'avg_execution_time', 'avg_holding_time']
             
             set_clauses = []
             params = []
@@ -1065,11 +1085,11 @@ class TestResultsDB:
             for trade in trades:
                 cursor.execute("""
                     INSERT INTO trade_details 
-                    (result_id, order_group_id, trade_seq, level, entry_price, exit_price, entry_time,
+                    (result_id, order_group_id, trade_seq, level, entry_price, exit_price, creation_time, entry_time,
                      exit_time, trade_type, profit, quantity, stake, entry_capital, entry_total_capital)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (result_id, trade.order_group_id, trade.trade_seq, trade.level, trade.entry_price,
-                      trade.exit_price, trade.entry_time, trade.exit_time,
+                      trade.exit_price, trade.creation_time, trade.entry_time, trade.exit_time,
                       trade.trade_type, trade.profit, trade.quantity, trade.stake,
                       trade.entry_capital, trade.entry_total_capital))
             
