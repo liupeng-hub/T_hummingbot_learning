@@ -20,12 +20,12 @@ from market_status_detector import MarketStatus
 @dataclass
 class TestCase:
     """测试用例数据类"""
-    case_id: str
     name: str
     symbol: str
+    date_start: str
+    date_end: str
+    id: Optional[int] = None
     interval: str = "1m"
-    date_start: str = ""
-    date_end: str = ""
     test_type: str = "market_aware"
     description: str = ""
     amplitude: str = "{}"
@@ -41,12 +41,12 @@ class TestCase:
 @dataclass
 class TestResult:
     """测试结果数据类"""
-    result_id: str
-    case_id: str
+    case_id: int
     symbol: str
     interval: str
     start_time: str
     end_time: str
+    id: Optional[int] = None
     klines_count: int = 0
     total_trades: int = 0
     win_trades: int = 0
@@ -80,9 +80,9 @@ class TestResult:
 @dataclass
 class TradeDetail:
     """交易详情数据类"""
-    result_id: str
+    result_id: int
+    trade_seq: int
     order_group_id: int = 0
-    trade_seq: int = 0
     level: str = ""
     entry_price: float = 0.0
     exit_price: float = 0.0
@@ -100,13 +100,13 @@ class TradeDetail:
 @dataclass
 class MarketVisualizerCase:
     """行情可视化用例数据类"""
-    case_id: str
     name: str
     symbol: str
     interval: str
     start_date: str
     end_date: str
     algorithm: str
+    id: Optional[int] = None
     algorithm_config: str = "{}"
     description: str = ""
     status: str = "pending"
@@ -117,8 +117,7 @@ class MarketVisualizerCase:
 @dataclass
 class MarketVisualizerResult:
     """行情可视化结果数据类"""
-    result_id: str
-    case_id: str
+    case_id: int
     total_intervals: int = 0
     ranging_intervals: int = 0
     trending_up_intervals: int = 0
@@ -129,12 +128,13 @@ class MarketVisualizerResult:
     status_ranges: str = "[]"
     duration_ms: int = 0
     executed_at: str = ""
+    id: Optional[int] = None
 
 
 @dataclass
 class MarketVisualizerDetail:
     """行情可视化详情数据类"""
-    result_id: str
+    result_id: int
     date: str
     status: str
     confidence: float = 0.0
@@ -172,7 +172,6 @@ class TestResultsDB:
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS test_cases (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                case_id TEXT UNIQUE NOT NULL,
                 name TEXT NOT NULL,
                 description TEXT,
                 symbol TEXT NOT NULL,
@@ -195,8 +194,7 @@ class TestResultsDB:
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS test_results (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                result_id TEXT UNIQUE NOT NULL,
-                case_id TEXT NOT NULL,
+                case_id INTEGER NOT NULL,
                 symbol TEXT,
                 interval TEXT,
                 start_time DATETIME,
@@ -229,7 +227,7 @@ class TestResultsDB:
                 order_group_count INTEGER DEFAULT 0,
                 avg_execution_time REAL DEFAULT 0,
                 avg_holding_time REAL DEFAULT 0,
-                FOREIGN KEY (case_id) REFERENCES test_cases(case_id)
+                FOREIGN KEY (case_id) REFERENCES test_cases(id)
             )
             """)
         
@@ -237,7 +235,7 @@ class TestResultsDB:
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS trade_details (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                result_id TEXT NOT NULL,
+                result_id INTEGER NOT NULL,
                 order_group_id INTEGER DEFAULT 0,
                 trade_seq INTEGER NOT NULL,
                 level TEXT,
@@ -251,7 +249,7 @@ class TestResultsDB:
                 stake REAL DEFAULT 0,
                 entry_capital REAL DEFAULT 0,
                 entry_total_capital REAL DEFAULT 0,
-                FOREIGN KEY (result_id) REFERENCES test_results(result_id)
+                FOREIGN KEY (result_id) REFERENCES test_results(id)
             )
         """)
         
@@ -268,7 +266,7 @@ class TestResultsDB:
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS capital_statistics (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                result_id TEXT NOT NULL UNIQUE,
+                result_id INTEGER NOT NULL UNIQUE,
                 strategy TEXT DEFAULT 'guding',
                 initial_capital REAL NOT NULL,
                 final_capital REAL NOT NULL,
@@ -293,7 +291,7 @@ class TestResultsDB:
                 win_rate REAL NOT NULL DEFAULT 0,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (result_id) REFERENCES test_results(result_id) ON DELETE CASCADE
+                FOREIGN KEY (result_id) REFERENCES test_results(id) ON DELETE CASCADE
             )
         """)
         
@@ -303,7 +301,7 @@ class TestResultsDB:
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS capital_history (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                result_id TEXT NOT NULL,
+                result_id INTEGER NOT NULL,
                 statistics_id INTEGER NOT NULL,
                 timestamp TEXT NOT NULL,
                 old_capital REAL NOT NULL,
@@ -312,7 +310,7 @@ class TestResultsDB:
                 profit REAL NOT NULL,
                 event_type TEXT,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (result_id) REFERENCES test_results(result_id) ON DELETE CASCADE,
+                FOREIGN KEY (result_id) REFERENCES test_results(id) ON DELETE CASCADE,
                 FOREIGN KEY (statistics_id) REFERENCES capital_statistics(id) ON DELETE CASCADE
             )
         """)
@@ -325,7 +323,6 @@ class TestResultsDB:
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS market_visualizer_cases (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                case_id TEXT UNIQUE NOT NULL,
                 name TEXT NOT NULL,
                 symbol TEXT NOT NULL,
                 interval TEXT NOT NULL DEFAULT '1d',
@@ -344,8 +341,7 @@ class TestResultsDB:
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS market_visualizer_results (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                result_id TEXT UNIQUE NOT NULL,
-                case_id TEXT NOT NULL,
+                case_id INTEGER NOT NULL,
                 total_intervals INTEGER DEFAULT 0,
                 ranging_intervals INTEGER DEFAULT 0,
                 trending_up_intervals INTEGER DEFAULT 0,
@@ -356,7 +352,7 @@ class TestResultsDB:
                 status_ranges TEXT DEFAULT '[]',
                 duration_ms INTEGER DEFAULT 0,
                 executed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (case_id) REFERENCES market_visualizer_cases(case_id)
+                FOREIGN KEY (case_id) REFERENCES market_visualizer_cases(id)
             )
         """)
         
@@ -364,7 +360,7 @@ class TestResultsDB:
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS market_visualizer_details (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                result_id TEXT NOT NULL,
+                result_id INTEGER NOT NULL,
                 date TEXT NOT NULL,
                 status TEXT NOT NULL,
                 confidence REAL DEFAULT 0,
@@ -374,7 +370,7 @@ class TestResultsDB:
                 high_price REAL DEFAULT 0,
                 low_price REAL DEFAULT 0,
                 volume REAL DEFAULT 0,
-                FOREIGN KEY (result_id) REFERENCES market_visualizer_results(result_id)
+                FOREIGN KEY (result_id) REFERENCES market_visualizer_results(id)
             )
         """)
         
@@ -644,41 +640,39 @@ class TestResultsDB:
     
     # ==================== 测试用例 CRUD ====================
     
-    def create_case(self, case: TestCase) -> str:
+    def create_case(self, case: TestCase) -> int:
         """创建测试用例"""
         conn = self._get_connection()
         cursor = conn.cursor()
         
         try:
-            if not case.case_id:
-                case.case_id = str(uuid.uuid4())
-            
             now = datetime.now().isoformat()
             cursor.execute("""
                 INSERT INTO test_cases 
-                (case_id, name, description, symbol, interval, date_start, date_end, test_type,
+                (name, description, symbol, interval, date_start, date_end, test_type,
                  amplitude, market, entry, timeout, capital, status, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (case.case_id, case.name, case.description, case.symbol, case.interval,
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (case.name, case.description, case.symbol, case.interval,
                   case.date_start, case.date_end, case.test_type,
                   case.amplitude, case.market, case.entry, case.timeout, case.capital,
                   case.status, now, now))
             
+            case_id = cursor.lastrowid
             conn.commit()
-            return case.case_id
+            return case_id
         except Exception as e:
             print(f"创建测试用例失败: {e}")
-            return ""
+            return 0
         finally:
             conn.close()
     
-    def get_case(self, case_id: str) -> Optional[Dict]:
+    def get_case(self, case_id: int) -> Optional[Dict]:
         """获取测试用例"""
         conn = self._get_connection()
         cursor = conn.cursor()
         
         try:
-            cursor.execute("SELECT * FROM test_cases WHERE case_id = ?", (case_id,))
+            cursor.execute("SELECT * FROM test_cases WHERE id = ?", (case_id,))
             row = cursor.fetchone()
             return dict(row) if row else None
         finally:
@@ -712,14 +706,14 @@ class TestResultsDB:
         finally:
             conn.close()
     
-    def update_case(self, case_id: str, updates: Dict) -> bool:
+    def update_case(self, case_id: int, updates: Dict) -> bool:
         """更新测试用例（仅 draft/active 状态）"""
         conn = self._get_connection()
         cursor = conn.cursor()
         
         try:
             # 检查状态
-            cursor.execute("SELECT status FROM test_cases WHERE case_id = ?", (case_id,))
+            cursor.execute("SELECT status FROM test_cases WHERE id = ?", (case_id,))
             row = cursor.fetchone()
             if not row:
                 return False
@@ -747,7 +741,7 @@ class TestResultsDB:
             params.append(datetime.now().isoformat())
             params.append(case_id)
             
-            sql = f"UPDATE test_cases SET {', '.join(set_clauses)} WHERE case_id = ?"
+            sql = f"UPDATE test_cases SET {', '.join(set_clauses)} WHERE id = ?"
             cursor.execute(sql, params)
             
             conn.commit()
@@ -758,14 +752,14 @@ class TestResultsDB:
         finally:
             conn.close()
     
-    def update_case_status(self, case_id: str, status: str) -> bool:
+    def update_case_status(self, case_id: int, status: str) -> bool:
         """更新测试用例状态"""
         conn = self._get_connection()
         cursor = conn.cursor()
         
         try:
             cursor.execute(
-                "UPDATE test_cases SET status = ?, updated_at = ? WHERE case_id = ?",
+                "UPDATE test_cases SET status = ?, updated_at = ? WHERE id = ?",
                 (status, datetime.now().isoformat(), case_id)
             )
             conn.commit()
@@ -776,14 +770,14 @@ class TestResultsDB:
         finally:
             conn.close()
     
-    def delete_case(self, case_id: str) -> bool:
+    def delete_case(self, case_id: int) -> bool:
         """删除测试用例"""
         conn = self._get_connection()
         cursor = conn.cursor()
         
         try:
-            cursor.execute("SELECT result_id FROM test_results WHERE case_id = ?", (case_id,))
-            result_ids = [row['result_id'] for row in cursor.fetchall()]
+            cursor.execute("SELECT id FROM test_results WHERE case_id = ?", (case_id,))
+            result_ids = [row['id'] for row in cursor.fetchall()]
             
             for result_id in result_ids:
                 cursor.execute("DELETE FROM capital_history WHERE result_id = ?", (result_id,))
@@ -791,7 +785,7 @@ class TestResultsDB:
                 cursor.execute("DELETE FROM trade_details WHERE result_id = ?", (result_id,))
             
             cursor.execute("DELETE FROM test_results WHERE case_id = ?", (case_id,))
-            cursor.execute("DELETE FROM test_cases WHERE case_id = ?", (case_id,))
+            cursor.execute("DELETE FROM test_cases WHERE id = ?", (case_id,))
             
             conn.commit()
             return True
@@ -801,21 +795,21 @@ class TestResultsDB:
         finally:
             conn.close()
     
-    def reset_case(self, case_id: str) -> bool:
+    def reset_case(self, case_id: int) -> bool:
         """重置测试用例（清除测试数据，恢复为 active 状态）"""
         conn = self._get_connection()
         cursor = conn.cursor()
         
         try:
             # 检查状态
-            cursor.execute("SELECT status FROM test_cases WHERE case_id = ?", (case_id,))
+            cursor.execute("SELECT status FROM test_cases WHERE id = ?", (case_id,))
             row = cursor.fetchone()
             if not row:
                 return False
             
             # 删除关联的测试结果
-            cursor.execute("SELECT result_id FROM test_results WHERE case_id = ?", (case_id,))
-            result_ids = [row['result_id'] for row in cursor.fetchall()]
+            cursor.execute("SELECT id FROM test_results WHERE case_id = ?", (case_id,))
+            result_ids = [row['id'] for row in cursor.fetchall()]
             
             for result_id in result_ids:
                 cursor.execute("DELETE FROM trade_details WHERE result_id = ?", (result_id,))
@@ -826,7 +820,7 @@ class TestResultsDB:
             
             # 恢复状态为 active
             cursor.execute("""
-                UPDATE test_cases SET status = 'active', updated_at = ? WHERE case_id = ?
+                UPDATE test_cases SET status = 'active', updated_at = ? WHERE id = ?
             """, (datetime.now().isoformat(), case_id))
             
             conn.commit()
@@ -839,27 +833,24 @@ class TestResultsDB:
     
     # ==================== 测试结果 CRUD ====================
     
-    def create_result(self, result: TestResult) -> str:
+    def create_result(self, result: TestResult) -> int:
         """创建测试结果"""
         conn = self._get_connection()
         cursor = conn.cursor()
         
         try:
-            if not result.result_id:
-                result.result_id = str(uuid.uuid4())
-            
             now = datetime.now().isoformat()
             cursor.execute("""
                 INSERT INTO test_results 
-                (result_id, case_id, symbol, interval, start_time, end_time, klines_count,
+                (case_id, symbol, interval, start_time, end_time, klines_count,
                  total_trades, win_trades, loss_trades, win_rate, total_profit, total_loss,
                  net_profit, roi, price_change, excess_return, profit_factor, sharpe_ratio,
                  max_profit_trade, max_loss_trade, trading_time_ratio, stopped_time_ratio,
                  market_status_changes, market_algorithm, trading_statuses, extra_metrics,
                  capital, executed_at, duration_ms, status, order_group_count,
                  avg_execution_time, avg_holding_time)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (result.result_id, result.case_id, result.symbol, result.interval,
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (result.case_id, result.symbol, result.interval,
                   result.start_time, result.end_time, result.klines_count,
                   result.total_trades, result.win_trades, result.loss_trades,
                   result.win_rate, result.total_profit, result.total_loss,
@@ -870,20 +861,22 @@ class TestResultsDB:
                   result.extra_metrics, result.capital, now, result.duration_ms, result.status,
                   result.order_group_count, result.avg_execution_time, result.avg_holding_time))
             
+            result_id = cursor.lastrowid
+            
             # 更新用例状态为 running
             cursor.execute("""
-                UPDATE test_cases SET status = 'running', updated_at = ? WHERE case_id = ?
+                UPDATE test_cases SET status = 'running', updated_at = ? WHERE id = ?
             """, (now, result.case_id))
             
             conn.commit()
-            return result.result_id
+            return result_id
         except Exception as e:
             print(f"创建测试结果失败: {e}")
-            return ""
+            return 0
         finally:
             conn.close()
     
-    def update_result(self, result_id: str, updates: Dict) -> bool:
+    def update_result(self, result_id: int, updates: Dict) -> bool:
         """更新测试结果"""
         conn = self._get_connection()
         cursor = conn.cursor()
@@ -909,16 +902,16 @@ class TestResultsDB:
                 return True
             
             params.append(result_id)
-            sql = f"UPDATE test_results SET {', '.join(set_clauses)} WHERE result_id = ?"
+            sql = f"UPDATE test_results SET {', '.join(set_clauses)} WHERE id = ?"
             cursor.execute(sql, params)
             
             # 如果状态变为 success，更新用例状态为 completed
             if updates.get('status') == 'success':
-                cursor.execute("SELECT case_id FROM test_results WHERE result_id = ?", (result_id,))
+                cursor.execute("SELECT case_id FROM test_results WHERE id = ?", (result_id,))
                 row = cursor.fetchone()
                 if row:
                     cursor.execute("""
-                        UPDATE test_cases SET status = 'completed', updated_at = ? WHERE case_id = ?
+                        UPDATE test_cases SET status = 'completed', updated_at = ? WHERE id = ?
                     """, (datetime.now().isoformat(), row['case_id']))
             
             conn.commit()
@@ -929,7 +922,7 @@ class TestResultsDB:
         finally:
             conn.close()
     
-    def get_result(self, result_id: str) -> Optional[Dict]:
+    def get_result(self, result_id: int) -> Optional[Dict]:
         """获取测试结果"""
         conn = self._get_connection()
         cursor = conn.cursor()
@@ -944,9 +937,9 @@ class TestResultsDB:
                        cs.total_withdrawal, cs.liquidation_count, cs.total_trades as cs_total_trades,
                        cs.profit_trades, cs.loss_trades, cs.avg_profit, cs.avg_loss, cs.win_rate as cs_win_rate
                 FROM test_results r
-                LEFT JOIN test_cases c ON r.case_id = c.case_id
-                LEFT JOIN capital_statistics cs ON r.result_id = cs.result_id
-                WHERE r.result_id = ?
+                LEFT JOIN test_cases c ON r.case_id = c.id
+                LEFT JOIN capital_statistics cs ON r.id = cs.result_id
+                WHERE r.id = ?
             """, (result_id,))
             row = cursor.fetchone()
             if not row:
@@ -1006,8 +999,8 @@ class TestResultsDB:
                        cs.total_withdrawal, cs.liquidation_count, cs.total_trades as cs_total_trades,
                        cs.profit_trades, cs.loss_trades, cs.avg_profit, cs.avg_loss, cs.win_rate as cs_win_rate
                 FROM test_results r
-                LEFT JOIN test_cases c ON r.case_id = c.case_id
-                LEFT JOIN capital_statistics cs ON r.result_id = cs.result_id
+                LEFT JOIN test_cases c ON r.case_id = c.id
+                LEFT JOIN capital_statistics cs ON r.id = cs.result_id
                 WHERE 1=1
             """
             params = []
@@ -1076,7 +1069,7 @@ class TestResultsDB:
     
     # ==================== 交易详情 CRUD ====================
     
-    def save_trade_details(self, result_id: str, trades: List[TradeDetail]) -> bool:
+    def save_trade_details(self, result_id: int, trades: List[TradeDetail]) -> bool:
         """保存交易详情"""
         conn = self._get_connection()
         cursor = conn.cursor()
@@ -1101,7 +1094,7 @@ class TestResultsDB:
         finally:
             conn.close()
     
-    def get_trade_details(self, result_id: str) -> List[Dict]:
+    def get_trade_details(self, result_id: int) -> List[Dict]:
         """获取交易详情"""
         conn = self._get_connection()
         cursor = conn.cursor()
@@ -1226,40 +1219,38 @@ class TestResultsDB:
     
     # ==================== 行情可视化 CRUD ====================
     
-    def create_visualizer_case(self, case: MarketVisualizerCase) -> str:
+    def create_visualizer_case(self, case: MarketVisualizerCase) -> int:
         """创建行情可视化用例"""
         conn = self._get_connection()
         cursor = conn.cursor()
         
         try:
-            if not case.case_id:
-                case.case_id = str(uuid.uuid4())
-            
             now = datetime.now().isoformat()
             cursor.execute("""
                 INSERT INTO market_visualizer_cases 
-                (case_id, name, symbol, interval, start_date, end_date, algorithm,
+                (name, symbol, interval, start_date, end_date, algorithm,
                  algorithm_config, description, status, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (case.case_id, case.name, case.symbol, case.interval,
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (case.name, case.symbol, case.interval,
                   case.start_date, case.end_date, case.algorithm,
                   case.algorithm_config, case.description, case.status, now, now))
             
+            case_id = cursor.lastrowid
             conn.commit()
-            return case.case_id
+            return case_id
         except Exception as e:
             print(f"创建行情可视化用例失败: {e}")
-            return ""
+            return 0
         finally:
             conn.close()
     
-    def get_visualizer_case(self, case_id: str) -> Optional[Dict]:
+    def get_visualizer_case(self, case_id: int) -> Optional[Dict]:
         """获取行情可视化用例"""
         conn = self._get_connection()
         cursor = conn.cursor()
         
         try:
-            cursor.execute("SELECT * FROM market_visualizer_cases WHERE case_id = ?", (case_id,))
+            cursor.execute("SELECT * FROM market_visualizer_cases WHERE id = ?", (case_id,))
             row = cursor.fetchone()
             if row:
                 result = dict(row)
@@ -1306,7 +1297,7 @@ class TestResultsDB:
     
     # ==================== 资金统计 CRUD ====================
     
-    def save_capital_statistics(self, result_id: str, stats: Dict) -> bool:
+    def save_capital_statistics(self, result_id: int, stats: Dict) -> bool:
         """保存资金统计数据"""
         conn = self._get_connection()
         cursor = conn.cursor()
@@ -1357,7 +1348,7 @@ class TestResultsDB:
         finally:
             conn.close()
     
-    def get_capital_statistics(self, result_id: str) -> Optional[Dict]:
+    def get_capital_statistics(self, result_id: int) -> Optional[Dict]:
         """获取资金统计数据"""
         conn = self._get_connection()
         cursor = conn.cursor()
@@ -1369,7 +1360,7 @@ class TestResultsDB:
         finally:
             conn.close()
     
-    def delete_capital_statistics(self, result_id: str) -> bool:
+    def delete_capital_statistics(self, result_id: int) -> bool:
         """删除资金统计数据"""
         conn = self._get_connection()
         cursor = conn.cursor()
@@ -1386,7 +1377,7 @@ class TestResultsDB:
     
     # ==================== 资金历史 CRUD ====================
     
-    def save_capital_history(self, result_id: str, statistics_id: int, history: List[Dict]) -> bool:
+    def save_capital_history(self, result_id: int, statistics_id: int, history: List[Dict]) -> bool:
         """保存资金历史记录"""
         conn = self._get_connection()
         cursor = conn.cursor()
@@ -1417,7 +1408,7 @@ class TestResultsDB:
         finally:
             conn.close()
     
-    def get_capital_history(self, result_id: str, limit: int = 1000, offset: int = 0) -> List[Dict]:
+    def get_capital_history(self, result_id: int, limit: int = 1000, offset: int = 0) -> List[Dict]:
         """获取资金历史记录"""
         conn = self._get_connection()
         cursor = conn.cursor()
@@ -1433,7 +1424,7 @@ class TestResultsDB:
         finally:
             conn.close()
     
-    def delete_capital_history(self, result_id: str) -> bool:
+    def delete_capital_history(self, result_id: int) -> bool:
         """删除资金历史记录"""
         conn = self._get_connection()
         cursor = conn.cursor()
@@ -1448,7 +1439,7 @@ class TestResultsDB:
         finally:
             conn.close()
     
-    def update_visualizer_case_status(self, case_id: str, status: str) -> bool:
+    def update_visualizer_case_status(self, case_id: int, status: str) -> bool:
         """更新行情可视化用例状态"""
         conn = self._get_connection()
         cursor = conn.cursor()
@@ -1457,7 +1448,7 @@ class TestResultsDB:
             cursor.execute("""
                 UPDATE market_visualizer_cases 
                 SET status = ?, updated_at = ? 
-                WHERE case_id = ?
+                WHERE id = ?
             """, (status, datetime.now().isoformat(), case_id))
             
             conn.commit()
@@ -1468,20 +1459,20 @@ class TestResultsDB:
         finally:
             conn.close()
     
-    def delete_visualizer_case(self, case_id: str) -> bool:
+    def delete_visualizer_case(self, case_id: int) -> bool:
         """删除行情可视化用例及其关联数据"""
         conn = self._get_connection()
         cursor = conn.cursor()
         
         try:
-            cursor.execute("SELECT result_id FROM market_visualizer_results WHERE case_id = ?", (case_id,))
-            result_ids = [row['result_id'] for row in cursor.fetchall()]
+            cursor.execute("SELECT id FROM market_visualizer_results WHERE case_id = ?", (case_id,))
+            result_ids = [row['id'] for row in cursor.fetchall()]
             
             for result_id in result_ids:
                 cursor.execute("DELETE FROM market_visualizer_details WHERE result_id = ?", (result_id,))
             
             cursor.execute("DELETE FROM market_visualizer_results WHERE case_id = ?", (case_id,))
-            cursor.execute("DELETE FROM market_visualizer_cases WHERE case_id = ?", (case_id,))
+            cursor.execute("DELETE FROM market_visualizer_cases WHERE id = ?", (case_id,))
             
             conn.commit()
             return True
@@ -1516,46 +1507,45 @@ class TestResultsDB:
         finally:
             conn.close()
     
-    def create_visualizer_result(self, result: MarketVisualizerResult) -> str:
+    def create_visualizer_result(self, result: MarketVisualizerResult) -> int:
         """创建行情可视化结果"""
         conn = self._get_connection()
         cursor = conn.cursor()
         
         try:
-            if not result.result_id:
-                result.result_id = str(uuid.uuid4())
-            
             now = datetime.now().isoformat()
             cursor.execute("""
                 INSERT INTO market_visualizer_results 
-                (result_id, case_id, total_intervals, ranging_intervals, trending_up_intervals,
+                (case_id, total_intervals, ranging_intervals, trending_up_intervals,
                  trending_down_intervals, ranging_count, trending_up_count, trending_down_count,
                  status_ranges, duration_ms, executed_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (result.result_id, result.case_id, result.total_intervals,
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (result.case_id, result.total_intervals,
                   result.ranging_intervals, result.trending_up_intervals, result.trending_down_intervals,
                   result.ranging_count, result.trending_up_count, result.trending_down_count,
                   result.status_ranges, result.duration_ms, now))
             
+            result_id = cursor.lastrowid
+            
             cursor.execute("""
-                UPDATE market_visualizer_cases SET status = 'completed', updated_at = ? WHERE case_id = ?
+                UPDATE market_visualizer_cases SET status = 'completed', updated_at = ? WHERE id = ?
             """, (now, result.case_id))
             
             conn.commit()
-            return result.result_id
+            return result_id
         except Exception as e:
             print(f"创建行情可视化结果失败: {e}")
-            return ""
+            return 0
         finally:
             conn.close()
     
-    def get_visualizer_result(self, result_id: str) -> Optional[Dict]:
+    def get_visualizer_result(self, result_id: int) -> Optional[Dict]:
         """获取行情可视化结果"""
         conn = self._get_connection()
         cursor = conn.cursor()
         
         try:
-            cursor.execute("SELECT * FROM market_visualizer_results WHERE result_id = ?", (result_id,))
+            cursor.execute("SELECT * FROM market_visualizer_results WHERE id = ?", (result_id,))
             row = cursor.fetchone()
             if row:
                 result = dict(row)
@@ -1566,7 +1556,7 @@ class TestResultsDB:
         finally:
             conn.close()
     
-    def get_visualizer_result_by_case(self, case_id: str) -> Optional[Dict]:
+    def get_visualizer_result_by_case(self, case_id: int) -> Optional[Dict]:
         """根据用例ID获取最新的行情可视化结果"""
         conn = self._get_connection()
         cursor = conn.cursor()
@@ -1588,7 +1578,7 @@ class TestResultsDB:
         finally:
             conn.close()
     
-    def create_visualizer_details(self, result_id: str, details: List[Dict]) -> bool:
+    def create_visualizer_details(self, result_id: int, details: List[Dict]) -> bool:
         """批量创建行情可视化详情"""
         conn = self._get_connection()
         cursor = conn.cursor()
@@ -1613,7 +1603,7 @@ class TestResultsDB:
         finally:
             conn.close()
     
-    def get_visualizer_details(self, result_id: str) -> List[Dict]:
+    def get_visualizer_details(self, result_id: int) -> List[Dict]:
         """获取行情可视化详情列表"""
         conn = self._get_connection()
         cursor = conn.cursor()
@@ -1628,7 +1618,7 @@ class TestResultsDB:
         finally:
             conn.close()
     
-    def get_visualizer_statistics(self, result_id: str) -> Dict:
+    def get_visualizer_statistics(self, result_id: int) -> Dict:
         """获取行情可视化统计信息"""
         result = self.get_visualizer_result(result_id)
         if result is None:

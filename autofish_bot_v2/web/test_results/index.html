@@ -795,6 +795,15 @@
                                         </select>
                                         <small class="text-muted">固定模式: 每轮使用初始资金; 递进模式: 支持提现和资金增长</small>
                                     </div>
+                                    <div class="col-md-6">
+                                        <label class="form-label">入场资金计算模式</label>
+                                        <select class="form-select" id="formEntryMode">
+                                            <option value="fixed">固定模式 (fixed)</option>
+                                            <option value="compound">复利模式 (compound)</option>
+                                            <option value="default">默认模式 (default)</option>
+                                        </select>
+                                        <small class="text-muted">fixed: 使用初始资金; compound: 使用总资金; default: 入场资金=交易资金, 入场总资金=总资金</small>
+                                    </div>
                                 </div>
                                 <div id="capitalParamsSection" style="display:none;">
                                     <div class="row mb-3">
@@ -988,18 +997,20 @@
         
         function normalizeCapitalFormat(capital) {
             if (!capital) {
-                return { strategy: 'guding' };
+                return { strategy: 'guding', entry_mode: 'fixed' };
             }
             
             const strategy = capital.strategy || 'guding';
+            const entryMode = capital.entry_mode || 'fixed';
             
             if (strategy === 'guding') {
-                return { strategy: 'guding' };
+                return { strategy: 'guding', entry_mode: entryMode };
             }
             
             if (capital[strategy] && typeof capital[strategy] === 'object') {
                 return {
                     strategy: strategy,
+                    entry_mode: entryMode,
                     [strategy]: capital[strategy]
                 };
             }
@@ -1007,6 +1018,7 @@
             if (capital.withdrawal_threshold !== undefined || capital.withdrawal_retain !== undefined) {
                 return {
                     strategy: strategy,
+                    entry_mode: entryMode,
                     [strategy]: {
                         withdrawal_threshold: capital.withdrawal_threshold || 2.0,
                         withdrawal_retain: capital.withdrawal_retain || 1.5
@@ -1014,7 +1026,7 @@
                 };
             }
             
-            return { strategy: strategy };
+            return { strategy: strategy, entry_mode: entryMode };
         }
         
         // 格式化数字为千分位
@@ -1124,7 +1136,7 @@
                 const canReset = ['completed', 'running', 'error', 'success'].includes(c.status);
                 
                 row.innerHTML = `
-                    <td><small>${c.case_id.substring(0, 8)}...</small></td>
+                    <td><small>${c.id}</small></td>
                     <td>${c.name || '-'}</td>
                     <td>${c.symbol}</td>
                     <td>${c.date_start} ~ ${c.date_end}</td>
@@ -1132,11 +1144,12 @@
                     <td><span class="status-badge ${statusClass}">${c.status}</span></td>
                     <td><small>${c.created_at || '-'}</small></td>
                     <td>
-                        <button class="btn btn-sm btn-outline-danger" onclick="deleteCaseById('${c.case_id}')">删除</button>
-                        <button class="btn btn-sm btn-outline-primary" onclick="showCaseDetail('${c.case_id}')">详情</button>
-                        ${canEdit ? `<button class="btn btn-sm btn-outline-warning" onclick="showEditCaseForm('${c.case_id}')">编辑</button>` : ''}
-                        ${canRun ? `<button class="btn btn-sm btn-outline-success" onclick="runCase('${c.case_id}')">执行</button>` : ''}
-                        ${canReset ? `<button class="btn btn-sm btn-outline-info" onclick="resetCase('${c.case_id}')">重置</button>` : ''}
+                        <button class="btn btn-sm btn-outline-danger" onclick="deleteCaseById(${c.id})">删除</button>
+                        <button class="btn btn-sm btn-outline-primary" onclick="showCaseDetail(${c.id})">详情</button>
+                        <button class="btn btn-sm btn-outline-secondary" onclick="copyCase(${c.id})">复制</button>
+                        ${canEdit ? `<button class="btn btn-sm btn-outline-warning" onclick="showEditCaseForm(${c.id})">编辑</button>` : ''}
+                        ${canRun ? `<button class="btn btn-sm btn-outline-success" onclick="runCase(${c.id})">执行</button>` : ''}
+                        ${canReset ? `<button class="btn btn-sm btn-outline-info" onclick="resetCase(${c.id})">重置</button>` : ''}
                     </td>
                 `;
                 tbody.appendChild(row);
@@ -1227,7 +1240,7 @@
                             <div class="col-md-6">
                                 <h6>基本信息</h6>
                                 <table class="table table-sm">
-                                    <tr><td>用例ID</td><td>${c.case_id}</td></tr>
+                                    <tr><td>用例ID</td><td>${c.id}</td></tr>
                                     <tr><td>名称</td><td>${c.name || '-'}</td></tr>
                                     <tr><td>描述</td><td>${c.description || '-'}</td></tr>
                                     <tr><td>标的</td><td>${c.symbol}</td></tr>
@@ -1287,7 +1300,7 @@
                     const c = data.test_case;
                     console.log('Processing case:', c.name);
                     document.getElementById('caseFormTitle').textContent = '编辑测试用例';
-                    document.getElementById('editCaseId').value = c.case_id;
+                    document.getElementById('editCaseId').value = c.id;
                     document.getElementById('formCaseName').value = c.name || '';
                     document.getElementById('formTestType').value = c.test_type || 'market_aware';
                     document.getElementById('formCaseStatus').value = c.status || 'draft';
@@ -1414,6 +1427,9 @@
                     }
                     
                     document.getElementById('formCapitalStrategy').value = strategy;
+                    
+                    const entryMode = capital.entry_mode || 'fixed';
+                    document.getElementById('formEntryMode').value = entryMode;
                     
                     if (strategy !== 'guding') {
                         let strategyParams = capital[strategy] || {};
@@ -1738,6 +1754,9 @@
             const capitalStrategy = document.getElementById('formCapitalStrategy').value;
             const capital = { strategy: capitalStrategy };
             
+            const entryMode = document.getElementById('formEntryMode').value;
+            capital.entry_mode = entryMode;
+            
             if (capitalStrategy !== 'guding') {
                 const withdrawalThreshold = parseFloat(document.getElementById('formWithdrawalThreshold').value);
                 const withdrawalRetain = parseFloat(document.getElementById('formWithdrawalRetain').value);
@@ -1870,6 +1889,25 @@
             }
         }
         
+        async function copyCase(caseId) {
+            if (!confirm(`确定要复制此测试用例吗？`)) return;
+            
+            try {
+                const response = await fetch(`${API_BASE}/api/cases/${caseId}/copy`, { method: 'POST' });
+                const data = await response.json();
+                
+                if (data.success) {
+                    alert(`测试用例已复制，新用例ID: ${data.id}`);
+                    loadCases();
+                } else {
+                    showError('复制失败', data.error);
+                }
+            } catch (error) {
+                console.error('复制测试用例失败:', error);
+                showError('复制失败', error.message);
+            }
+        }
+        
         async function loadResults() {
             try {
                 const params = new URLSearchParams();
@@ -1879,7 +1917,7 @@
                 
                 if (symbol) params.append('symbol', symbol);
                 if (type) params.append('test_type', type);
-                if (caseId) params.append('case_id', caseId);
+                if (caseId) params.append('id', caseId);
                 
                 const response = await fetch(`${API_BASE}/api/results?${params}`);
                 const data = await response.json();
@@ -1906,8 +1944,8 @@
                 const capitalReturnClass = capitalReturn >= 0 ? 'positive' : 'negative';
                 
                 row.innerHTML = `
-                    <td><small>${r.result_id.substring(0, 8)}...</small></td>
-                    <td><small>${r.case_id ? r.case_id.substring(0, 8) + '...' : '-'}</small></td>
+                    <td><small>${r.id}</small></td>
+                    <td><small>${r.case_id ? r.case_id : '-'}</small></td>
                     <td>${r.symbol}</td>
                     <td>${r.test_type}</td>
                     <td>${formatNumber(r.total_trades, 0)}</td>
@@ -1919,10 +1957,10 @@
                     <td class="${excessClass}">${formatNumber(r.excess_return, 2)}%</td>
                     <td><small>${r.executed_at}</small></td>
                     <td>
-                        <button class="btn btn-sm btn-outline-primary" onclick="showResultDetail('${r.result_id}')">详情</button>
-                        <button class="btn btn-sm btn-outline-info" onclick="showChart('${r.result_id}')">图表</button>
-                        <button class="btn btn-sm btn-outline-success" onclick="showCapitalDetail('${r.result_id}')">资金</button>
-                        <button class="btn btn-sm btn-outline-warning" onclick="showTradeDetails('${r.result_id}')">交易</button>
+                        <button class="btn btn-sm btn-outline-primary" onclick="showResultDetail(${r.id})">详情</button>
+                        <button class="btn btn-sm btn-outline-info" onclick="showChart(${r.id})">图表</button>
+                        <button class="btn btn-sm btn-outline-success" onclick="showCapitalDetail(${r.id})">资金</button>
+                        <button class="btn btn-sm btn-outline-warning" onclick="showTradeDetails(${r.id})">交易</button>
                     </td>
                 `;
                 tbody.appendChild(row);
@@ -1933,7 +1971,7 @@
         
         async function showCapitalDetail(resultId) {
             try {
-                const response = await fetch(`${API_BASE}/api/results/${resultId}/capital`);
+                const response = await fetch(`${API_BASE}/api/results/${resultId}/capital?limit=200`);
                 const data = await response.json();
                 
                 if (data.success) {
@@ -1988,9 +2026,9 @@
                             <div class="col-md-6">
                                 <table class="table table-sm">
                                     <tr><td>提现次数</td><td>${stats.withdrawal_count || 0}</td></tr>
-                                    <tr><td>累计提现</td><td>${formatValue(stats.total_withdrawal)}</td></tr>
+                                    <tr><td>累计提现</td><td>${formatNumber(stats.total_withdrawal, 2)}</td></tr>
                                     <tr><td>爆仓次数</td><td>${stats.liquidation_count || 0}</td></tr>
-                                    <tr><td>胜率</td><td>${formatValue(stats.win_rate, '%')}</td></tr>
+                                    <tr><td>胜率</td><td>${formatNumber(stats.win_rate, 2)}%</td></tr>
                                 </table>
                             </div>
                         `;
@@ -2232,7 +2270,7 @@
                             <div class="col-md-6">
                                 <h6>基本信息</h6>
                                 <table class="table table-sm">
-                                    <tr><td>结果ID</td><td>${r.result_id}</td></tr>
+                                    <tr><td>结果ID</td><td>${r.id}</td></tr>
                                     <tr><td>用例ID</td><td>${r.case_id || '-'}</td></tr>
                                     <tr><td>标的</td><td>${r.symbol}</td></tr>
                                     <tr><td>类型</td><td>${r.test_type}</td></tr>
@@ -3039,8 +3077,8 @@
                     (data.data.recent_tests || []).forEach(item => {
                         const row = document.createElement('tr');
                         row.innerHTML = `
-                            <td><input type="checkbox" class="result-checkbox" value="${item.result_id}" onchange="updateSelection()"></td>
-                            <td><small>${item.result_id.substring(0, 8)}...</small></td>
+                            <td><input type="checkbox" class="result-checkbox" value="${item.id}" onchange="updateSelection()"></td>
+                            <td><small>${item.id}</small></td>
                             <td>${item.symbol}</td>
                             <td>${item.market_algorithm || '-'}</td>
                             <td>${item.win_rate.toFixed(1)}%</td>
@@ -3140,14 +3178,14 @@
                 
                 html += `<tr><td>${name}</td>`;
                 results.forEach(r => {
-                    const val = comp.values ? comp.values[r.result_id] : r[key];
+                    const val = comp.values ? comp.values[r.id] : r[key];
                     if (typeof val === 'number') {
                         html += `<td>${val.toFixed ? val.toFixed(2) : val}</td>`;
                     } else {
                         html += `<td>${val || '-'}</td>`;
                     }
                 });
-                html += `<td>${comp.best ? '结果' + (results.findIndex(r => r.result_id === comp.best) + 1) : '-'} ✅</td></tr>`;
+                html += `<td>${comp.best ? '结果' + (results.findIndex(r => r.id === comp.best) + 1) : '-'} ✅</td></tr>`;
             }
             
             html += '</tbody></table></div>';

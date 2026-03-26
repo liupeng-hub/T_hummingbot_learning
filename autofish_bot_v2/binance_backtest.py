@@ -28,7 +28,8 @@ from autofish_core import (
     Autofish_WeightCalculator,
     Autofish_OrderCalculator,
     Autofish_AmplitudeConfig,
-)
+    EntryCapitalStrategyFactory,
+) 
 from market_status_detector import (
     MarketStatus,
     MarketStatusDetector,
@@ -284,31 +285,13 @@ class BacktestEngine:
                     else:
                         logger.info(f"[入场确认] A{pending_order.level} 成交: group_id={pending_order.group_id}")
                 
-                if self.capital_pool.strategy == 'guding':
-                    # 固定模式：入场资金和入场总资金都使用初始资金
-                    pending_order.entry_capital = self.capital_pool.initial_capital
-                    pending_order.entry_total_capital = self.capital_pool.initial_capital
-                elif self.capital_pool.strategy == 'fuli':
-                    # 福利策略：入场资金使用总资金（交易资金 + 利润池），入场总资金也使用总资金
-                    total_capital = self.capital_pool.trading_capital + (
-                        self.capital_pool.profit_pool if hasattr(self.capital_pool, 'profit_pool') else Decimal('0')
-                    )
-                    if pending_order.level == 1:
-                        self.chain_state.round_entry_capital = total_capital
-                        self.chain_state.round_entry_total_capital = total_capital
-                    
-                    pending_order.entry_capital = self.chain_state.round_entry_capital
-                    pending_order.entry_total_capital = self.chain_state.round_entry_total_capital
-                else:
-                    # 其他策略：入场资金使用当前交易资金，入场总资金使用交易资金 + 利润池
-                    if pending_order.level == 1:
-                        self.chain_state.round_entry_capital = self.capital_pool.trading_capital
-                        self.chain_state.round_entry_total_capital = self.capital_pool.trading_capital + (
-                            self.capital_pool.profit_pool if hasattr(self.capital_pool, 'profit_pool') else Decimal('0')
-                        )
-                    
-                    pending_order.entry_capital = self.chain_state.round_entry_capital
-                    pending_order.entry_total_capital = self.chain_state.round_entry_total_capital
+                # 使用资金策略计算入场资金和入场总资金
+                pending_order.entry_capital = self.capital_strategy.calculate_entry_capital(
+                    self.capital_pool, pending_order.level, self.chain_state
+                )
+                pending_order.entry_total_capital = self.capital_strategy.calculate_entry_total_capital(
+                    self.capital_pool, pending_order.level, self.chain_state
+                )
                 
                 logger.info(f"[入场资金记录] A{pending_order.level}: entry_capital={pending_order.entry_capital}, entry_total_capital={pending_order.entry_total_capital}, group_id={pending_order.group_id}")
                 
@@ -791,6 +774,7 @@ class MarketAwareBacktestEngine(BacktestEngine):
         
         self.results['market_status_events'] = []
         self.results['trading_periods'] = []
+        
         self.results['total_trading_minutes'] = 0
         self.results['total_stopped_minutes'] = 0
         self.results['market_statistics'] = {}
@@ -807,7 +791,10 @@ class MarketAwareBacktestEngine(BacktestEngine):
             self.stop_loss,
             self.leverage
         )
-        self.capital_strategy = self.capital_pool.strategy
+        
+        # 初始化入场资金策略
+        entry_mode = capital.get('entry_mode', 'compound') if capital else 'compound'
+        self.capital_strategy = EntryCapitalStrategyFactory.create_strategy(entry_mode)
         
     def _create_algorithm(self) -> StatusAlgorithm:
         """创建行情判断算法"""
@@ -1216,7 +1203,7 @@ async def main():
     parser = argparse.ArgumentParser(description="行情感知回测")
     parser.add_argument("--symbol", type=str, required=True, help="交易对（必选）")
     parser.add_argument("--date-range", type=str, required=True, help="时间范围 (yyyymmdd-yyyymmdd)（必选）")
-    parser.add_argument("--case-id", type=str, default=None, help="测试用例ID")
+    parser.add_argument("--id", type=int, default=None, help="测试用例ID")
     parser.add_argument("--interval", type=str, default="1m", help="K线周期（默认: 1m）")
     parser.add_argument("--amplitude-params", type=str, default=None, help="振幅参数（JSON字符串）")
     parser.add_argument("--market-params", type=str, default=None, help="行情算法参数（JSON字符串，格式: {\"algorithm\": \"dual_thrust\", \"dual_thrust\": {...}, \"trading_statuses\": [\"ranging\"]}）")
@@ -1331,12 +1318,10 @@ def _save_to_database(args, engine, date_range_str, amplitude, market, entry, ti
     try:
         from database.test_results_db import TestResultsDB, TestResult, TradeDetail
         from datetime import datetime
-        import uuid
         
         db = TestResultsDB()
         
-        result_id = f"cli_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{str(uuid.uuid4())[:8]}"
-        case_id = args.case_id if args.case_id else result_id
+        id = args.id if args.id else 0
         
         params = {
             "symbol": args.symbol,
@@ -1405,8 +1390,7 @@ def _save_to_database(args, engine, date_range_str, amplitude, market, entry, ti
         capital_stats = engine.capital_pool.get_statistics() if engine.capital_pool and hasattr(engine.capital_pool, 'get_statistics') else {}
         
         result = TestResult(
-            result_id=result_id,
-            case_id=case_id,
+            case_id=id,
             symbol=args.symbol,
             interval="1m",
             start_time=engine.start_time.strftime('%Y-%m-%d %H:%M') if engine.start_time else '',
@@ -1435,16 +1419,16 @@ def _save_to_database(args, engine, date_range_str, amplitude, market, entry, ti
             avg_execution_time=avg_execution_time,
             avg_holding_time=avg_holding_time,
         )
-        db.save_result(result)
+        result_id = db.create_result(result)
         
-        if capital_stats:
+        if capital_stats and result_id:
             statistics_id = db.save_capital_statistics(result_id, capital_stats)
             if statistics_id and capital_stats.get('capital_history'):
                 db.save_capital_history(result_id, statistics_id, capital_stats['capital_history'])
                 print(f"   资金统计已保存: {len(capital_stats.get('capital_history', []))} 条历史记录")
         
         trades = results.get('trades', [])
-        if trades:
+        if trades and result_id:
             sorted_trades = sorted(trades, key=lambda x: (x.get('exit_time', ''), x.get('entry_time', '')))
             trade_details = []
             for i, t in enumerate(sorted_trades):
@@ -1469,7 +1453,7 @@ def _save_to_database(args, engine, date_range_str, amplitude, market, entry, ti
             db.save_trade_details(result_id, trade_details)
             print(f"   交易详情已保存: {len(trade_details)} 条")
         
-        print(f"\n✅ 结果已保存到数据库: result_id={result_id}, case_id={case_id}")
+        print(f"\n✅ 结果已保存到数据库: result_id={result_id}")
     except Exception as e:
         print(f"\n⚠️ 保存到数据库失败: {e}")
 

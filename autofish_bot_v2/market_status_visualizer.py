@@ -20,7 +20,6 @@ import asyncio
 import re
 import json
 import time
-import uuid
 import threading
 import logging
 from datetime import datetime, timedelta
@@ -1015,7 +1014,6 @@ class MarketStatusVisualizer:
         
         print("\n💾 保存到数据库...")
         case = MarketVisualizerCase(
-            case_id='',
             name=f"{self.args.symbol}_{self.args.algorithm}_{self.args.date_range}",
             symbol=self.args.symbol,
             interval=self.args.interval,
@@ -1040,7 +1038,6 @@ class MarketStatusVisualizer:
             })
         
         result = MarketVisualizerResult(
-            result_id='',
             case_id=case_id,
             total_intervals=statistics['total_intervals'],
             ranging_intervals=statistics['status_intervals'][MarketStatus.RANGING],
@@ -1153,7 +1150,7 @@ SYMBOLS = ['BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'SOLUSDT', 'XRPUSDT', 'DOGEUSDT']
 def visualizer_case_to_dict(case: Dict) -> Dict:
     """将行情可视化用例转换为字典"""
     return {
-        'id': case.get('case_id'),
+        'id': case.get('id'),
         'name': case.get('name'),
         'symbol': case.get('symbol'),
         'interval': case.get('interval'),
@@ -1171,7 +1168,7 @@ def visualizer_case_to_dict(case: Dict) -> Dict:
 def visualizer_result_to_dict(result: Dict) -> Dict:
     """将行情可视化结果转换为字典"""
     return {
-        'id': result.get('result_id'),
+        'id': result.get('id'),
         'test_case_id': result.get('case_id'),
         'total_intervals': result.get('total_intervals'),
         'ranging_intervals': result.get('ranging_intervals'),
@@ -1191,10 +1188,10 @@ def visualizer_detail_to_dict(status: Dict) -> Dict:
     amplitude = 0
     if status.get('open_price') and status['open_price'] > 0:
         amplitude = (status['high_price'] - status['low_price']) / status['open_price'] * 100
-    
+
     return {
         'id': status.get('id'),
-        'test_result_id': status.get('result_id'),
+        'result_id': status.get('result_id'),
         'date': status.get('date'),
         'status': status.get('status'),
         'confidence': status.get('confidence'),
@@ -1358,7 +1355,6 @@ class MarketVisualizerServer:
                 return jsonify({'success': False, 'error': f'不支持的算法: {algorithm}'}), 400
             
             case = MarketVisualizerCase(
-                case_id='',
                 name=data['name'],
                 symbol=data['symbol'],
                 interval=data.get('interval', '1d'),
@@ -1643,7 +1639,6 @@ class MarketVisualizerServer:
             duration_ms = int((time.time() - start_time) * 1000)
             
             result = MarketVisualizerResult(
-                result_id='',
                 case_id=test_case_id,
                 total_intervals=len(daily_results),
                 ranging_intervals=ranging_intervals,

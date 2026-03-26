@@ -2086,6 +2086,175 @@ class FixedCapitalTracker:
             'avg_round_profit': round(float(self.total_round_profit / len(self.round_profits)), 2) if self.round_profits else 0,
             'capital_history': self.capital_history,
         }
+    
+    def calculate_entry_capital(self, level: int, chain_state: Any) -> Decimal:
+        """计算入场资金
+        
+        固定模式始终使用初始资金
+        
+        Args:
+            level: 订单层级
+            chain_state: 链式挂单状态
+            
+        Returns:
+            入场资金
+        """
+        return self.initial_capital
+    
+    def calculate_entry_total_capital(self, level: int, chain_state: Any) -> Decimal:
+        """计算入场总资金
+        
+        固定模式始终使用初始资金
+        
+        Args:
+            level: 订单层级
+            chain_state: 链式挂单状态
+            
+        Returns:
+            入场总资金
+        """
+        return self.initial_capital
+
+
+# ============================================================================
+# 资金池策略类
+# ============================================================================
+
+class EntryCapitalStrategy:
+    """入场资金策略抽象基类
+    
+    定义入场资金策略的统一接口，用于计算入场资金和入场总资金。
+    """
+    
+    def calculate_entry_capital(self, capital_pool: Union['FixedCapitalTracker', 'ProgressiveCapitalTracker'], level: int, chain_state: Any) -> Decimal:
+        """计算入场资金
+        
+        Args:
+            capital_pool: 资金池实例
+            level: 订单层级
+            chain_state: 链式挂单状态
+            
+        Returns:
+            入场资金
+        """
+        raise NotImplementedError
+    
+    def calculate_entry_total_capital(self, capital_pool: Union['FixedCapitalTracker', 'ProgressiveCapitalTracker'], level: int, chain_state: Any) -> Decimal:
+        """计算入场总资金
+        
+        Args:
+            capital_pool: 资金池实例
+            level: 订单层级
+            chain_state: 链式挂单状态
+            
+        Returns:
+            入场总资金
+        """
+        raise NotImplementedError
+    
+    def _get_total_capital(self, capital_pool: Union['FixedCapitalTracker', 'ProgressiveCapitalTracker']) -> Decimal:
+        """获取总资金（交易资金 + 利润池）
+        
+        Args:
+            capital_pool: 资金池实例
+            
+        Returns:
+            总资金
+        """
+        if hasattr(capital_pool, 'trading_capital') and hasattr(capital_pool, 'profit_pool'):
+            return capital_pool.trading_capital + capital_pool.profit_pool
+        elif hasattr(capital_pool, 'trading_capital'):
+            return capital_pool.trading_capital
+        elif hasattr(capital_pool, 'initial_capital'):
+            return capital_pool.initial_capital
+        return Decimal('0')
+
+
+class FixedCapitalStrategy(EntryCapitalStrategy):
+    """固定模式资金策略
+    
+    始终使用初始资金作为入场资金和入场总资金。
+    """
+    
+    def calculate_entry_capital(self, capital_pool: Union['FixedCapitalTracker', 'ProgressiveCapitalTracker'], level: int, chain_state: Any) -> Decimal:
+        """计算入场资金 - 返回初始资金"""
+        return capital_pool.initial_capital
+    
+    def calculate_entry_total_capital(self, capital_pool: Union['FixedCapitalTracker', 'ProgressiveCapitalTracker'], level: int, chain_state: Any) -> Decimal:
+        """计算入场总资金 - 返回初始资金"""
+        return capital_pool.initial_capital
+
+
+class CompoundCapitalStrategy(EntryCapitalStrategy):
+    """复利策略资金策略
+    
+    使用总资金（交易资金 + 利润池）作为入场资金和入场总资金。
+    """
+    
+    def calculate_entry_capital(self, capital_pool: Union['FixedCapitalTracker', 'ProgressiveCapitalTracker'], level: int, chain_state: Any) -> Decimal:
+        """计算入场资金 - 返回总资金"""
+        total_capital = self._get_total_capital(capital_pool)
+        if level == 1:
+            chain_state.round_entry_capital = total_capital
+            chain_state.round_entry_total_capital = total_capital
+        return chain_state.round_entry_capital
+    
+    def calculate_entry_total_capital(self, capital_pool: Union['FixedCapitalTracker', 'ProgressiveCapitalTracker'], level: int, chain_state: Any) -> Decimal:
+        """计算入场总资金 - 返回总资金"""
+        total_capital = self._get_total_capital(capital_pool)
+        if level == 1:
+            chain_state.round_entry_capital = total_capital
+            chain_state.round_entry_total_capital = total_capital
+        return chain_state.round_entry_total_capital
+
+
+class DefaultCapitalStrategy(EntryCapitalStrategy):
+    """默认资金策略
+    
+    入场资金使用交易资金，入场总资金使用总资金（交易资金 + 利润池）。
+    """
+    
+    def calculate_entry_capital(self, capital_pool: Union['FixedCapitalTracker', 'ProgressiveCapitalTracker'], level: int, chain_state: Any) -> Decimal:
+        """计算入场资金 - 返回交易资金"""
+        if level == 1:
+            if hasattr(capital_pool, 'trading_capital'):
+                chain_state.round_entry_capital = capital_pool.trading_capital
+            else:
+                chain_state.round_entry_capital = capital_pool.initial_capital
+        return chain_state.round_entry_capital
+    
+    def calculate_entry_total_capital(self, capital_pool: Union['FixedCapitalTracker', 'ProgressiveCapitalTracker'], level: int, chain_state: Any) -> Decimal:
+        """计算入场总资金 - 返回总资金"""
+        if level == 1:
+            total_capital = self._get_total_capital(capital_pool)
+            chain_state.round_entry_total_capital = total_capital
+        return chain_state.round_entry_total_capital
+
+
+class EntryCapitalStrategyFactory:
+    """入场资金策略工厂类
+    
+    根据 entry_mode 创建对应的入场资金策略实例。
+    """
+    
+    _strategies = {
+        'fixed': FixedCapitalStrategy,
+        'compound': CompoundCapitalStrategy,
+        'default': DefaultCapitalStrategy
+    }
+    
+    @classmethod
+    def create_strategy(cls, entry_mode: str) -> EntryCapitalStrategy:
+        """创建资金策略实例
+        
+        Args:
+            entry_mode: 入场资金计算模式
+            
+        Returns:
+            资金策略实例
+        """
+        strategy_class = cls._strategies.get(entry_mode, DefaultCapitalStrategy)
+        return strategy_class()
 
 
 @dataclass
@@ -2126,6 +2295,7 @@ class ProgressiveCapitalTracker:
     liquidation_threshold: Decimal = Decimal('0.2')
     _strategy: str = 'baoshou'
     leverage: Decimal = Decimal('10')  # 杠杆倍数
+    entry_mode: str = 'compound'  # 入场资金计算模式: fixed, compound, default
     
     round_profits: List[Decimal] = field(default_factory=list)
     total_round_profit: Decimal = Decimal('0')
@@ -2339,6 +2509,48 @@ class ProgressiveCapitalTracker:
             'avg_round_profit': round(float(self.total_round_profit / len(self.round_profits)), 2) if self.round_profits else 0,
             'capital_history': self.capital_history,
         }
+    
+    def calculate_entry_capital(self, level: int, chain_state: Any) -> Decimal:
+        """计算入场资金
+        
+        根据 entry_mode 决定计算方式
+        
+        Args:
+            level: 订单层级
+            chain_state: 链式挂单状态
+            
+        Returns:
+            入场资金
+        """
+        if level == 1:
+            if self.entry_mode == 'fixed':
+                chain_state.round_entry_capital = self.initial_capital
+            elif self.entry_mode == 'compound':
+                chain_state.round_entry_capital = self.trading_capital + self.profit_pool
+            else:  # default
+                chain_state.round_entry_capital = self.trading_capital
+        return chain_state.round_entry_capital
+    
+    def calculate_entry_total_capital(self, level: int, chain_state: Any) -> Decimal:
+        """计算入场总资金
+        
+        根据 entry_mode 决定计算方式
+        
+        Args:
+            level: 订单层级
+            chain_state: 链式挂单状态
+            
+        Returns:
+            入场总资金
+        """
+        if level == 1:
+            if self.entry_mode == 'fixed':
+                chain_state.round_entry_total_capital = self.initial_capital
+            elif self.entry_mode == 'compound':
+                chain_state.round_entry_total_capital = self.trading_capital + self.profit_pool
+            else:  # default
+                chain_state.round_entry_total_capital = self.trading_capital + self.profit_pool
+        return chain_state.round_entry_total_capital
 
 
 class CapitalPoolFactory:
@@ -2372,6 +2584,10 @@ class CapitalPoolFactory:
         
         tracker = ProgressiveCapitalTracker(initial_capital)
         tracker._strategy = strategy
+        
+        # 设置入场资金计算模式
+        entry_mode = capital_config.get('entry_mode', 'compound')
+        tracker.entry_mode = entry_mode
         
         auto_liquidation_threshold = 1 - (stop_loss * leverage)
         

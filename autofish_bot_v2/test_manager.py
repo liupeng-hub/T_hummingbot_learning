@@ -65,23 +65,17 @@ def _export_report(args):
     output_path = args.output
     
     if not report_type:
-        if report_id.startswith("VR_"):
-            report_type = "visualizer"
-        elif report_id.startswith("OPT_"):
-            report_type = "optimizer"
-        elif report_id.startswith("LP_"):
-            report_type = "longport"
-        else:
-            result = db.get_result(report_id)
-            if result:
-                test_type = result.get('test_type', 'backtest')
-                if test_type == 'market_aware':
-                    report_type = "market_aware"
-                else:
-                    report_type = "backtest"
+        # 尝试获取结果来确定类型
+        result = db.get_result(report_id)
+        if result:
+            test_type = result.get('test_type', 'backtest')
+            if test_type == 'market_aware':
+                report_type = "market_aware"
             else:
-                print(f"❌ 未找到ID: {report_id}")
-                return
+                report_type = "backtest"
+        else:
+            print(f"❌ 未找到ID: {report_id}")
+            return
     
     base_dir = Path("out/test_report")
     type_dir = base_dir / report_type
@@ -201,67 +195,9 @@ def _export_report(args):
                 print(f"✅ CSV每日状态已导出到: {csv_path}")
     
     elif report_type == "optimizer":
-        result = db.get_optimizer_result(report_id)
-        if not result:
-            print(f"❌ 未找到优化结果: {report_id}")
-            return
-        
-        symbol = result.get('symbol', 'UNKNOWN')
-        algorithm = result.get('algorithm', 'unknown')
-        algorithm_display = algorithm.replace('_', '').title()
-        days = result.get('days', 0)
-        date_range = f"{days}d"
-        
-        base_name = f"{symbol}_{date_range}_{algorithm_display}_{report_id}"
-        
-        if args.format in ["md", "all"]:
-            if not output_path:
-                output_path = str(type_dir / f"{base_name}.md")
-            
-            best_params = result.get('best_params', {})
-            
-            lines = []
-            lines.append(f"# {symbol} 参数优化报告\n")
-            lines.append(f"**优化ID**: {report_id}")
-            lines.append(f"**生成时间**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
-            lines.append("---\n")
-            lines.append("## 基本信息\n")
-            lines.append("| 项目 | 值 |")
-            lines.append("|------|-----|")
-            lines.append(f"| 交易对 | {symbol} |")
-            lines.append(f"| 优化算法 | {algorithm_display} |")
-            lines.append(f"| 回测天数 | {days} |")
-            lines.append(f"| 优化次数 | {result.get('n_trials', 0)} |")
-            lines.append(f"| 最佳收益 | {result.get('best_value', 0) * 100:.2f}% |\n")
-            
-            lines.append("## 最佳参数配置\n")
-            lines.append("```json")
-            lines.append(json.dumps(best_params, indent=2, ensure_ascii=False))
-            lines.append("```\n")
-            
-            with open(output_path, 'w', encoding='utf-8') as f:
-                f.write('\n'.join(lines))
-            print(f"✅ MD报告已导出到: {output_path}")
-        
-        if args.format in ["csv", "all"]:
-            history = db.get_optimizer_history(report_id)
-            if history:
-                csv_path = str(type_dir / f"{base_name}_results.csv")
-                import csv
-                with open(csv_path, 'w', encoding='utf-8', newline='') as f:
-                    writer = csv.writer(f)
-                    writer.writerow(['trial', 'value', 'grid_spacing', 'exit_profit', 'stop_loss', 'decay_factor', 'max_entries'])
-                    for h in history:
-                        writer.writerow([
-                            h.get('trial', 0),
-                            h.get('value', 0),
-                            h.get('grid_spacing', 0),
-                            h.get('exit_profit', 0),
-                            h.get('stop_loss', 0),
-                            h.get('decay_factor', 0),
-                            h.get('max_entries', 0)
-                        ])
-                print(f"✅ CSV优化结果已导出到: {csv_path}")
+        # optimizer 使用字符串 optimizer_id，需要特殊处理
+        print(f"❌ 优化器结果导出暂不支持整数ID: {report_id}")
+        return
     
     _update_readme_index()
 
@@ -348,29 +284,29 @@ def main():
     list_cases_parser.add_argument("--limit", type=int, default=100, help="返回数量限制")
     
     show_case_parser = subparsers.add_parser("show-case", help="查看测试用例详情")
-    show_case_parser.add_argument("case_id", help="测试用例ID")
+    show_case_parser.add_argument("id", type=int, help="测试用例ID")
     
     delete_case_parser = subparsers.add_parser("delete-case", help="删除测试用例")
-    delete_case_parser.add_argument("case_id", help="测试用例ID")
+    delete_case_parser.add_argument("id", type=int, help="测试用例ID")
     
     reset_case_parser = subparsers.add_parser("reset-case", help="重置测试用例（清除测试结果，恢复为可执行状态）")
-    reset_case_parser.add_argument("case_id", help="测试用例ID")
+    reset_case_parser.add_argument("id", type=int, help="测试用例ID")
     
     run_case_parser = subparsers.add_parser("run-case", help="执行测试用例")
-    run_case_parser.add_argument("case_id", help="测试用例ID")
+    run_case_parser.add_argument("id", type=int, help="测试用例ID")
     run_case_parser.add_argument("--dry-run", action="store_true", help="只显示命令，不执行")
     
     list_results_parser = subparsers.add_parser("list-results", help="列出测试结果")
-    list_results_parser.add_argument("--case-id", help="按用例ID筛选")
+    list_results_parser.add_argument("--case-id", type=int, help="按用例ID筛选")
     list_results_parser.add_argument("--symbol", help="按交易对筛选")
     list_results_parser.add_argument("--status", help="按状态筛选")
     list_results_parser.add_argument("--limit", type=int, default=100, help="返回数量限制")
     
     show_result_parser = subparsers.add_parser("show-result", help="查看测试结果详情")
-    show_result_parser.add_argument("result_id", help="测试结果ID")
+    show_result_parser.add_argument("id", type=int, help="测试结果ID")
     
     delete_result_parser = subparsers.add_parser("delete-result", help="删除测试结果")
-    delete_result_parser.add_argument("result_id", help="测试结果ID")
+    delete_result_parser.add_argument("id", type=int, help="测试结果ID")
     
     export_parser = subparsers.add_parser("export", help="导出测试报告")
     export_parser.add_argument("id", help="执行ID/结果ID")
@@ -400,7 +336,6 @@ def main():
         date_end = f"{date_parts[1][:4]}-{date_parts[1][4:6]}-{date_parts[1][6:8]}"
         
         case = TestCase(
-            case_id='',
             name=args.name or f"{args.symbol}_{args.date_range}",
             symbol=args.symbol,
             date_start=date_start,
@@ -438,16 +373,16 @@ def main():
             print("暂无测试用例")
         else:
             print(f"\n共 {len(cases)} 个测试用例:\n")
-            print(f"{'用例ID':<40} | {'名称':<30} | {'交易对':<10} | {'状态':<10} | {'日期范围'}")
-            print("-" * 120)
+            print(f"{'用例ID':<10} | {'名称':<30} | {'交易对':<10} | {'状态':<10} | {'日期范围'}")
+            print("-" * 90)
             for c in cases:
                 date_range = f"{c.get('date_start', '')} ~ {c.get('date_end', '')}"
-                print(f"{c['case_id']:<40} | {c.get('name', '')[:30]:<30} | {c.get('symbol', ''):<10} | {c.get('status', ''):<10} | {date_range}")
+                print(f"{c['id']:<10} | {c.get('name', '')[:30]:<30} | {c.get('symbol', ''):<10} | {c.get('status', ''):<10} | {date_range}")
     
     elif args.command == "show-case":
-        case = db.get_case(args.case_id)
+        case = db.get_case(args.id)
         if not case:
-            print(f"❌ 测试用例不存在: {args.case_id}")
+            print(f"❌ 测试用例不存在: {args.id}")
             sys.exit(1)
         
         for field in ['amplitude', 'market', 'entry', 'timeout']:
@@ -457,26 +392,26 @@ def main():
         print(json.dumps(case, indent=2, ensure_ascii=False, default=str))
     
     elif args.command == "delete-case":
-        success = db.delete_case(args.case_id)
+        success = db.delete_case(args.id)
         if success:
-            print(f"✅ 测试用例已删除: {args.case_id}")
+            print(f"✅ 测试用例已删除: {args.id}")
         else:
-            print(f"❌ 删除失败: {args.case_id}")
+            print(f"❌ 删除失败: {args.id}")
             sys.exit(1)
     
     elif args.command == "reset-case":
-        success = db.reset_case(args.case_id)
+        success = db.reset_case(args.id)
         if success:
-            print(f"✅ 测试用例已重置: {args.case_id}")
+            print(f"✅ 测试用例已重置: {args.id}")
             print(f"   状态已恢复为 active，可以重新执行")
         else:
-            print(f"❌ 重置失败: {args.case_id}")
+            print(f"❌ 重置失败: {args.id}")
             sys.exit(1)
     
     elif args.command == "run-case":
-        case = db.get_case(args.case_id)
+        case = db.get_case(args.id)
         if not case:
-            print(f"❌ 测试用例不存在: {args.case_id}")
+            print(f"❌ 测试用例不存在: {args.id}")
             sys.exit(1)
         
         if case['status'] not in ('draft', 'active'):
@@ -497,7 +432,7 @@ def main():
             'python3', 'binance_backtest.py',
             '--symbol', case['symbol'],
             '--date-range', date_range,
-            '--case-id', args.case_id,
+            '--id', str(args.id),
             '--interval', case.get('interval', '1m'),
             '--amplitude-params', amplitude,
             '--market-params', market,
@@ -507,7 +442,7 @@ def main():
         ]
         
         print(f"\n{'='*60}")
-        print(f"执行测试用例: {args.case_id}")
+        print(f"执行测试用例: {args.id}")
         print(f"交易对: {case['symbol']}")
         print(f"日期范围: {case['date_start']} ~ {case['date_end']}")
         print(f"{'='*60}")
@@ -516,17 +451,17 @@ def main():
         if args.dry_run:
             print("(dry-run) 跳过执行")
         else:
-            db.update_case_status(args.case_id, 'running')
+            db.update_case_status(args.id, 'running')
             try:
                 result = subprocess.run(cmd, cwd=str(Path(__file__).parent))
                 if result.returncode == 0:
-                    db.update_case_status(args.case_id, 'completed')
+                    db.update_case_status(args.id, 'completed')
                     print(f"✅ 测试用例执行成功")
                 else:
-                    db.update_case_status(args.case_id, 'error')
+                    db.update_case_status(args.id, 'error')
                     print(f"❌ 测试用例执行失败，返回码: {result.returncode}")
             except Exception as e:
-                db.update_case_status(args.case_id, 'error')
+                db.update_case_status(args.id, 'error')
                 print(f"❌ 执行异常: {e}")
                 sys.exit(1)
     
@@ -545,15 +480,15 @@ def main():
             print("暂无测试结果")
         else:
             print(f"\n共 {len(results)} 条测试结果:\n")
-            print(f"{'结果ID':<40} | {'用例ID':<36} | {'交易对':<10} | {'胜率':<8} | {'收益率':<10} | {'净收益':<12}")
-            print("-" * 130)
+            print(f"{'结果ID':<10} | {'用例ID':<10} | {'交易对':<10} | {'胜率':<8} | {'收益率':<10} | {'净收益':<12}")
+            print("-" * 70)
             for r in results:
-                print(f"{r['result_id']:<40} | {(r.get('case_id') or '')[:36]:<36} | {r.get('symbol', ''):<10} | {r.get('win_rate', 0):.1f}% | {r.get('roi', 0):.2f}% | {r.get('net_profit', 0):.2f}")
+                print(f"{r['id']:<10} | {r.get('case_id', ''):<10} | {r.get('symbol', ''):<10} | {r.get('win_rate', 0):.1f}% | {r.get('roi', 0):.2f}% | {r.get('net_profit', 0):.2f}")
     
     elif args.command == "show-result":
-        result = db.get_result(args.result_id)
+        result = db.get_result(args.id)
         if not result:
-            print(f"❌ 测试结果不存在: {args.result_id}")
+            print(f"❌ 测试结果不存在: {args.id}")
             sys.exit(1)
         
         if result.get('trading_statuses'):
@@ -564,11 +499,11 @@ def main():
         print(json.dumps(result, indent=2, ensure_ascii=False, default=str))
     
     elif args.command == "delete-result":
-        success = db.delete_result(args.result_id)
+        success = db.delete_result(args.id)
         if success:
-            print(f"✅ 测试结果已删除: {args.result_id}")
+            print(f"✅ 测试结果已删除: {args.id}")
         else:
-            print(f"❌ 删除失败: {args.result_id}")
+            print(f"❌ 删除失败: {args.id}")
             sys.exit(1)
     
     elif args.command == "export":
@@ -751,10 +686,10 @@ def create_flask_app():
         except Exception as e:
             return jsonify({'success': False, 'error': str(e)})
     
-    @app.route('/api/visualizer-daily-statuses/<result_id>', methods=['GET'])
-    def get_visualizer_daily_statuses(result_id):
+    @app.route('/api/visualizer-daily-statuses/<int:id>', methods=['GET'])
+    def get_visualizer_daily_statuses(id):
         try:
-            statuses = db.get_visualizer_daily_statuses(result_id)
+            statuses = db.get_visualizer_daily_statuses(id)
             return jsonify({'success': True, 'data': statuses})
         except Exception as e:
             return jsonify({'success': False, 'error': str(e)})
@@ -1003,7 +938,7 @@ def create_flask_app():
             data = request.get_json()
             
             case = TestCase(
-                case_id='',
+                id=None,
                 name=data.get('name', ''),
                 symbol=data.get('symbol', ''),
                 date_start=data.get('date_start', ''),
@@ -1018,19 +953,19 @@ def create_flask_app():
                 status='draft'
             )
             
-            case_id = db.create_case(case)
+            id = db.create_case(case)
             
-            if case_id:
-                return jsonify({'success': True, 'case_id': case_id})
+            if id:
+                return jsonify({'success': True, 'id': id})
             else:
                 return jsonify({'success': False, 'error': '创建测试用例失败'})
         except Exception as e:
             return jsonify({'success': False, 'error': str(e)})
     
-    @app.route('/api/cases/<case_id>', methods=['GET'])
-    def get_case(case_id):
+    @app.route('/api/cases/<int:id>', methods=['GET'])
+    def get_case(id):
         try:
-            case = db.get_case(case_id)
+            case = db.get_case(id)
             
             if not case:
                 return jsonify({'success': False, 'error': '测试用例不存在'})
@@ -1040,7 +975,7 @@ def create_flask_app():
                     case[field] = json.loads(case[field])
             
             test_case_info = {
-                'case_id': case.get('case_id'),
+                'id': case.get('id'),
                 'name': case.get('name'),
                 'status': case.get('status'),
                 'symbol': case.get('symbol'),
@@ -1067,8 +1002,8 @@ def create_flask_app():
         except Exception as e:
             return jsonify({'success': False, 'error': str(e)})
     
-    @app.route('/api/cases/<case_id>', methods=['PUT'])
-    def update_case(case_id):
+    @app.route('/api/cases/<int:id>', methods=['PUT'])
+    def update_case(id):
         try:
             data = request.get_json()
             
@@ -1082,7 +1017,7 @@ def create_flask_app():
                 if field in data:
                     updates[field] = json.dumps(data[field])
             
-            success = db.update_case(case_id, updates)
+            success = db.update_case(id, updates)
             
             if success:
                 return jsonify({'success': True, 'message': '测试用例已更新'})
@@ -1091,10 +1026,10 @@ def create_flask_app():
         except Exception as e:
             return jsonify({'success': False, 'error': str(e)})
     
-    @app.route('/api/cases/<case_id>', methods=['DELETE'])
-    def delete_case(case_id):
+    @app.route('/api/cases/<int:id>', methods=['DELETE'])
+    def delete_case(id):
         try:
-            success = db.delete_case(case_id)
+            success = db.delete_case(id)
             
             if success:
                 return jsonify({'success': True, 'message': '测试用例已删除'})
@@ -1103,10 +1038,10 @@ def create_flask_app():
         except Exception as e:
             return jsonify({'success': False, 'error': str(e)})
     
-    @app.route('/api/cases/<case_id>/reset', methods=['POST'])
-    def reset_case(case_id):
+    @app.route('/api/cases/<int:id>/reset', methods=['POST'])
+    def reset_case(id):
         try:
-            success = db.reset_case(case_id)
+            success = db.reset_case(id)
             
             if success:
                 return jsonify({'success': True, 'message': '测试用例已重置'})
@@ -1115,10 +1050,33 @@ def create_flask_app():
         except Exception as e:
             return jsonify({'success': False, 'error': str(e)})
     
-    @app.route('/api/cases/<case_id>/run', methods=['POST'])
-    def run_case(case_id):
+    @app.route('/api/cases/<int:id>/copy', methods=['POST'])
+    def copy_case(id):
+        """复制测试用例"""
         try:
-            case = db.get_case(case_id)
+            # 检查源用例是否存在
+            source_case = db.get_case(id)
+            if not source_case:
+                return jsonify({'success': False, 'error': '源测试用例不存在'})
+            
+            # 复制用例
+            new_id = db.copy_case(id)
+            
+            if new_id:
+                return jsonify({
+                    'success': True, 
+                    'message': '测试用例已复制',
+                    'id': new_id
+                })
+            else:
+                return jsonify({'success': False, 'error': '复制失败'})
+        except Exception as e:
+            return jsonify({'success': False, 'error': str(e)})
+    
+    @app.route('/api/cases/<int:id>/run', methods=['POST'])
+    def run_case(id):
+        try:
+            case = db.get_case(id)
             if not case:
                 return jsonify({'success': False, 'error': '测试用例不存在'})
             
@@ -1135,7 +1093,7 @@ def create_flask_app():
                 'python3', 'binance_backtest.py',
                 '--symbol', case['symbol'],
                 '--date-range', f"{case['date_start']}-{case['date_end']}",
-                '--case-id', case_id,
+                '--id', str(id),
                 '--interval', case.get('interval', '1m'),
                 '--amplitude-params', json.dumps(amplitude),
                 '--market-params', json.dumps(market),
@@ -1147,33 +1105,33 @@ def create_flask_app():
             import subprocess
             import threading
             
-            db.update_case_status(case_id, 'running')
+            db.update_case_status(id, 'running')
             
             def run_backtest():
                 try:
-                    print(f"[{case_id}] 开始执行命令: {' '.join(cmd)}")
+                    print(f"[{id}] 开始执行命令: {' '.join(cmd)}")
                     result = subprocess.run(cmd, capture_output=True, text=True, timeout=3600)
-                    print(f"[{case_id}] 命令返回码: {result.returncode}")
+                    print(f"[{id}] 命令返回码: {result.returncode}")
                     if result.stdout:
-                        print(f"[{case_id}] 输出: {result.stdout[-2000:]}")
+                        print(f"[{id}] 输出: {result.stdout[-2000:]}")
                     if result.stderr:
-                        print(f"[{case_id}] 错误: {result.stderr[-1000:]}")
+                        print(f"[{id}] 错误: {result.stderr[-1000:]}")
                     if result.returncode == 0:
-                        db.update_case_status(case_id, 'completed')
-                        print(f"[{case_id}] 测试完成")
+                        db.update_case_status(id, 'completed')
+                        print(f"[{id}] 测试完成")
                     else:
-                        db.update_case_status(case_id, 'error')
-                        print(f"[{case_id}] 测试失败: {result.stderr}")
+                        db.update_case_status(id, 'error')
+                        print(f"[{id}] 测试失败: {result.stderr}")
                 except Exception as e:
-                    db.update_case_status(case_id, 'error')
-                    print(f"[{case_id}] 测试异常: {e}")
+                    db.update_case_status(id, 'error')
+                    print(f"[{id}] 测试异常: {e}")
             
             thread = threading.Thread(target=run_backtest)
             thread.start()
             
             return jsonify({
                 'success': True,
-                'message': f'测试用例 {case_id} 已开始执行',
+                'message': f'测试用例 {id} 已开始执行',
                 'command': ' '.join(cmd)
             })
         except Exception as e:
@@ -1186,7 +1144,7 @@ def create_flask_app():
         try:
             filters = {}
             if request.args.get('case_id'):
-                filters['case_id'] = request.args.get('case_id')
+                filters['case_id'] = int(request.args.get('case_id'))
             if request.args.get('symbol'):
                 filters['symbol'] = request.args.get('symbol')
             if request.args.get('status'):
@@ -1209,10 +1167,10 @@ def create_flask_app():
         except Exception as e:
             return jsonify({'success': False, 'error': str(e)})
     
-    @app.route('/api/results/<result_id>', methods=['GET'])
-    def get_result(result_id):
+    @app.route('/api/results/<int:id>', methods=['GET'])
+    def get_result(id):
         try:
-            result = db.get_result(result_id)
+            result = db.get_result(id)
             
             if not result:
                 return jsonify({'success': False, 'error': '测试结果不存在'})
@@ -1228,11 +1186,11 @@ def create_flask_app():
         except Exception as e:
             return jsonify({'success': False, 'error': str(e)})
     
-    @app.route('/api/results/<result_id>/trades', methods=['GET'])
-    def get_trades(result_id):
+    @app.route('/api/results/<int:id>/trades', methods=['GET'])
+    def get_trades(id):
         try:
-            trades = db.get_trade_details(result_id)
-            result = db.get_result(result_id)
+            trades = db.get_trade_details(id)
+            result = db.get_result(id)
             response_data = {
                 'trades': trades,
                 'avg_holding_time': result.get('avg_holding_time', 0),
@@ -1242,34 +1200,48 @@ def create_flask_app():
         except Exception as e:
             return jsonify({'success': False, 'error': str(e)})
     
-    @app.route('/api/results/<result_id>/capital', methods=['GET'])
-    def get_capital_detail(result_id):
+    @app.route('/api/results/<int:id>/capital', methods=['GET'])
+    def get_capital_detail(id):
         try:
-            result = db.get_result(result_id)
+            result = db.get_result(id)
             if not result:
                 return jsonify({'success': False, 'error': '测试结果不存在'})
             
-            capital_stats = db.get_capital_statistics(result_id)
-            capital_history = db.get_capital_history(result_id)
+            capital_stats = db.get_capital_statistics(id)
+            
+            # 添加分页参数
+            limit = request.args.get('limit', 100, type=int)
+            offset = request.args.get('offset', 0, type=int)
+            capital_history = db.get_capital_history(id, limit, offset)
+            
+            # 获取总记录数
+            conn = db._get_connection()
+            cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(*) FROM capital_history WHERE result_id = ?", (id,))
+            total = cursor.fetchone()[0]
+            conn.close()
             
             return jsonify({
                 'success': True,
                 'data': {
                     'statistics': capital_stats,
-                    'history': capital_history
+                    'history': capital_history,
+                    'total': total,
+                    'limit': limit,
+                    'offset': offset
                 }
             })
         except Exception as e:
             return jsonify({'success': False, 'error': str(e)})
     
-    @app.route('/api/results/<result_id>/chart', methods=['GET'])
-    def get_chart_data(result_id):
+    @app.route('/api/results/<int:id>/chart', methods=['GET'])
+    def get_chart_data(id):
         try:
-            result = db.get_result(result_id)
+            result = db.get_result(id)
             if not result:
                 return jsonify({'success': False, 'error': '测试结果不存在'})
             
-            trades = db.get_trade_details(result_id)
+            trades = db.get_trade_details(id)
             
             for t in trades:
                 if t.get('entry_time'):
@@ -1344,7 +1316,7 @@ def create_flask_app():
                 except Exception as e:
                     logger.error(f"获取K线数据失败: {e}")
             
-            capital_history = db.get_capital_history(result_id)
+            capital_history = db.get_capital_history(id)
             
             chart_data = {
                 'result': result,
@@ -1461,17 +1433,17 @@ def create_flask_app():
     def compare_results():
         try:
             data = request.get_json()
-            result_ids = data.get('result_ids', [])
+            ids = data.get('ids', [])
             
-            if not result_ids or len(result_ids) < 2:
+            if not ids or len(ids) < 2:
                 return jsonify({'success': False, 'error': '至少需要选择2个测试结果进行对比'})
             
-            if len(result_ids) > 5:
+            if len(ids) > 5:
                 return jsonify({'success': False, 'error': '最多支持对比5个测试结果'})
             
             results = []
-            for result_id in result_ids:
-                result = db.get_result(result_id)
+            for id in ids:
+                result = db.get_result(id)
                 if result:
                     if result.get('trading_statuses'):
                         result['trading_statuses'] = json.loads(result['trading_statuses'])
@@ -1484,7 +1456,7 @@ def create_flask_app():
             comparison = {}
             
             for metric in metrics:
-                values = [(r['result_id'], r.get(metric, 0)) for r in results]
+                values = [(r['id'], r.get(metric, 0)) for r in results]
                 if metric in ['win_rate', 'roi', 'excess_return', 'profit_factor']:
                     best = max(values, key=lambda x: x[1])
                 else:
