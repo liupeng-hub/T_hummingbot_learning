@@ -2442,7 +2442,7 @@ class ProgressiveCapitalTracker:
             self.withdrawal_threshold = Decimal('1.5')
             self.withdrawal_retain = Decimal('1.2')
         elif strategy == 'fuli':
-            self.withdrawal_threshold = Decimal('999.0')
+            self.withdrawal_threshold = Decimal('99999999.0')
             self.withdrawal_retain = Decimal('1.0')
         elif strategy == 'zidingyi':
             pass

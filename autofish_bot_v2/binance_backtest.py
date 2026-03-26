@@ -161,20 +161,11 @@ class BacktestEngine:
         exit_profit = self.config.get("exit_profit", Decimal("0.01"))
         stop_loss = self.config.get("stop_loss", Decimal("0.08"))
         
-        # 根据资金池策略动态获取 total_amount
-        if hasattr(self, 'capital_pool'):
-            if self.capital_pool.strategy == 'guding':
-                # 固定模式使用初始资金
-                total_amount = self.capital_pool.initial_capital
-            elif self.capital_pool.strategy == 'fuli':
-                # 福利策略使用总资金（交易资金 + 利润池）
-                if hasattr(self.capital_pool, 'profit_pool'):
-                    total_amount = self.capital_pool.trading_capital + self.capital_pool.profit_pool
-                else:
-                    total_amount = self.capital_pool.trading_capital
-            else:
-                # 其他策略使用当前交易资金
-                total_amount = self.capital_pool.trading_capital
+        # 使用 EntryCapitalStrategy 统一计算入场资金
+        if hasattr(self, 'capital_pool') and hasattr(self, 'capital_strategy'):
+            total_amount = self.capital_strategy.calculate_entry_capital(
+                self.capital_pool, level, self.chain_state
+            )
         else:
             # 回退到配置值
             total_amount = self.config.get("total_amount_quote", Decimal("1200"))
