@@ -795,6 +795,70 @@ class TestResultsDB:
         finally:
             conn.close()
     
+    def copy_case(self, case_id: int) -> int:
+        """复制测试用例"""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        
+        try:
+            # 获取源用例数据
+            cursor.execute("SELECT * FROM test_cases WHERE id = ?", (case_id,))
+            row = cursor.fetchone()
+            if not row:
+                return 0
+            
+            case_data = dict(row)
+            
+            # 准备新用例数据（排除 id, case_id, created_at, updated_at）
+            new_case_data = {
+                'name': f"{case_data['name']} (副本)",
+                'description': case_data['description'],
+                'symbol': case_data['symbol'],
+                'interval': case_data['interval'],
+                'date_start': case_data['date_start'],
+                'date_end': case_data['date_end'],
+                'test_type': case_data['test_type'],
+                'amplitude': case_data['amplitude'],
+                'market': case_data['market'],
+                'entry': case_data['entry'],
+                'timeout': case_data['timeout'],
+                'capital': case_data['capital'],
+                'status': 'draft'
+            }
+            
+            now = datetime.now().isoformat()
+            cursor.execute("""
+                INSERT INTO test_cases 
+                (name, description, symbol, interval, date_start, date_end, test_type,
+                 amplitude, market, entry, timeout, capital, status, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                new_case_data['name'],
+                new_case_data['description'],
+                new_case_data['symbol'],
+                new_case_data['interval'],
+                new_case_data['date_start'],
+                new_case_data['date_end'],
+                new_case_data['test_type'],
+                new_case_data['amplitude'],
+                new_case_data['market'],
+                new_case_data['entry'],
+                new_case_data['timeout'],
+                new_case_data['capital'],
+                new_case_data['status'],
+                now,
+                now
+            ))
+            
+            new_id = cursor.lastrowid
+            conn.commit()
+            return new_id
+        except Exception as e:
+            print(f"复制测试用例失败: {e}")
+            return 0
+        finally:
+            conn.close()
+    
     def reset_case(self, case_id: int) -> bool:
         """重置测试用例（清除测试数据，恢复为 active 状态）"""
         conn = self._get_connection()
