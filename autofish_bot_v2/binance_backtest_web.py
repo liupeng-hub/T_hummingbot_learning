@@ -31,6 +31,7 @@ import json
 import argparse
 import subprocess
 import logging
+import threading
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, Any, List
@@ -38,6 +39,8 @@ import asyncio
 
 from database.test_results_db import TestResultsDB, TestCase, TestResult, TradeDetail
 from binance_kline_fetcher import KlineFetcher
+from binance_backtest import BacktestManager
+from autofish_core import ConfigLoader
 
 # 配置日志
 def setup_logging():
@@ -535,14 +538,27 @@ def create_flask_app():
     """创建 Flask Web API 应用"""
     from flask import Flask, request, jsonify, render_template, send_from_directory
     from flask_cors import CORS
-    
+
     base_dir = Path(__file__).parent
-    app = Flask(__name__, 
+    app = Flask(__name__,
                 template_folder=str(base_dir / 'web/test_results'))
     CORS(app)
-    
+
     db = TestResultsDB()
-    
+
+    # ==================== BacktestManager 实例 ====================
+    backtest_manager = BacktestManager()
+
+    # 用于在 Flask 同步环境中运行异步任务
+    def run_async(coro):
+        """在后台线程中运行异步协程"""
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            return loop.run_until_complete(coro)
+        finally:
+            loop.close()
+
     @app.route('/')
     def index():
         return render_template('index.html')
@@ -904,7 +920,114 @@ def create_flask_app():
             })
         except Exception as e:
             return jsonify({'success': False, 'error': str(e)})
-    
+
+    # ==================== 参数默认值 API ====================
+
+    @app.route('/api/defaults/entry', methods=['GET'])
+    def get_entry_defaults():
+        """获取入场策略默认参数值"""
+        try:
+            defaults = ConfigLoader.get_entry_strategy_defaults()
+            return jsonify({'success': True, 'data': defaults})
+        except Exception as e:
+            logger.error(f"获取入场策略默认值失败: {e}")
+            return jsonify({'success': False, 'error': str(e)}), 500
+
+    @app.route('/api/defaults/market', methods=['GET'])
+    def get_market_defaults():
+        """获取行情策略默认参数值"""
+        try:
+            defaults = ConfigLoader.get_market_strategy_defaults()
+            return jsonify({'success': True, 'data': defaults})
+        except Exception as e:
+            logger.error(f"获取行情策略默认值失败: {e}")
+            return jsonify({'success': False, 'error': str(e)}), 500
+
+    @app.route('/api/defaults/capital', methods=['GET'])
+    def get_capital_defaults():
+        """获取资金策略默认参数值"""
+        try:
+            defaults = ConfigLoader.get_capital_strategy_defaults()
+            return jsonify({'success': True, 'data': defaults})
+        except Exception as e:
+            logger.error(f"获取资金策略默认值失败: {e}")
+            return jsonify({'success': False, 'error': str(e)}), 500
+
+    @app.route('/api/defaults/timeout', methods=['GET'])
+    def get_timeout_defaults():
+        """获取超时参数默认值"""
+        try:
+            defaults = ConfigLoader.get_timeout_defaults()
+            return jsonify({'success': True, 'data': defaults})
+        except Exception as e:
+            logger.error(f"获取超时参数默认值失败: {e}")
+            return jsonify({'success': False, 'error': str(e)}), 500
+
+    @app.route('/api/defaults/amplitude', methods=['GET'])
+    def get_amplitude_defaults():
+        """获取振幅参数默认值"""
+        try:
+            defaults = ConfigLoader.get_amplitude_defaults()
+            return jsonify({'success': True, 'data': defaults})
+        except Exception as e:
+            logger.error(f"获取振幅参数默认值失败: {e}")
+            return jsonify({'success': False, 'error': str(e)}), 500
+
+    # ==================== 参数定义 API（含元信息） ====================
+
+    @app.route('/api/definitions/entry', methods=['GET'])
+    def get_entry_definition():
+        """获取入场策略参数定义（含元信息：default, type, min, max）"""
+        try:
+            strategy_name = request.args.get('strategy')
+            definition = ConfigLoader.get_entry_strategy_definition(strategy_name)
+            return jsonify({'success': True, 'data': definition})
+        except Exception as e:
+            logger.error(f"获取入场策略定义失败: {e}")
+            return jsonify({'success': False, 'error': str(e)}), 500
+
+    @app.route('/api/definitions/market', methods=['GET'])
+    def get_market_definition():
+        """获取行情策略参数定义（含元信息）"""
+        try:
+            algorithm_name = request.args.get('algorithm')
+            definition = ConfigLoader.get_market_strategy_definition(algorithm_name)
+            return jsonify({'success': True, 'data': definition})
+        except Exception as e:
+            logger.error(f"获取行情策略定义失败: {e}")
+            return jsonify({'success': False, 'error': str(e)}), 500
+
+    @app.route('/api/definitions/capital', methods=['GET'])
+    def get_capital_definition():
+        """获取资金策略参数定义（含元信息）"""
+        try:
+            strategy_name = request.args.get('strategy')
+            definition = ConfigLoader.get_capital_strategy_definition(strategy_name)
+            return jsonify({'success': True, 'data': definition})
+        except Exception as e:
+            logger.error(f"获取资金策略定义失败: {e}")
+            return jsonify({'success': False, 'error': str(e)}), 500
+
+    @app.route('/api/definitions/timeout', methods=['GET'])
+    def get_timeout_definition():
+        """获取超时参数定义（含元信息）"""
+        try:
+            definition = ConfigLoader.get_timeout_definition()
+            return jsonify({'success': True, 'data': definition})
+        except Exception as e:
+            logger.error(f"获取超时参数定义失败: {e}")
+            return jsonify({'success': False, 'error': str(e)}), 500
+
+    @app.route('/api/definitions/amplitude', methods=['GET'])
+    def get_amplitude_definition():
+        """获取振幅参数定义（含元信息）"""
+        try:
+            definition = ConfigLoader.get_amplitude_definition()
+            return jsonify({'success': True, 'data': definition})
+        except Exception as e:
+            logger.error(f"获取振幅参数定义失败: {e}")
+            return jsonify({'success': False, 'error': str(e)}), 500
+
     # ==================== 新增测试用例 API ====================
     
     @app.route('/api/cases', methods=['GET'])
@@ -1075,66 +1198,38 @@ def create_flask_app():
     
     @app.route('/api/cases/<int:id>/run', methods=['POST'])
     def run_case(id):
+        """执行测试用例（使用 BacktestManager）"""
         try:
             case = db.get_case(id)
             if not case:
                 return jsonify({'success': False, 'error': '测试用例不存在'})
-            
-            if case['status'] not in ('draft', 'active'):
+
+            if case['status'] not in ('draft', 'active', 'completed', 'error'):
                 return jsonify({'success': False, 'error': f'状态 {case["status"]} 不允许执行'})
-            
-            amplitude = json.loads(case['amplitude'] or '{}')
-            market = json.loads(case['market'] or '{}')
-            entry = json.loads(case['entry'] or '{}')
-            timeout = json.loads(case['timeout'] or '{}')
-            capital = json.loads(case['capital'] or '{}')
-            
-            cmd = [
-                'python3', 'binance_backtest.py',
-                '--symbol', case['symbol'],
-                '--date-range', f"{case['date_start']}-{case['date_end']}",
-                '--id', str(id),
-                '--interval', case.get('interval', '1m'),
-                '--amplitude-params', json.dumps(amplitude),
-                '--market-params', json.dumps(market),
-                '--entry-params', json.dumps(entry),
-                '--timeout-params', json.dumps(timeout),
-                '--capital-params', json.dumps(capital)
-            ]
-            
-            import subprocess
-            import threading
-            
-            db.update_case_status(id, 'running')
-            
-            def run_backtest():
-                try:
-                    print(f"[{id}] 开始执行命令: {' '.join(cmd)}")
-                    result = subprocess.run(cmd, capture_output=True, text=True, timeout=3600)
-                    print(f"[{id}] 命令返回码: {result.returncode}")
-                    if result.stdout:
-                        print(f"[{id}] 输出: {result.stdout[-2000:]}")
-                    if result.stderr:
-                        print(f"[{id}] 错误: {result.stderr[-1000:]}")
-                    if result.returncode == 0:
-                        db.update_case_status(id, 'completed')
-                        print(f"[{id}] 测试完成")
-                    else:
-                        db.update_case_status(id, 'error')
-                        print(f"[{id}] 测试失败: {result.stderr}")
-                except Exception as e:
-                    db.update_case_status(id, 'error')
-                    print(f"[{id}] 测试异常: {e}")
-            
-            thread = threading.Thread(target=run_backtest)
-            thread.start()
-            
-            return jsonify({
-                'success': True,
-                'message': f'测试用例 {id} 已开始执行',
-                'command': ' '.join(cmd)
-            })
+
+            # 使用 BacktestManager 创建引擎并启动
+            async def start_backtest_async():
+                engine = await backtest_manager.create_engine_from_case(id)
+                if not engine:
+                    return None
+                temp_id = await backtest_manager.start_backtest(engine)
+                return temp_id
+
+            temp_id = run_async(start_backtest_async())
+
+            if temp_id:
+                db.update_case_status(id, 'running')
+                return jsonify({
+                    'success': True,
+                    'message': f'测试用例 {id} 已开始执行',
+                    'temp_id': temp_id,
+                    'progress_url': f'/api/backtests/{temp_id}'
+                })
+            else:
+                return jsonify({'success': False, 'error': '创建回测引擎失败'})
+
         except Exception as e:
+            logger.error(f"执行测试用例失败: {e}")
             return jsonify({'success': False, 'error': str(e)})
     
     # ==================== 测试结果 API ====================
@@ -1476,15 +1571,130 @@ def create_flask_app():
             })
         except Exception as e:
             return jsonify({'success': False, 'error': str(e)})
-    
+
+    # ==================== 回测管理 API（使用 BacktestManager） ====================
+
+    @app.route('/api/backtests', methods=['GET'])
+    def get_backtests():
+        """获取当前运行的回测列表"""
+        try:
+            backtests_info = run_async(backtest_manager.list_backtests())
+            return jsonify({'success': True, 'data': backtests_info})
+        except Exception as e:
+            logger.error(f"获取回测列表失败: {e}")
+            return jsonify({'success': False, 'error': str(e)}), 500
+
+    @app.route('/api/backtests/<int:result_id>', methods=['GET'])
+    def get_backtest(result_id):
+        """获取指定回测状态"""
+        try:
+            backtest_info = run_async(backtest_manager.get_backtest_status(result_id))
+            if backtest_info:
+                return jsonify({'success': True, 'data': backtest_info})
+            return jsonify({'success': False, 'error': 'Backtest not found'}), 404
+        except Exception as e:
+            logger.error(f"获取回测状态失败: {e}")
+            return jsonify({'success': False, 'error': str(e)}), 500
+
+    @app.route('/api/backtests/start/<int:case_id>', methods=['POST'])
+    def start_backtest(case_id):
+        """启动回测"""
+        try:
+            # 先创建引擎
+            engine = run_async(backtest_manager.create_engine_from_case(case_id))
+            if not engine:
+                return jsonify({'success': False, 'error': 'Failed to create engine'}), 500
+
+            # 启动回测
+            temp_id = run_async(backtest_manager.start_backtest(engine))
+            if temp_id:
+                return jsonify({
+                    'success': True,
+                    'data': {
+                        'temp_id': temp_id,
+                        'case_id': case_id,
+                        'symbol': engine.symbol
+                    }
+                })
+            return jsonify({'success': False, 'error': 'Failed to start backtest'}), 500
+        except Exception as e:
+            logger.error(f"启动回测失败: {e}")
+            return jsonify({'success': False, 'error': str(e)}), 500
+
+    @app.route('/api/backtests/stop/<int:result_id>', methods=['POST'])
+    def stop_backtest(result_id):
+        """停止回测"""
+        try:
+            success = run_async(backtest_manager.stop_backtest(result_id))
+            if success:
+                return jsonify({'success': True, 'data': {'result_id': result_id}})
+            return jsonify({'success': False, 'error': 'Failed to stop backtest'}), 500
+        except Exception as e:
+            logger.error(f"停止回测失败: {e}")
+            return jsonify({'success': False, 'error': str(e)}), 500
+
+    @app.route('/api/backtests/run/<int:case_id>', methods=['POST'])
+    def run_backtest_sync(case_id):
+        """同步执行回测（等待完成后返回结果）"""
+        try:
+            # 创建引擎
+            engine = run_async(backtest_manager.create_engine_from_case(case_id))
+            if not engine:
+                return jsonify({'success': False, 'error': 'Failed to create engine'}), 500
+
+            # 启动回测
+            temp_id = run_async(backtest_manager.start_backtest(engine))
+
+            # 等待完成（轮询）
+            import time
+            max_wait = 300  # 最多等待5分钟
+            waited = 0
+            while waited < max_wait:
+                status = run_async(backtest_manager.get_backtest_status(temp_id))
+                if status and status.get('status') != 'running':
+                    break
+                time.sleep(1)
+                waited += 1
+
+            # 获取结果
+            result = backtest_manager.get_result(temp_id)
+            if result:
+                return jsonify({
+                    'success': True,
+                    'data': {
+                        'status': 'completed',
+                        'results': result
+                    }
+                })
+            return jsonify({'success': False, 'error': 'Backtest timeout or failed'}), 500
+        except Exception as e:
+            logger.error(f"同步执行回测失败: {e}")
+            return jsonify({'success': False, 'error': str(e)}), 500
+
     return app
 
 
 def run_server(host='0.0.0.0', port=5002, debug=False):
     """启动 Web API 服务器"""
     app = create_flask_app()
-    print(f"🚀 测试结果 Web API 服务启动")
+    print(f"\n🚀 回测系统 Web API 服务启动")
     print(f"📍 地址: http://{host}:{port}")
+    print(f"\n📋 API 端点:")
+    print(f"  --- 测试用例 ---")
+    print(f"  - GET  /api/test-cases           - 测试用例列表")
+    print(f"  - POST /api/test-cases           - 创建测试用例")
+    print(f"  - GET  /api/test-cases/:id       - 测试用例详情")
+    print(f"  --- 测试结果 ---")
+    print(f"  - GET  /api/test-results         - 测试结果列表")
+    print(f"  - GET  /api/test-results/:id     - 测试结果详情")
+    print(f"  - GET  /api/trade-details/:id    - 交易详情")
+    print(f"  --- 回测管理 (BacktestManager) ---")
+    print(f"  - GET  /api/backtests            - 获取运行中的回测列表")
+    print(f"  - GET  /api/backtests/:id        - 获取回测详细状态")
+    print(f"  - POST /api/backtests/start/:case_id - 启动回测（异步）")
+    print(f"  - POST /api/backtests/run/:case_id   - 执行回测（同步等待）")
+    print(f"  - POST /api/backtests/stop/:id  - 停止回测")
+    print()
     app.run(host=host, port=port, debug=debug)
 
 

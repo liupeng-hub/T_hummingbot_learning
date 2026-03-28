@@ -990,6 +990,157 @@
                 fuli: { withdrawal_threshold: 999.0, withdrawal_retain: 1.0 }
             }
         };
+
+        // 策略参数定义缓存（含元信息：default, type, min, max, description）
+        let strategyDefinitions = {
+            entry: {},
+            market: {},
+            capital: {},
+            timeout: {},
+            amplitude: {}
+        };
+
+        // 加载策略参数定义
+        async function loadStrategyDefinitions() {
+            try {
+                const [entryDef, marketDef, capitalDef, timeoutDef, amplitudeDef] = await Promise.all([
+                    fetch(`${API_BASE}/api/definitions/entry`),
+                    fetch(`${API_BASE}/api/definitions/market`),
+                    fetch(`${API_BASE}/api/definitions/capital`),
+                    fetch(`${API_BASE}/api/definitions/timeout`),
+                    fetch(`${API_BASE}/api/definitions/amplitude`)
+                ]);
+
+                const [entryData, marketData, capitalData, timeoutData, amplitudeData] = await Promise.all([
+                    entryDef.json(),
+                    marketDef.json(),
+                    capitalDef.json(),
+                    timeoutDef.json(),
+                    amplitudeDef.json()
+                ]);
+
+                if (entryData.success) strategyDefinitions.entry = entryData.data || {};
+                if (marketData.success) strategyDefinitions.market = marketData.data || {};
+                if (capitalData.success) strategyDefinitions.capital = capitalData.data || {};
+                if (timeoutData.success) strategyDefinitions.timeout = timeoutData.data || {};
+                if (amplitudeData.success) strategyDefinitions.amplitude = amplitudeData.data || {};
+
+                console.log('策略参数定义已加载:', strategyDefinitions);
+            } catch (e) {
+                console.error('加载策略参数定义失败:', e);
+            }
+        }
+
+        // 设置单个字段的默认值和验证属性
+        function setFieldDefaults(fieldId, paramDef, fallbackValue) {
+            const field = document.getElementById(fieldId);
+            if (!field) return;
+
+            const def = paramDef || {};
+            const defaultValue = def.default !== undefined ? def.default : fallbackValue;
+            const paramType = def.type || 'float';
+            const min = def.min;
+            const max = def.max;
+            const description = def.description || '';
+
+            // 设置默认值
+            field.value = defaultValue;
+
+            // 设置 min/max 属性用于浏览器原生验证
+            if (min !== undefined) {
+                field.setAttribute('min', min);
+            }
+            if (max !== undefined) {
+                field.setAttribute('max', max);
+            }
+
+            // 设置 step 属性（根据类型）
+            if (paramType === 'int') {
+                field.setAttribute('step', '1');
+            } else if (paramType === 'float') {
+                field.setAttribute('step', '0.01');
+            }
+
+            // 设置 title 属性显示描述（鼠标悬停提示）
+            if (description) {
+                const constraints = [];
+                if (min !== undefined) constraints.push(`最小: ${min}`);
+                if (max !== undefined) constraints.push(`最大: ${max}`);
+                const tooltip = description + (constraints.length ? ` (${constraints.join(', ')})` : '');
+                field.setAttribute('title', tooltip);
+            }
+        }
+
+        // 验证表单数据
+        function validateFormData(formData) {
+            const errors = [];
+
+            // 验证振幅参数
+            const ampDef = strategyDefinitions.amplitude?.params || {};
+            errors.push(...validateParam('decay_factor', formData.amplitude?.decay_factor, ampDef.decay_factor));
+            errors.push(...validateParam('stop_loss', formData.amplitude?.stop_loss, ampDef.stop_loss));
+            errors.push(...validateParam('leverage', formData.amplitude?.leverage, ampDef.leverage));
+            errors.push(...validateParam('max_entries', formData.amplitude?.max_entries, ampDef.max_entries));
+            errors.push(...validateParam('grid_spacing', formData.amplitude?.grid_spacing, ampDef.grid_spacing));
+            errors.push(...validateParam('exit_profit', formData.amplitude?.exit_profit, ampDef.exit_profit));
+
+            // 验证资金参数
+            const capitalDef = strategyDefinitions.capital?.common_params || {};
+            errors.push(...validateParam('total_amount_quote', formData.amplitude?.total_amount_quote, capitalDef.total_amount_quote));
+
+            // 验证超时参数
+            const timeoutDef = strategyDefinitions.timeout?.params || {};
+            errors.push(...validateParam('a1_timeout_minutes', formData.timeout?.a1_timeout_minutes, timeoutDef.a1_timeout_minutes));
+
+            // 验证权重数组
+            if (formData.amplitude?.weights) {
+                const weightsDef = ampDef.weights || {};
+                const validAmps = ampDef.valid_amplitudes?.default || [1, 2, 3, 4, 5, 6, 7, 8, 9];
+                if (formData.amplitude.weights.length !== validAmps.length) {
+                    errors.push(`权重数组长度应为 ${validAmps.length}`);
+                }
+                const sum = formData.amplitude.weights.reduce((a, b) => a + b, 0);
+                if (Math.abs(sum - 1) > 0.01) {
+                    errors.push(`权重数组总和应为 1，当前为 ${sum.toFixed(4)}`);
+                }
+            }
+
+            return errors;
+        }
+
+        // 验证单个参数
+        function validateParam(name, value, paramDef) {
+            const errors = [];
+            if (!paramDef) return errors;
+
+            const def = paramDef;
+            const min = def.min;
+            const max = def.max;
+            const paramType = def.type || 'float';
+            const description = def.description || name;
+
+            // 类型验证
+            if (paramType === 'int' && !Number.isInteger(value)) {
+                errors.push(`${description}: 应为整数`);
+            }
+
+            // 范围验证
+            if (min !== undefined && value < min) {
+                errors.push(`${description}: 不能小于 ${min}`);
+            }
+            if (max !== undefined && value > max) {
+                errors.push(`${description}: 不能大于 ${max}`);
+            }
+
+            return errors;
+        }
+
+        // 显示验证错误
+        function showValidationErrors(errors) {
+            if (errors.length === 0) return true;
+            alert('参数验证失败:\n' + errors.join('\n'));
+            return false;
+        }
         
         function getParamWithDefault(value, defaultValue) {
             return value !== undefined && value !== null && value !== '' ? value : defaultValue;
@@ -1057,7 +1208,8 @@
         document.addEventListener('DOMContentLoaded', function() {
             const today = new Date().toISOString().split('T')[0];
             document.getElementById('formDateEnd').value = today;
-            
+
+            loadStrategyDefinitions();  // 加载参数定义
             loadStatistics();
             loadCases();
             loadResults();
@@ -1781,7 +1933,13 @@
                 timeout: timeout,
                 capital: capital
             };
-            
+
+            // 表单验证
+            const errors = validateFormData(caseData);
+            if (!showValidationErrors(errors)) {
+                return; // 验证失败，不提交
+            }
+
             try {
                 const url = editCaseId ? `${API_BASE}/api/cases/${editCaseId}` : `${API_BASE}/api/cases`;
                 const method = editCaseId ? 'PUT' : 'POST';
@@ -1852,21 +2010,162 @@
         
         async function runCase(caseId) {
             if (!confirm(`确定要执行测试用例吗？`)) return;
-            
+
             try {
+                // 显示进度模态框
+                showProgressModal(caseId);
+
                 const response = await fetch(`${API_BASE}/api/cases/${caseId}/run`, { method: 'POST' });
                 const data = await response.json();
-                
+
                 if (data.success) {
-                    alert(data.message);
-                    loadCases();
-                    loadResults();
+                    updateProgressModal('running', data.message, data.temp_id);
+                    // 开始轮询进度
+                    pollBacktestProgress(data.temp_id, caseId);
                 } else {
+                    updateProgressModal('error', data.error);
                     showError('执行失败', data.error);
                 }
             } catch (error) {
                 console.error('执行测试用例失败:', error);
+                updateProgressModal('error', error.message);
                 showError('执行失败', error.message);
+            }
+        }
+
+        // 进度轮询
+        let progressInterval = null;
+        async function pollBacktestProgress(tempId, caseId) {
+            if (progressInterval) clearInterval(progressInterval);
+
+            progressInterval = setInterval(async () => {
+                try {
+                    const response = await fetch(`${API_BASE}/api/backtests/${tempId}`);
+                    const data = await response.json();
+
+                    if (data.success && data.data) {
+                        const status = data.data.status;
+                        const klineCount = data.data.kline_count || 0;
+                        const currentResults = data.data.current_results || {};
+
+                        if (status === 'running') {
+                            updateProgressModal('running',
+                                `正在回测... 已处理 ${klineCount} 根K线，` +
+                                `已完成 ${currentResults.total_trades || 0} 笔交易`,
+                                tempId);
+                        } else if (status === 'completed') {
+                            clearInterval(progressInterval);
+                            updateProgressModal('completed',
+                                `回测完成！共 ${currentResults.total_trades || 0} 笔交易，` +
+                                `净利润 ${(currentResults.total_profit || 0) - (currentResults.total_loss || 0)} USDT`);
+                            loadCases();
+                            loadResults();
+                        } else if (status === 'error' || status === 'cancelled') {
+                            clearInterval(progressInterval);
+                            updateProgressModal(status, data.data.error || '回测已取消');
+                            loadCases();
+                        }
+                    }
+                } catch (error) {
+                    console.error('轮询进度失败:', error);
+                }
+            }, 2000); // 每2秒轮询一次
+        }
+
+        // 停止回测
+        async function stopBacktest(tempId) {
+            if (!confirm(`确定要停止回测吗？`)) return;
+
+            try {
+                const response = await fetch(`${API_BASE}/api/backtests/stop/${tempId}`, { method: 'POST' });
+                const data = await response.json();
+
+                if (data.success) {
+                    clearInterval(progressInterval);
+                    updateProgressModal('stopped', '回测已停止');
+                    loadCases();
+                } else {
+                    showError('停止失败', data.error);
+                }
+            } catch (error) {
+                console.error('停止回测失败:', error);
+                showError('停止失败', error.message);
+            }
+        }
+
+        // 显示进度模态框
+        function showProgressModal(caseId) {
+            const modalHtml = `
+                <div class="modal fade" id="progressModal" tabindex="-1">
+                    <div class="modal-dialog">
+                        <div class="modal-content">
+                            <div class="modal-header">
+                                <h5 class="modal-title">回测进度</h5>
+                                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                            </div>
+                            <div class="modal-body">
+                                <div class="d-flex align-items-center mb-3">
+                                    <div class="spinner-border text-primary me-3" role="status" id="progressSpinner">
+                                        <span class="visually-hidden">Loading...</span>
+                                    </div>
+                                    <div id="progressMessage">正在启动回测...</div>
+                                </div>
+                                <div class="progress" style="height: 5px;">
+                                    <div class="progress-bar progress-bar-striped progress-bar-animated" id="progressBar" style="width: 100%"></div>
+                                </div>
+                            </div>
+                            <div class="modal-footer" id="progressFooter">
+                                <button type="button" class="btn btn-danger" id="stopBtn" onclick="stopBacktest(0)">停止</button>
+                                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">关闭</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+
+            // 移除旧的模态框
+            const oldModal = document.getElementById('progressModal');
+            if (oldModal) oldModal.remove();
+
+            // 添加新的模态框
+            document.body.insertAdjacentHTML('beforeend', modalHtml);
+
+            const modal = new bootstrap.Modal(document.getElementById('progressModal'));
+            modal.show();
+        }
+
+        // 更新进度模态框
+        function updateProgressModal(status, message, tempId) {
+            const spinner = document.getElementById('progressSpinner');
+            const msgEl = document.getElementById('progressMessage');
+            const progressBar = document.getElementById('progressBar');
+            const stopBtn = document.getElementById('stopBtn');
+
+            msgEl.textContent = message;
+
+            if (tempId && stopBtn) {
+                stopBtn.onclick = () => stopBacktest(tempId);
+            }
+
+            if (status === 'running') {
+                spinner.className = 'spinner-border text-primary me-3';
+                progressBar.className = 'progress-bar progress-bar-striped progress-bar-animated bg-primary';
+            } else if (status === 'completed') {
+                spinner.className = 'spinner-border text-success me-3';
+                spinner.innerHTML = '✓';
+                progressBar.className = 'progress-bar bg-success';
+                progressBar.style.width = '100%';
+                if (stopBtn) stopBtn.style.display = 'none';
+            } else if (status === 'error') {
+                spinner.className = 'spinner-border text-danger me-3';
+                spinner.innerHTML = '✗';
+                progressBar.className = 'progress-bar bg-danger';
+                if (stopBtn) stopBtn.style.display = 'none';
+            } else if (status === 'stopped' || status === 'cancelled') {
+                spinner.className = 'spinner-border text-warning me-3';
+                spinner.innerHTML = '⏹';
+                progressBar.className = 'progress-bar bg-warning';
+                if (stopBtn) stopBtn.style.display = 'none';
             }
         }
         

@@ -1,0 +1,1776 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>实盘交易管理系统</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body {
+            padding: 20px;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            min-height: 100vh;
+            color: #e0e0e0;
+        }
+        .card {
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            margin-bottom: 20px;
+            backdrop-filter: blur(10px);
+        }
+        .card-header {
+            background: transparent;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+            color: #00d4ff;
+        }
+        .metric-card {
+            text-align: center;
+            padding: 20px;
+        }
+        .metric-value {
+            font-size: 2em;
+            font-weight: bold;
+            color: #00d4ff;
+        }
+        .metric-label {
+            color: #888;
+            margin-top: 5px;
+        }
+        .positive { color: #00ff88; }
+        .negative { color: #ff4757; }
+        .table {
+            color: #e0e0e0;
+        }
+        .table-hover tbody tr:hover {
+            background-color: rgba(255, 255, 255, 0.05);
+        }
+        .nav-tabs .nav-link {
+            color: #888;
+            border: none;
+        }
+        .nav-tabs .nav-link.active {
+            color: #00d4ff;
+            background: rgba(255, 255, 255, 0.05);
+            border-bottom: 2px solid #00d4ff;
+        }
+        .status-badge {
+            padding: 4px 12px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 500;
+        }
+        .status-running { background: #00d4ff; color: #000; }
+        .status-stopped { background: #666; color: #fff; }
+        .status-error { background: #ff4757; color: #fff; }
+        .status-draft { background: #e9ecef; color: #495057; }
+        .status-active { background: #00ff88; color: #000; }
+        .status-paused { background: #ffd700; color: #000; }
+        .level-badge {
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: bold;
+        }
+        .level-1 { background: #00d4ff; color: #000; }
+        .level-2 { background: #00ff88; color: #000; }
+        .level-3 { background: #ffd700; color: #000; }
+        .level-4 { background: #ff6b6b; color: #000; }
+        .state-pending { color: #ffd700; }
+        .state-filled { color: #00ff88; }
+        .state-closed { color: #888; }
+        h1 { color: #00d4ff; text-shadow: 0 0 10px rgba(0, 212, 255, 0.5); }
+        .refresh-btn {
+            background: #00d4ff;
+            color: #000;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 6px;
+            cursor: pointer;
+        }
+        .refresh-btn:hover {
+            background: #00b8e6;
+        }
+        .last-update {
+            text-align: center;
+            color: #666;
+            font-size: 0.85em;
+            margin-top: 20px;
+        }
+        .modal-content {
+            background: #1a1a2e;
+            color: #e0e0e0;
+        }
+        .modal-header {
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        .modal-footer {
+            border-top: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        .form-control, .form-select {
+            background: rgba(255, 255, 255, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            color: #e0e0e0;
+        }
+        .form-control:focus, .form-select:focus {
+            background: rgba(255, 255, 255, 0.15);
+            border-color: #00d4ff;
+            color: #e0e0e0;
+            box-shadow: 0 0 0 0.25rem rgba(0, 212, 255, 0.25);
+        }
+        .btn-close-white {
+            filter: invert(1);
+        }
+        .trader-card {
+            border: 1px solid rgba(0, 212, 255, 0.3);
+            margin-bottom: 10px;
+        }
+        .action-btn-group .btn {
+            margin-right: 5px;
+        }
+        .btn-outline-success { color: #00ff88; border-color: #00ff88; }
+        .btn-outline-success:hover { background: #00ff88; color: #000; }
+        .btn-outline-warning { color: #ffd700; border-color: #ffd700; }
+        .btn-outline-warning:hover { background: #ffd700; color: #000; }
+        .btn-outline-danger { color: #ff4757; border-color: #ff4757; }
+        .btn-outline-danger:hover { background: #ff4757; color: #fff; }
+        .btn-outline-info { color: #00d4ff; border-color: #00d4ff; }
+        .btn-outline-info:hover { background: #00d4ff; color: #000; }
+    </style>
+</head>
+<body>
+    <div class="container-fluid">
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <h1>实盘交易管理系统</h1>
+            <button class="refresh-btn" onclick="loadAll()">刷新</button>
+        </div>
+
+        <!-- 统计卡片 -->
+        <div class="row" id="statsCards">
+            <div class="col-md-2">
+                <div class="card metric-card">
+                    <div class="metric-value" id="runningSessions">0</div>
+                    <div class="metric-label">运行中会话</div>
+                </div>
+            </div>
+            <div class="col-md-2">
+                <div class="card metric-card">
+                    <div class="metric-value" id="totalTrades">0</div>
+                    <div class="metric-label">总交易次数</div>
+                </div>
+            </div>
+            <div class="col-md-2">
+                <div class="card metric-card">
+                    <div class="metric-value" id="winRate">0%</div>
+                    <div class="metric-label">胜率</div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card metric-card">
+                    <div class="metric-value" id="totalProfit">0 USDT</div>
+                    <div class="metric-label">总盈利</div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card metric-card">
+                    <div class="metric-value" id="totalLoss">0 USDT</div>
+                    <div class="metric-label">总亏损</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 标签页 -->
+        <ul class="nav nav-tabs" id="mainTabs">
+            <li class="nav-item">
+                <a class="nav-link active" data-bs-toggle="tab" href="#active">活跃会话</a>
+            </li>
+            <li class="nav-item">
+                <a class="nav-link" data-bs-toggle="tab" href="#cases">实盘配置</a>
+            </li>
+            <li class="nav-item">
+                <a class="nav-link" data-bs-toggle="tab" href="#sessions">历史会话</a>
+            </li>
+        </ul>
+
+        <div class="tab-content">
+            <!-- 活跃会话 -->
+            <div class="tab-pane fade show active" id="active">
+                <div class="card">
+                    <div class="card-header">活跃会话</div>
+                    <div class="card-body">
+                        <div id="activeSessionsContent">
+                            <p class="text-muted">加载中...</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 实盘配置 -->
+            <div class="tab-pane fade" id="cases">
+                <div class="card">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <span>实盘配置</span>
+                        <button class="btn btn-sm btn-primary" onclick="showCreateCaseModal()">+ 新建配置</button>
+                    </div>
+                    <div class="card-body">
+                        <div class="table-responsive">
+                            <table class="table table-hover">
+                                <thead>
+                                    <tr>
+                                        <th>ID</th>
+                                        <th>名称</th>
+                                        <th>交易对</th>
+                                        <th>网络</th>
+                                        <th>状态</th>
+                                        <th>创建时间</th>
+                                        <th>操作</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="casesTable">
+                                    <tr><td colspan="7" class="text-muted">加载中...</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 历史会话 -->
+            <div class="tab-pane fade" id="sessions">
+                <div class="card">
+                    <div class="card-header">历史会话</div>
+                    <div class="card-body">
+                        <div class="table-responsive">
+                            <table class="table table-hover">
+                                <thead>
+                                    <tr>
+                                        <th>ID</th>
+                                        <th>配置ID</th>
+                                        <th>交易对</th>
+                                        <th>状态</th>
+                                        <th>开始时间</th>
+                                        <th>结束时间</th>
+                                        <th>净盈亏</th>
+                                        <th>操作</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="sessionsTable">
+                                    <tr><td colspan="8" class="text-muted">加载中...</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="last-update" id="lastUpdate"></div>
+    </div>
+
+    <!-- 配置表单模态框 -->
+    <div class="modal fade" id="caseFormModal" tabindex="-1">
+        <div class="modal-dialog modal-xl">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="caseFormTitle">新建实盘配置</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <form id="caseForm">
+                        <input type="hidden" id="editCaseId" value="">
+
+                        <ul class="nav nav-tabs mb-3" id="caseFormTabs" role="tablist">
+                            <li class="nav-item" role="presentation">
+                                <button class="nav-link active" id="basic-tab" data-bs-toggle="tab" data-bs-target="#basic-tab-pane" type="button" role="tab">基本信息</button>
+                            </li>
+                            <li class="nav-item" role="presentation">
+                                <button class="nav-link" id="amplitude-tab" data-bs-toggle="tab" data-bs-target="#amplitude-tab-pane" type="button" role="tab">振幅参数</button>
+                            </li>
+                            <li class="nav-item" role="presentation">
+                                <button class="nav-link" id="market-tab" data-bs-toggle="tab" data-bs-target="#market-tab-pane" type="button" role="tab">行情算法</button>
+                            </li>
+                            <li class="nav-item" role="presentation">
+                                <button class="nav-link" id="entry-tab" data-bs-toggle="tab" data-bs-target="#entry-tab-pane" type="button" role="tab">入场策略</button>
+                            </li>
+                            <li class="nav-item" role="presentation">
+                                <button class="nav-link" id="timeout-tab" data-bs-toggle="tab" data-bs-target="#timeout-tab-pane" type="button" role="tab">超时参数</button>
+                            </li>
+                            <li class="nav-item" role="presentation">
+                                <button class="nav-link" id="capital-tab" data-bs-toggle="tab" data-bs-target="#capital-tab-pane" type="button" role="tab">资金池参数</button>
+                            </li>
+                        </ul>
+
+                        <div class="tab-content" id="caseFormTabContent">
+                            <!-- 基本信息 -->
+                            <div class="tab-pane fade show active" id="basic-tab-pane" role="tabpanel">
+                                <div class="row mb-3">
+                                    <div class="col-md-4">
+                                        <label class="form-label">配置名称</label>
+                                        <input type="text" class="form-control" id="formCaseName" placeholder="如: BTCUSDT网格实盘">
+                                    </div>
+                                    <div class="col-md-4">
+                                        <label class="form-label">交易对</label>
+                                        <input type="text" class="form-control" id="formSymbol" placeholder="BTCUSDT">
+                                    </div>
+                                    <div class="col-md-4">
+                                        <label class="form-label">网络</label>
+                                        <select class="form-select" id="formTestnet">
+                                            <option value="1">测试网</option>
+                                            <option value="0">主网</option>
+                                        </select>
+                                    </div>
+                                </div>
+                                <div class="row mb-3">
+                                    <div class="col-md-12">
+                                        <label class="form-label">描述</label>
+                                        <textarea class="form-control" id="formDescription" rows="3" placeholder="配置描述"></textarea>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- 振幅参数 -->
+                            <div class="tab-pane fade" id="amplitude-tab-pane" role="tabpanel">
+                                <div class="row mb-3">
+                                    <div class="col-md-3">
+                                        <label class="form-label">衰减因子</label>
+                                        <input type="number" class="form-control" id="formDecayFactor" value="0.5" step="0.1">
+                                    </div>
+                                    <div class="col-md-3">
+                                        <label class="form-label">止损比例</label>
+                                        <input type="number" class="form-control" id="formStopLoss" value="0.08" step="0.01">
+                                    </div>
+                                    <div class="col-md-3">
+                                        <label class="form-label">总金额(USDT)</label>
+                                        <input type="number" class="form-control" id="formTotalAmount" value="10000" step="100">
+                                    </div>
+                                    <div class="col-md-3">
+                                        <label class="form-label">杠杆</label>
+                                        <input type="number" class="form-control" id="formLeverage" value="10" step="1">
+                                    </div>
+                                </div>
+                                <div class="row mb-3">
+                                    <div class="col-md-3">
+                                        <label class="form-label">最大层级</label>
+                                        <input type="number" class="form-control" id="formMaxEntries" value="4" min="1" max="10">
+                                    </div>
+                                    <div class="col-md-3">
+                                        <label class="form-label">网格间距</label>
+                                        <input type="number" class="form-control" id="formGridSpacing" value="0.01" step="0.005">
+                                    </div>
+                                    <div class="col-md-3">
+                                        <label class="form-label">止盈比例</label>
+                                        <input type="number" class="form-control" id="formExitProfit" value="0.01" step="0.005">
+                                    </div>
+                                    <div class="col-md-3">
+                                        <label class="form-label">权重(JSON)</label>
+                                        <input type="text" class="form-control" id="formWeights" value='[0.0831, 0.2996, 0.3167, 0.1365, 0.1005, 0.0281, 0.027, 0.0066, 0.0018]'>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- 行情算法 -->
+                            <div class="tab-pane fade" id="market-tab-pane" role="tabpanel">
+                                <div class="row mb-3">
+                                    <div class="col-md-4">
+                                        <label class="form-label">算法选择</label>
+                                        <select class="form-select" id="formMarketAlgorithm" onchange="toggleMarketParams()">
+                                            <option value="always_ranging">始终震荡</option>
+                                            <option value="dual_thrust">DualThrust</option>
+                                            <option value="improved">改进算法</option>
+                                            <option value="composite">复合算法</option>
+                                            <option value="adx">ADX算法</option>
+                                        </select>
+                                    </div>
+                                    <div class="col-md-8">
+                                        <label class="form-label">交易状态(多选)</label>
+                                        <div class="d-flex">
+                                            <div class="form-check me-3">
+                                                <input class="form-check-input" type="checkbox" id="formStatusRanging" checked>
+                                                <label class="form-check-label" for="formStatusRanging">震荡</label>
+                                            </div>
+                                            <div class="form-check me-3">
+                                                <input class="form-check-input" type="checkbox" id="formStatusTrendingUp">
+                                                <label class="form-check-label" for="formStatusTrendingUp">上涨</label>
+                                            </div>
+                                            <div class="form-check me-3">
+                                                <input class="form-check-input" type="checkbox" id="formStatusTrendingDown">
+                                                <label class="form-check-label" for="formStatusTrendingDown">下跌</label>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- DualThrust 参数 -->
+                                <div class="row mb-3 dual-thrust-params">
+                                    <div class="col-12"><small class="text-muted">DualThrust 参数:</small></div>
+                                    <div class="col-md-2">
+                                        <label class="form-label">N天数</label>
+                                        <input type="number" class="form-control" id="formDualNDays" value="4">
+                                    </div>
+                                    <div class="col-md-2">
+                                        <label class="form-label">K1</label>
+                                        <input type="number" class="form-control" id="formDualK1" value="0.4" step="0.1">
+                                    </div>
+                                    <div class="col-md-2">
+                                        <label class="form-label">K2</label>
+                                        <input type="number" class="form-control" id="formDualK2" value="0.4" step="0.1">
+                                    </div>
+                                    <div class="col-md-2">
+                                        <label class="form-label">下跌确认天数</label>
+                                        <input type="number" class="form-control" id="formDualDownConfirm" value="2">
+                                    </div>
+                                    <div class="col-md-2">
+                                        <label class="form-label">K2下跌因子</label>
+                                        <input type="number" class="form-control" id="formDualK2Down" value="0.8" step="0.1">
+                                    </div>
+                                    <div class="col-md-2">
+                                        <label class="form-label">冷却天数</label>
+                                        <input type="number" class="form-control" id="formDualCooldown" value="1">
+                                    </div>
+                                </div>
+
+                                <!-- Improved 参数 -->
+                                <div class="row mb-3 improved-params" style="display:none;">
+                                    <div class="col-12"><small class="text-muted">改进算法参数:</small></div>
+                                    <div class="col-md-3">
+                                        <label class="form-label">回看周期</label>
+                                        <input type="number" class="form-control" id="formImprovedLookback" value="20">
+                                    </div>
+                                    <div class="col-md-3">
+                                        <label class="form-label">最小震荡时长</label>
+                                        <input type="number" class="form-control" id="formImprovedMinDuration" value="3">
+                                    </div>
+                                    <div class="col-md-3">
+                                        <label class="form-label">最大震荡比例</label>
+                                        <input type="number" class="form-control" id="formImprovedMaxRangePct" value="0.05" step="0.01">
+                                    </div>
+                                    <div class="col-md-3">
+                                        <label class="form-label">突破阈值</label>
+                                        <input type="number" class="form-control" id="formImprovedBreakout" value="0.02" step="0.01">
+                                    </div>
+                                </div>
+
+                                <!-- Composite 参数 -->
+                                <div class="row mb-3 composite-params" style="display:none;">
+                                    <div class="col-12"><small class="text-muted">复合算法参数:</small></div>
+                                    <div class="col-md-3">
+                                        <label class="form-label">ADX周期</label>
+                                        <input type="number" class="form-control" id="formCompositeAdxPeriod" value="14">
+                                    </div>
+                                    <div class="col-md-3">
+                                        <label class="form-label">ADX阈值</label>
+                                        <input type="number" class="form-control" id="formCompositeAdxThreshold" value="25">
+                                    </div>
+                                    <div class="col-md-3">
+                                        <label class="form-label">ATR周期</label>
+                                        <input type="number" class="form-control" id="formCompositeAtrPeriod" value="14">
+                                    </div>
+                                    <div class="col-md-3">
+                                        <label class="form-label">ATR倍数</label>
+                                        <input type="number" class="form-control" id="formCompositeAtrMultiplier" value="2" step="0.5">
+                                    </div>
+                                </div>
+
+                                <!-- ADX 参数 -->
+                                <div class="row mb-3 adx-params" style="display:none;">
+                                    <div class="col-12"><small class="text-muted">ADX算法参数:</small></div>
+                                    <div class="col-md-6">
+                                        <label class="form-label">ADX周期</label>
+                                        <input type="number" class="form-control" id="formAdxPeriod" value="14">
+                                    </div>
+                                    <div class="col-md-6">
+                                        <label class="form-label">ADX阈值</label>
+                                        <input type="number" class="form-control" id="formAdxThreshold" value="25">
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- 入场策略 -->
+                            <div class="tab-pane fade" id="entry-tab-pane" role="tabpanel">
+                                <div class="row mb-3">
+                                    <div class="col-md-4">
+                                        <label class="form-label">策略选择</label>
+                                        <select class="form-select" id="formEntryStrategy" onchange="toggleEntryParams()">
+                                            <option value="fixed">固定间距</option>
+                                            <option value="atr">ATR动态</option>
+                                            <option value="bollinger">Bollinger</option>
+                                            <option value="support">支撑位</option>
+                                            <option value="composite">复合策略</option>
+                                        </select>
+                                    </div>
+                                </div>
+
+                                <!-- ATR 参数 -->
+                                <div class="row mb-3 atr-params" style="display:none;">
+                                    <div class="col-12"><small class="text-muted">ATR参数:</small></div>
+                                    <div class="col-md-3">
+                                        <label class="form-label">ATR周期</label>
+                                        <input type="number" class="form-control" id="formEntryAtrPeriod" value="14">
+                                    </div>
+                                    <div class="col-md-3">
+                                        <label class="form-label">ATR倍数</label>
+                                        <input type="number" class="form-control" id="formEntryAtrMultiplier" value="1.5" step="0.5">
+                                    </div>
+                                    <div class="col-md-3">
+                                        <label class="form-label">最小间距</label>
+                                        <input type="number" class="form-control" id="formEntryMinSpacing" value="0.005" step="0.001">
+                                    </div>
+                                    <div class="col-md-3">
+                                        <label class="form-label">最大间距</label>
+                                        <input type="number" class="form-control" id="formEntryMaxSpacing" value="0.02" step="0.005">
+                                    </div>
+                                </div>
+
+                                <!-- Bollinger 参数 -->
+                                <div class="row mb-3 bollinger-params" style="display:none;">
+                                    <div class="col-12"><small class="text-muted">Bollinger参数:</small></div>
+                                    <div class="col-md-6">
+                                        <label class="form-label">周期</label>
+                                        <input type="number" class="form-control" id="formBollingerPeriod" value="20">
+                                    </div>
+                                    <div class="col-md-6">
+                                        <label class="form-label">标准差倍数</label>
+                                        <input type="number" class="form-control" id="formBollingerStd" value="2" step="0.5">
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- 超时参数 -->
+                            <div class="tab-pane fade" id="timeout-tab-pane" role="tabpanel">
+                                <div class="row mb-3">
+                                    <div class="col-md-6">
+                                        <label class="form-label">A1超时时间(分钟，0表示不超时)</label>
+                                        <input type="number" class="form-control" id="formA1Timeout" value="0" min="0">
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- 资金池参数 -->
+                            <div class="tab-pane fade" id="capital-tab-pane" role="tabpanel">
+                                <div class="row mb-3">
+                                    <div class="col-md-4">
+                                        <label class="form-label">策略</label>
+                                        <select class="form-select" id="formCapitalStrategy">
+                                            <option value="guding">固定策略</option>
+                                            <option value="jijin">基金策略</option>
+                                        </select>
+                                    </div>
+                                    <div class="col-md-4">
+                                        <label class="form-label">入场模式</label>
+                                        <select class="form-select" id="formCapitalEntryMode">
+                                            <option value="fixed">固定</option>
+                                            <option value="compound">复合</option>
+                                            <option value="default">默认</option>
+                                        </select>
+                                    </div>
+                                    <div class="col-md-4">
+                                        <label class="form-label">提现阈值(USDT)</label>
+                                        <input type="number" class="form-control" id="formWithdrawThreshold" value="2.0" step="0.5">
+                                    </div>
+                                </div>
+                                <div class="row mb-3">
+                                    <div class="col-md-4">
+                                        <label class="form-label">保留金额(USDT)</label>
+                                        <input type="number" class="form-control" id="formWithdrawRetain" value="1.5" step="0.5">
+                                    </div>
+                                    <div class="col-md-4">
+                                        <label class="form-label">爆仓阈值</label>
+                                        <input type="number" class="form-control" id="formLiquidationThreshold" value="0.1" step="0.05">
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </form>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+                    <button type="button" class="btn btn-primary" onclick="saveCase()">保存</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 配置详情模态框 -->
+    <div class="modal fade" id="caseDetailModal" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">配置详情</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body" id="caseDetailContent">
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">关闭</button>
+                    <button type="button" class="btn btn-warning" onclick="editCaseFromDetail()">编辑</button>
+                    <button type="button" class="btn btn-success" onclick="startCaseFromDetail()">启动</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 会话详情模态框 -->
+    <div class="modal fade" id="sessionModal" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">会话详情</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body" id="sessionModalContent">
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        const API_BASE = '/api';
+        let refreshInterval = null;
+        let currentCaseDetail = null;
+
+        // 策略默认参数缓存（仅值）
+        let strategyDefaults = {
+            entry: {},
+            market: {},
+            capital: {},
+            timeout: {},
+            amplitude: {}
+        };
+
+        // 策略参数定义缓存（含元信息：default, type, min, max, description）
+        let strategyDefinitions = {
+            entry: {},
+            market: {},
+            capital: {},
+            timeout: {},
+            amplitude: {}
+        };
+
+        // 格式化数字
+        function formatNumber(num, decimals = 2) {
+            if (num === null || num === undefined) return '-';
+            return parseFloat(num).toFixed(decimals);
+        }
+
+        // 格式化货币
+        function formatCurrency(num) {
+            if (num === null || num === undefined) return '-';
+            const value = parseFloat(num);
+            const sign = value >= 0 ? '+' : '';
+            return sign + value.toFixed(2) + ' USDT';
+        }
+
+        // 获取盈亏样式
+        function getProfitClass(value) {
+            if (value > 0) return 'positive';
+            if (value < 0) return 'negative';
+            return '';
+        }
+
+        // 获取状态徽章
+        function getStatusBadge(status, paused = false) {
+            if (paused && status === 'running') {
+                return '<span class="status-badge status-paused">paused</span>';
+            }
+            const classes = {
+                'running': 'status-running',
+                'stopped': 'status-stopped',
+                'error': 'status-error',
+                'draft': 'status-draft',
+                'active': 'status-active'
+            };
+            const cls = classes[status] || 'status-stopped';
+            return `<span class="status-badge ${cls}">${status}</span>`;
+        }
+
+        // 获取层级徽章
+        function getLevelBadge(level) {
+            return `<span class="level-badge level-${level}">A${level}</span>`;
+        }
+
+        // 加载所有数据
+        async function loadAll() {
+            // 首先加载默认参数
+            await loadStrategyDefaults();
+            await Promise.all([
+                loadStats(),
+                loadActiveSessions(),
+                loadCases(),
+                loadSessions()
+            ]);
+            document.getElementById('lastUpdate').textContent = '最后更新: ' + new Date().toLocaleTimeString();
+        }
+
+        // 加载策略默认参数
+        async function loadStrategyDefaults() {
+            try {
+                // 并行加载所有默认参数和参数定义
+                const [entryResp, marketResp, capitalResp, timeoutResp,
+                       entryDefResp, marketDefResp, capitalDefResp, timeoutDefResp, amplitudeDefResp] = await Promise.all([
+                    fetch(`${API_BASE}/defaults/entry`),
+                    fetch(`${API_BASE}/defaults/market`),
+                    fetch(`${API_BASE}/defaults/capital`),
+                    fetch(`${API_BASE}/defaults/timeout`),
+                    fetch(`${API_BASE}/definitions/entry`),
+                    fetch(`${API_BASE}/definitions/market`),
+                    fetch(`${API_BASE}/definitions/capital`),
+                    fetch(`${API_BASE}/definitions/timeout`),
+                    fetch(`${API_BASE}/definitions/amplitude`)
+                ]);
+
+                const [entryData, marketData, capitalData, timeoutData,
+                       entryDefData, marketDefData, capitalDefData, timeoutDefData, amplitudeDefData] = await Promise.all([
+                    entryResp.json(),
+                    marketResp.json(),
+                    capitalResp.json(),
+                    timeoutResp.json(),
+                    entryDefResp.json(),
+                    marketDefResp.json(),
+                    capitalDefResp.json(),
+                    timeoutDefResp.json(),
+                    amplitudeDefResp.json()
+                ]);
+
+                if (entryData.success) strategyDefaults.entry = entryData.data || {};
+                if (marketData.success) strategyDefaults.market = marketData.data || {};
+                if (capitalData.success) strategyDefaults.capital = capitalData.data || {};
+                if (timeoutData.success) strategyDefaults.timeout = timeoutData.data || {};
+
+                if (entryDefData.success) strategyDefinitions.entry = entryDefData.data || {};
+                if (marketDefData.success) strategyDefinitions.market = marketDefData.data || {};
+                if (capitalDefData.success) strategyDefinitions.capital = capitalDefData.data || {};
+                if (timeoutDefData.success) strategyDefinitions.timeout = timeoutDefData.data || {};
+                if (amplitudeDefData.success) strategyDefinitions.amplitude = amplitudeDefData.data || {};
+
+                console.log('策略默认参数已加载:', strategyDefaults);
+                console.log('策略参数定义已加载:', strategyDefinitions);
+            } catch (e) {
+                console.error('加载策略默认参数失败:', e);
+            }
+        }
+
+        // 加载统计数据
+        async function loadStats() {
+            try {
+                const response = await fetch(`${API_BASE}/stats`);
+                const data = await response.json();
+                if (data.success) {
+                    const stats = data.data || {};
+                    document.getElementById('totalTrades').textContent = stats.total_trades || 0;
+                    document.getElementById('winRate').textContent = (stats.avg_win_rate || 0).toFixed(1) + '%';
+
+                    const profitClass = getProfitClass(stats.total_profit);
+                    document.getElementById('totalProfit').innerHTML = `<span class="${profitClass}">${formatCurrency(stats.total_profit)}</span>`;
+
+                    const lossClass = stats.total_loss < 0 ? 'negative' : '';
+                    document.getElementById('totalLoss').innerHTML = `<span class="${lossClass}">${Math.abs(stats.total_loss || 0).toFixed(2)} USDT</span>`;
+                }
+            } catch (e) {
+                console.error('加载统计失败:', e);
+            }
+        }
+
+        // 加载活跃会话
+        async function loadActiveSessions() {
+            try {
+                const response = await fetch(`${API_BASE}/active-sessions`);
+                const data = await response.json();
+                if (data.success) {
+                    const sessions = data.data || [];
+                    document.getElementById('runningSessions').textContent = sessions.length;
+
+                    if (sessions.length === 0) {
+                        document.getElementById('activeSessionsContent').innerHTML = '<p class="text-muted">暂无运行中的会话</p>';
+                        return;
+                    }
+
+                    let html = '<div class="row">';
+                    for (const session of sessions) {
+                        // 获取交易器状态
+                        const traderResp = await fetch(`${API_BASE}/traders/${session.id}`);
+                        const traderData = await traderResp.json();
+                        const traderInfo = traderData.data || {};
+                        const isPaused = traderInfo.paused || false;
+                        const statusBadge = getStatusBadge(session.status, isPaused);
+
+                        // 获取订单和状态
+                        const ordersResp = await fetch(`${API_BASE}/live-sessions/${session.id}/orders`);
+                        const ordersData = await ordersResp.json();
+                        const orders = ordersData.data || [];
+
+                        const stateResp = await fetch(`${API_BASE}/live-sessions/${session.id}/state`);
+                        const stateData = await stateResp.json();
+                        const state = stateData.data || {};
+
+                        html += `
+                            <div class="col-md-6 mb-3">
+                                <div class="card trader-card">
+                                    <div class="card-header d-flex justify-content-between">
+                                        <span>${session.symbol} <small class="text-muted">(Session ${session.id})</small></span>
+                                        ${statusBadge}
+                                    </div>
+                                    <div class="card-body">
+                                        <p><strong>开始时间:</strong> ${session.start_time || '-'}</p>
+                                        <p><strong>Base Price:</strong> ${state.base_price || '-'}</p>
+                                        <p><strong>Group ID:</strong> ${state.group_id || 0}</p>
+                                        <h6>当前订单:</h6>
+                                        <table class="table table-sm">
+                                            <thead>
+                                                <tr><th>层级</th><th>状态</th><th>入场价</th><th>止盈价</th><th>止损价</th></tr>
+                                            </thead>
+                                            <tbody>
+                                                ${orders.map(o => `
+                                                    <tr>
+                                                        <td>${getLevelBadge(o.level)}</td>
+                                                        <td><span class="state-${o.state}">${o.state}</span></td>
+                                                        <td>${formatNumber(o.entry_price)}</td>
+                                                        <td>${formatNumber(o.take_profit_price)}</td>
+                                                        <td>${formatNumber(o.stop_loss_price)}</td>
+                                                    </tr>
+                                                `).join('')}
+                                            </tbody>
+                                        </table>
+                                        <div class="action-btn-group mt-2">
+                                            ${isPaused ?
+                                                `<button class="btn btn-sm btn-outline-success" onclick="resumeTrader(${session.id})">恢复</button>` :
+                                                `<button class="btn btn-sm btn-outline-warning" onclick="pauseTrader(${session.id})">暂停</button>`
+                                            }
+                                            <button class="btn btn-sm btn-outline-danger" onclick="stopTrader(${session.id})">停止</button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        `;
+                    }
+                    html += '</div>';
+                    document.getElementById('activeSessionsContent').innerHTML = html;
+                }
+            } catch (e) {
+                console.error('加载活跃会话失败:', e);
+                document.getElementById('activeSessionsContent').innerHTML = '<p class="text-danger">加载失败</p>';
+            }
+        }
+
+        // 加载实盘配置
+        async function loadCases() {
+            try {
+                const response = await fetch(`${API_BASE}/live-cases`);
+                const data = await response.json();
+                if (data.success) {
+                    const cases = data.data || [];
+                    if (cases.length === 0) {
+                        document.getElementById('casesTable').innerHTML = '<tr><td colspan="7" class="text-muted">暂无配置</td></tr>';
+                        return;
+                    }
+
+                    document.getElementById('casesTable').innerHTML = cases.map(c => `
+                        <tr>
+                            <td>${c.id}</td>
+                            <td>${c.name || '-'}</td>
+                            <td>${c.symbol}</td>
+                            <td>${c.testnet ? '测试网' : '主网'}</td>
+                            <td>${getStatusBadge(c.status)}</td>
+                            <td>${c.created_at || '-'}</td>
+                            <td class="action-btn-group">
+                                <button class="btn btn-sm btn-outline-info" onclick="showCaseDetail(${c.id})">详情</button>
+                                <button class="btn btn-sm btn-outline-primary" onclick="editCase(${c.id})">编辑</button>
+                                ${c.status === 'draft' || c.status === 'active' ? `<button class="btn btn-sm btn-outline-success" onclick="startCase(${c.id})">启动</button>` : ''}
+                                <button class="btn btn-sm btn-outline-secondary" onclick="copyCase(${c.id})">复制</button>
+                                <button class="btn btn-sm btn-outline-warning" onclick="resetCase(${c.id})">重置</button>
+                                <button class="btn btn-sm btn-outline-danger" onclick="deleteCase(${c.id})">删除</button>
+                            </td>
+                        </tr>
+                    `).join('');
+                }
+            } catch (e) {
+                console.error('加载配置失败:', e);
+            }
+        }
+
+        // 加载历史会话
+        async function loadSessions() {
+            try {
+                const response = await fetch(`${API_BASE}/live-sessions?limit=50`);
+                const data = await response.json();
+                if (data.success) {
+                    const sessions = data.data || [];
+                    if (sessions.length === 0) {
+                        document.getElementById('sessionsTable').innerHTML = '<tr><td colspan="8" class="text-muted">暂无会话</td></tr>';
+                        return;
+                    }
+
+                    document.getElementById('sessionsTable').innerHTML = sessions.map(s => `
+                        <tr>
+                            <td>${s.id}</td>
+                            <td>${s.case_id || '-'}</td>
+                            <td>${s.symbol}</td>
+                            <td>${getStatusBadge(s.status)}</td>
+                            <td>${s.start_time || '-'}</td>
+                            <td>${s.end_time || '-'}</td>
+                            <td class="${getProfitClass(s.net_profit)}">${formatCurrency(s.net_profit)}</td>
+                            <td>
+                                <button class="btn btn-sm btn-outline-info" onclick="showSession(${s.id})">详情</button>
+                                ${s.status !== 'running' ? `<button class="btn btn-sm btn-outline-warning" onclick="resetSession(${s.id})">重置</button>` : ''}
+                            </td>
+                        </tr>
+                    `).join('');
+                }
+            } catch (e) {
+                console.error('加载会话失败:', e);
+            }
+        }
+
+        // 显示创建配置模态框
+        function showCreateCaseModal() {
+            document.getElementById('caseFormTitle').textContent = '新建实盘配置';
+            document.getElementById('editCaseId').value = '';
+            resetForm();
+            new bootstrap.Modal(document.getElementById('caseFormModal')).show();
+        }
+
+        // 重置表单
+        function resetForm() {
+            document.getElementById('formCaseName').value = '';
+            document.getElementById('formSymbol').value = 'BTCUSDT';
+            document.getElementById('formTestnet').value = '1';
+            document.getElementById('formDescription').value = '';
+
+            // 使用参数定义设置默认值和验证属性
+            applyAmplitudeDefaults();
+            applyMarketDefaults();
+            applyEntryDefaults();
+            applyTimeoutDefaults();
+            applyCapitalDefaults();
+
+            toggleMarketParams();
+            toggleEntryParams();
+        }
+
+        // 应用振幅参数默认值和验证属性
+        function applyAmplitudeDefaults() {
+            const ampDef = strategyDefinitions.amplitude?.params || {};
+
+            // 衰减因子
+            setFieldDefaults('formDecayFactor', ampDef.decay_factor, 0.5);
+            // 止损比例
+            setFieldDefaults('formStopLoss', ampDef.stop_loss, 0.08);
+            // 总金额（在 capital_strategy.json 中定义）
+            const capitalDef = strategyDefinitions.capital?.common_params || {};
+            setFieldDefaults('formTotalAmount', capitalDef.total_amount_quote, 10000);
+            // 杠杆
+            setFieldDefaults('formLeverage', ampDef.leverage, 10);
+            // 最大层级
+            setFieldDefaults('formMaxEntries', ampDef.max_entries, 4);
+            // 网格间距
+            setFieldDefaults('formGridSpacing', ampDef.grid_spacing, 0.01);
+            // 止盈比例
+            setFieldDefaults('formExitProfit', ampDef.exit_profit, 0.01);
+
+            // 权重使用默认预设
+            const weightsDef = ampDef.weights || {};
+            document.getElementById('formWeights').value = JSON.stringify(weightsDef.default || [0.0831, 0.2996, 0.3167, 0.1365, 0.1005, 0.0281, 0.027, 0.0066, 0.0018]);
+        }
+
+        // 应用行情参数默认值和验证属性
+        function applyMarketDefaults() {
+            const marketDefaults = strategyDefaults.market || {};
+            const marketDef = strategyDefinitions.market || {};
+
+            document.getElementById('formMarketAlgorithm').value = marketDef._meta?.default_algorithm || 'always_ranging';
+            document.getElementById('formStatusRanging').checked = (marketDefaults.trading_statuses || ['ranging']).includes('ranging');
+            document.getElementById('formStatusTrendingUp').checked = (marketDefaults.trading_statuses || []).includes('trending_up');
+            document.getElementById('formStatusTrendingDown').checked = (marketDefaults.trading_statuses || []).includes('trending_down');
+
+            // DualThrust 参数
+            const dualThrustDef = marketDef.algorithms?.dual_thrust || {};
+            setFieldDefaults('formDualNDays', dualThrustDef.n_days, 4);
+            setFieldDefaults('formDualK1', dualThrustDef.k1, 0.4);
+            setFieldDefaults('formDualK2', dualThrustDef.k2, 0.4);
+            setFieldDefaults('formDualDownConfirm', dualThrustDef.down_confirm_days, 2);
+            setFieldDefaults('formDualK2Down', dualThrustDef.k2_down_factor, 0.8);
+            setFieldDefaults('formDualCooldown', dualThrustDef.cooldown_days, 1);
+
+            // Improved 参数
+            const improvedDef = marketDef.algorithms?.improved || {};
+            setFieldDefaults('formImprovedLookback', improvedDef.lookback_period, 20);
+            setFieldDefaults('formImprovedMinDuration', improvedDef.min_range_duration, 3);
+            setFieldDefaults('formImprovedMaxRangePct', improvedDef.max_range_pct, 0.05);
+            setFieldDefaults('formImprovedBreakout', improvedDef.breakout_threshold, 0.02);
+
+            // Composite 参数
+            const compositeDef = marketDef.algorithms?.composite || {};
+            setFieldDefaults('formCompositeAdxPeriod', compositeDef.adx_period, 14);
+            setFieldDefaults('formCompositeAdxThreshold', compositeDef.adx_threshold, 25);
+            setFieldDefaults('formCompositeAtrPeriod', compositeDef.atr_period, 14);
+            setFieldDefaults('formCompositeAtrMultiplier', compositeDef.atr_multiplier, 2);
+
+            // ADX 参数
+            const adxDef = marketDef.algorithms?.adx || {};
+            setFieldDefaults('formAdxPeriod', adxDef.period, 14);
+            setFieldDefaults('formAdxThreshold', adxDef.threshold, 25);
+        }
+
+        // 应用入场策略默认值和验证属性
+        function applyEntryDefaults() {
+            const entryDefaults = strategyDefaults.entry || {};
+            const entryDef = strategyDefinitions.entry || {};
+
+            document.getElementById('formEntryStrategy').value = entryDef._meta?.default_strategy || 'fixed';
+
+            // ATR 参数
+            const atrDef = entryDef.strategies?.atr || {};
+            setFieldDefaults('formEntryAtrPeriod', atrDef.atr_period, 14);
+            setFieldDefaults('formEntryAtrMultiplier', atrDef.atr_multiplier, 1.5);
+            setFieldDefaults('formEntryMinSpacing', atrDef.min_spacing, 0.005);
+            setFieldDefaults('formEntryMaxSpacing', atrDef.max_spacing, 0.02);
+
+            // Bollinger 参数
+            const bollingerDef = entryDef.strategies?.bollinger || {};
+            setFieldDefaults('formBollingerPeriod', bollingerDef.period, 20);
+            setFieldDefaults('formBollingerStd', bollingerDef.num_std, 2);
+        }
+
+        // 应用超时参数默认值和验证属性
+        function applyTimeoutDefaults() {
+            const timeoutDef = strategyDefinitions.timeout?.params || {};
+            setFieldDefaults('formA1Timeout', timeoutDef.a1_timeout_minutes, 0);
+        }
+
+        // 应用资金池参数默认值和验证属性
+        function applyCapitalDefaults() {
+            const capitalDefaults = strategyDefaults.capital || {};
+            const capitalDef = strategyDefinitions.capital || {};
+
+            document.getElementById('formCapitalStrategy').value = capitalDef._meta?.default_strategy || 'guding';
+            document.getElementById('formCapitalEntryMode').value = capitalDef.entry_modes?.default || 'compound';
+
+            // guding 策略参数
+            const gudingDef = capitalDef.strategies?.guding || {};
+            setFieldDefaults('formWithdrawThreshold', gudingDef.withdrawal_threshold, 2.0);
+            setFieldDefaults('formWithdrawRetain', gudingDef.withdrawal_retain, 1.5);
+
+            // 爆仓阈值（common_params）
+            const commonDef = capitalDef.common_params || {};
+            setFieldDefaults('formLiquidationThreshold', commonDef.liquidation_threshold, 0.1);
+        }
+
+        // 设置单个字段的默认值和验证属性
+        function setFieldDefaults(fieldId, paramDef, fallbackValue) {
+            const field = document.getElementById(fieldId);
+            if (!field) return;
+
+            const def = paramDef || {};
+            const defaultValue = def.default !== undefined ? def.default : fallbackValue;
+            const paramType = def.type || 'float';
+            const min = def.min;
+            const max = def.max;
+            const description = def.description || '';
+
+            // 设置默认值
+            field.value = defaultValue;
+
+            // 设置 min/max 属性用于浏览器原生验证
+            if (min !== undefined) {
+                field.setAttribute('min', min);
+            }
+            if (max !== undefined) {
+                field.setAttribute('max', max);
+            }
+
+            // 设置 step 属性（根据类型）
+            if (paramType === 'int') {
+                field.setAttribute('step', '1');
+            } else if (paramType === 'float') {
+                field.setAttribute('step', '0.01');
+            }
+
+            // 设置 title 属性显示描述（鼠标悬停提示）
+            if (description) {
+                const constraints = [];
+                if (min !== undefined) constraints.push(`最小: ${min}`);
+                if (max !== undefined) constraints.push(`最大: ${max}`);
+                const tooltip = description + (constraints.length ? ` (${constraints.join(', ')})` : '');
+                field.setAttribute('title', tooltip);
+            }
+        }
+
+        // 验证表单数据
+        function validateFormData(formData) {
+            const errors = [];
+
+            // 验证振幅参数
+            const ampDef = strategyDefinitions.amplitude?.params || {};
+            errors.push(...validateParam('decay_factor', formData.amplitude.decay_factor, ampDef.decay_factor));
+            errors.push(...validateParam('stop_loss', formData.amplitude.stop_loss, ampDef.stop_loss));
+            errors.push(...validateParam('leverage', formData.amplitude.leverage, ampDef.leverage));
+            errors.push(...validateParam('max_entries', formData.amplitude.max_entries, ampDef.max_entries));
+            errors.push(...validateParam('grid_spacing', formData.amplitude.grid_spacing, ampDef.grid_spacing));
+            errors.push(...validateParam('exit_profit', formData.amplitude.exit_profit, ampDef.exit_profit));
+
+            // 验证资金参数
+            const capitalDef = strategyDefinitions.capital?.common_params || {};
+            errors.push(...validateParam('total_amount_quote', formData.amplitude.total_amount_quote, capitalDef.total_amount_quote));
+
+            // 验证超时参数
+            const timeoutDef = strategyDefinitions.timeout?.params || {};
+            errors.push(...validateParam('a1_timeout_minutes', formData.timeout.a1_timeout_minutes, timeoutDef.a1_timeout_minutes));
+
+            // 验证资金池参数
+            const capitalStratDef = strategyDefinitions.capital?.strategies?.[formData.capital.strategy] || {};
+            errors.push(...validateParam('withdraw_threshold', formData.capital.withdraw_threshold, capitalStratDef.withdrawal_threshold));
+            errors.push(...validateParam('withdraw_retain', formData.capital.withdraw_retain, capitalStratDef.withdrawal_retain));
+
+            // 验证权重数组
+            if (formData.amplitude.weights) {
+                const weightsDef = ampDef.weights || {};
+                const validAmps = ampDef.valid_amplitudes?.default || [1, 2, 3, 4, 5, 6, 7, 8, 9];
+                if (formData.amplitude.weights.length !== validAmps.length) {
+                    errors.push(`权重数组长度应为 ${validAmps.length}`);
+                }
+                const sum = formData.amplitude.weights.reduce((a, b) => a + b, 0);
+                if (Math.abs(sum - 1) > 0.01) {
+                    errors.push(`权重数组总和应为 1，当前为 ${sum.toFixed(4)}`);
+                }
+            }
+
+            return errors;
+        }
+
+        // 验证单个参数
+        function validateParam(name, value, paramDef) {
+            const errors = [];
+            if (!paramDef) return errors;
+
+            const def = paramDef;
+            const min = def.min;
+            const max = def.max;
+            const paramType = def.type || 'float';
+            const description = def.description || name;
+
+            // 类型验证
+            if (paramType === 'int' && !Number.isInteger(value)) {
+                errors.push(`${description}: 应为整数`);
+            }
+
+            // 范围验证
+            if (min !== undefined && value < min) {
+                errors.push(`${description}: 不能小于 ${min}`);
+            }
+            if (max !== undefined && value > max) {
+                errors.push(`${description}: 不能大于 ${max}`);
+            }
+
+            return errors;
+        }
+
+        // 显示验证错误
+        function showValidationErrors(errors) {
+            if (errors.length === 0) return true;
+
+            alert('参数验证失败:\n' + errors.join('\n'));
+            return false;
+        }
+
+        // 切换行情算法参数显示
+        function toggleMarketParams() {
+            const algo = document.getElementById('formMarketAlgorithm').value;
+            document.querySelectorAll('.dual-thrust-params').forEach(el => el.style.display = algo === 'dual_thrust' ? 'flex' : 'none');
+            document.querySelectorAll('.improved-params').forEach(el => el.style.display = algo === 'improved' ? 'flex' : 'none');
+            document.querySelectorAll('.composite-params').forEach(el => el.style.display = algo === 'composite' ? 'flex' : 'none');
+            document.querySelectorAll('.adx-params').forEach(el => el.style.display = algo === 'adx' ? 'flex' : 'none');
+        }
+
+        // 切换入场策略参数显示
+        function toggleEntryParams() {
+            const strategy = document.getElementById('formEntryStrategy').value;
+            document.querySelectorAll('.atr-params').forEach(el => el.style.display = strategy === 'atr' ? 'flex' : 'none');
+            document.querySelectorAll('.bollinger-params').forEach(el => el.style.display = strategy === 'bollinger' ? 'flex' : 'none');
+        }
+
+        // 收集表单数据
+        function collectFormData() {
+            // 收集交易状态
+            const tradingStatuses = [];
+            if (document.getElementById('formStatusRanging').checked) tradingStatuses.push('ranging');
+            if (document.getElementById('formStatusTrendingUp').checked) tradingStatuses.push('trending_up');
+            if (document.getElementById('formStatusTrendingDown').checked) tradingStatuses.push('trending_down');
+
+            // 收集行情算法参数
+            const algo = document.getElementById('formMarketAlgorithm').value;
+            let algoConfig = {};
+            if (algo === 'dual_thrust') {
+                algoConfig = {
+                    n_days: parseInt(document.getElementById('formDualNDays').value),
+                    k1: parseFloat(document.getElementById('formDualK1').value),
+                    k2: parseFloat(document.getElementById('formDualK2').value),
+                    down_confirm_days: parseInt(document.getElementById('formDualDownConfirm').value),
+                    k2_down_factor: parseFloat(document.getElementById('formDualK2Down').value),
+                    cooldown_days: parseInt(document.getElementById('formDualCooldown').value)
+                };
+            } else if (algo === 'improved') {
+                algoConfig = {
+                    lookback_period: parseInt(document.getElementById('formImprovedLookback').value),
+                    min_range_duration: parseInt(document.getElementById('formImprovedMinDuration').value),
+                    max_range_pct: parseFloat(document.getElementById('formImprovedMaxRangePct').value),
+                    breakout_threshold: parseFloat(document.getElementById('formImprovedBreakout').value)
+                };
+            } else if (algo === 'composite') {
+                algoConfig = {
+                    adx_period: parseInt(document.getElementById('formCompositeAdxPeriod').value),
+                    adx_threshold: parseInt(document.getElementById('formCompositeAdxThreshold').value),
+                    atr_period: parseInt(document.getElementById('formCompositeAtrPeriod').value),
+                    atr_multiplier: parseFloat(document.getElementById('formCompositeAtrMultiplier').value)
+                };
+            } else if (algo === 'adx') {
+                algoConfig = {
+                    period: parseInt(document.getElementById('formAdxPeriod').value),
+                    threshold: parseInt(document.getElementById('formAdxThreshold').value)
+                };
+            }
+
+            // 收集入场策略参数
+            const entryStrategy = document.getElementById('formEntryStrategy').value;
+            let entryConfig = { strategy: entryStrategy };
+            if (entryStrategy === 'atr') {
+                entryConfig.atr_period = parseInt(document.getElementById('formEntryAtrPeriod').value);
+                entryConfig.atr_multiplier = parseFloat(document.getElementById('formEntryAtrMultiplier').value);
+                entryConfig.min_spacing = parseFloat(document.getElementById('formEntryMinSpacing').value);
+                entryConfig.max_spacing = parseFloat(document.getElementById('formEntryMaxSpacing').value);
+            } else if (entryStrategy === 'bollinger') {
+                entryConfig.period = parseInt(document.getElementById('formBollingerPeriod').value);
+                entryConfig.num_std = parseFloat(document.getElementById('formBollingerStd').value);
+            }
+
+            // 尝试解析权重 JSON
+            let weights = [];
+            try {
+                weights = JSON.parse(document.getElementById('formWeights').value);
+            } catch (e) {
+                weights = [0.0831, 0.2996, 0.3167, 0.1365, 0.1005, 0.0281, 0.027, 0.0066, 0.0018];
+            }
+
+            return {
+                name: document.getElementById('formCaseName').value,
+                symbol: document.getElementById('formSymbol').value,
+                testnet: parseInt(document.getElementById('formTestnet').value),
+                description: document.getElementById('formDescription').value,
+                amplitude: {
+                    decay_factor: parseFloat(document.getElementById('formDecayFactor').value),
+                    stop_loss: parseFloat(document.getElementById('formStopLoss').value),
+                    total_amount_quote: parseFloat(document.getElementById('formTotalAmount').value),
+                    leverage: parseInt(document.getElementById('formLeverage').value),
+                    max_entries: parseInt(document.getElementById('formMaxEntries').value),
+                    grid_spacing: parseFloat(document.getElementById('formGridSpacing').value),
+                    exit_profit: parseFloat(document.getElementById('formExitProfit').value),
+                    weights: weights
+                },
+                market: {
+                    algorithm: algo,
+                    trading_statuses: tradingStatuses,
+                    algo_config: algoConfig
+                },
+                entry: entryConfig,
+                timeout: {
+                    a1_timeout_minutes: parseInt(document.getElementById('formA1Timeout').value)
+                },
+                capital: {
+                    strategy: document.getElementById('formCapitalStrategy').value,
+                    entry_mode: document.getElementById('formCapitalEntryMode').value,
+                    withdraw_threshold: parseFloat(document.getElementById('formWithdrawThreshold').value),
+                    withdraw_retain: parseFloat(document.getElementById('formWithdrawRetain').value),
+                    liquidation_threshold: parseFloat(document.getElementById('formLiquidationThreshold').value)
+                }
+            };
+        }
+
+        // 保存配置
+        async function saveCase() {
+            const caseId = document.getElementById('editCaseId').value;
+            const formData = collectFormData();
+
+            // 表单验证
+            const errors = validateFormData(formData);
+            if (!showValidationErrors(errors)) {
+                return; // 验证失败，不提交
+            }
+
+            try {
+                let response;
+                if (caseId) {
+                    // 更新
+                    response = await fetch(`${API_BASE}/live-cases/${caseId}`, {
+                        method: 'PUT',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(formData)
+                    });
+                } else {
+                    // 创建
+                    response = await fetch(`${API_BASE}/live-cases`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(formData)
+                    });
+                }
+
+                const result = await response.json();
+                if (result.success) {
+                    bootstrap.Modal.getInstance(document.getElementById('caseFormModal')).hide();
+                    loadCases();
+                    alert(caseId ? '配置已更新' : '配置已创建');
+                } else {
+                    alert('保存失败: ' + result.error);
+                }
+            } catch (e) {
+                console.error('保存配置失败:', e);
+                alert('保存失败: ' + e.message);
+            }
+        }
+
+        // 编辑配置
+        async function editCase(caseId) {
+            try {
+                const response = await fetch(`${API_BASE}/live-cases/${caseId}`);
+                const data = await response.json();
+                if (data.success) {
+                    const caseData = data.data;
+                    fillFormWithCase(caseData);
+                    document.getElementById('caseFormTitle').textContent = '编辑实盘配置';
+                    document.getElementById('editCaseId').value = caseId;
+                    new bootstrap.Modal(document.getElementById('caseFormModal')).show();
+                }
+            } catch (e) {
+                console.error('加载配置失败:', e);
+            }
+        }
+
+        // 用配置数据填充表单
+        function fillFormWithCase(caseData) {
+            document.getElementById('formCaseName').value = caseData.name || '';
+            document.getElementById('formSymbol').value = caseData.symbol || 'BTCUSDT';
+            document.getElementById('formTestnet').value = caseData.testnet ? '1' : '0';
+            document.getElementById('formDescription').value = caseData.description || '';
+
+            // 振幅参数
+            const amp = caseData.amplitude || {};
+            document.getElementById('formDecayFactor').value = amp.decay_factor || 0.5;
+            document.getElementById('formStopLoss').value = amp.stop_loss || 0.08;
+            document.getElementById('formTotalAmount').value = amp.total_amount_quote || 10000;
+            document.getElementById('formLeverage').value = amp.leverage || 10;
+            document.getElementById('formMaxEntries').value = amp.max_entries || 4;
+            document.getElementById('formGridSpacing').value = amp.grid_spacing || 0.01;
+            document.getElementById('formExitProfit').value = amp.exit_profit || 0.01;
+            if (amp.weights) {
+                document.getElementById('formWeights').value = JSON.stringify(amp.weights);
+            }
+
+            // 行情参数
+            const market = caseData.market || {};
+            document.getElementById('formMarketAlgorithm').value = market.algorithm || 'always_ranging';
+            const statuses = market.trading_statuses || [];
+            document.getElementById('formStatusRanging').checked = statuses.includes('ranging');
+            document.getElementById('formStatusTrendingUp').checked = statuses.includes('trending_up');
+            document.getElementById('formStatusTrendingDown').checked = statuses.includes('trending_down');
+
+            // 行情算法配置
+            const algoConfig = market.algo_config || {};
+            if (market.algorithm === 'dual_thrust') {
+                document.getElementById('formDualNDays').value = algoConfig.n_days || 4;
+                document.getElementById('formDualK1').value = algoConfig.k1 || 0.4;
+                document.getElementById('formDualK2').value = algoConfig.k2 || 0.4;
+                document.getElementById('formDualDownConfirm').value = algoConfig.down_confirm_days || 2;
+                document.getElementById('formDualK2Down').value = algoConfig.k2_down_factor || 0.8;
+                document.getElementById('formDualCooldown').value = algoConfig.cooldown_days || 1;
+            }
+            toggleMarketParams();
+
+            // 入场策略
+            const entry = caseData.entry || {};
+            document.getElementById('formEntryStrategy').value = entry.strategy || 'fixed';
+            if (entry.strategy === 'atr') {
+                document.getElementById('formEntryAtrPeriod').value = entry.atr_period || 14;
+                document.getElementById('formEntryAtrMultiplier').value = entry.atr_multiplier || 1.5;
+                document.getElementById('formEntryMinSpacing').value = entry.min_spacing || 0.005;
+                document.getElementById('formEntryMaxSpacing').value = entry.max_spacing || 0.02;
+            } else if (entry.strategy === 'bollinger') {
+                document.getElementById('formBollingerPeriod').value = entry.period || 20;
+                document.getElementById('formBollingerStd').value = entry.num_std || 2;
+            }
+            toggleEntryParams();
+
+            // 超时参数
+            const timeout = caseData.timeout || {};
+            document.getElementById('formA1Timeout').value = timeout.a1_timeout_minutes || 0;
+
+            // 资金池参数
+            const capital = caseData.capital || {};
+            document.getElementById('formCapitalStrategy').value = capital.strategy || 'guding';
+            document.getElementById('formCapitalEntryMode').value = capital.entry_mode || 'fixed';
+            document.getElementById('formWithdrawThreshold').value = capital.withdraw_threshold || 2.0;
+            document.getElementById('formWithdrawRetain').value = capital.withdraw_retain || 1.5;
+            document.getElementById('formLiquidationThreshold').value = capital.liquidation_threshold || 0.1;
+        }
+
+        // 显示配置详情
+        async function showCaseDetail(caseId) {
+            try {
+                const response = await fetch(`${API_BASE}/live-cases/${caseId}`);
+                const data = await response.json();
+                if (data.success) {
+                    currentCaseDetail = data.data;
+                    const caseData = data.data;
+
+                    let html = `
+                        <div class="row">
+                            <div class="col-md-6">
+                                <h6>基本信息</h6>
+                                <table class="table table-sm">
+                                    <tr><td>ID</td><td>${caseData.id}</td></tr>
+                                    <tr><td>名称</td><td>${caseData.name || '-'}</td></tr>
+                                    <tr><td>交易对</td><td>${caseData.symbol}</td></tr>
+                                    <tr><td>网络</td><td>${caseData.testnet ? '测试网' : '主网'}</td></tr>
+                                    <tr><td>状态</td><td>${getStatusBadge(caseData.status)}</td></tr>
+                                    <tr><td>创建时间</td><td>${caseData.created_at || '-'}</td></tr>
+                                    <tr><td>描述</td><td>${caseData.description || '-'}</td></tr>
+                                </table>
+                            </div>
+                            <div class="col-md-6">
+                                <h6>振幅参数</h6>
+                                <table class="table table-sm">
+                                    <tr><td>衰减因子</td><td>${caseData.amplitude?.decay_factor || '-'}</td></tr>
+                                    <tr><td>止损比例</td><td>${caseData.amplitude?.stop_loss || '-'}</td></tr>
+                                    <tr><td>总金额</td><td>${caseData.amplitude?.total_amount_quote || '-'}</td></tr>
+                                    <tr><td>杠杆</td><td>${caseData.amplitude?.leverage || '-'}</td></tr>
+                                    <tr><td>最大层级</td><td>${caseData.amplitude?.max_entries || '-'}</td></tr>
+                                    <tr><td>网格间距</td><td>${caseData.amplitude?.grid_spacing || '-'}</td></tr>
+                                    <tr><td>止盈比例</td><td>${caseData.amplitude?.exit_profit || '-'}</td></tr>
+                                </table>
+                            </div>
+                        </div>
+                        <hr>
+                        <div class="row">
+                            <div class="col-md-6">
+                                <h6>行情算法</h6>
+                                <table class="table table-sm">
+                                    <tr><td>算法</td><td>${caseData.market?.algorithm || '-'}</td></tr>
+                                    <tr><td>交易状态</td><td>${(caseData.market?.trading_statuses || []).join(', ') || '-'}</td></tr>
+                                </table>
+                            </div>
+                            <div class="col-md-6">
+                                <h6>入场策略</h6>
+                                <table class="table table-sm">
+                                    <tr><td>策略</td><td>${caseData.entry?.strategy || '-'}</td></tr>
+                                </table>
+                            </div>
+                        </div>
+                        <hr>
+                        <div class="row">
+                            <div class="col-md-6">
+                                <h6>超时参数</h6>
+                                <table class="table table-sm">
+                                    <tr><td>A1超时</td><td>${caseData.timeout?.a1_timeout_minutes || 0} 分钟</td></tr>
+                                </table>
+                            </div>
+                            <div class="col-md-6">
+                                <h6>资金池参数</h6>
+                                <table class="table table-sm">
+                                    <tr><td>策略</td><td>${caseData.capital?.strategy || '-'}</td></tr>
+                                    <tr><td>入场模式</td><td>${caseData.capital?.entry_mode || '-'}</td></tr>
+                                    <tr><td>提现阈值</td><td>${caseData.capital?.withdraw_threshold || '-'}</td></tr>
+                                    <tr><td>保留金额</td><td>${caseData.capital?.withdraw_retain || '-'}</td></tr>
+                                </table>
+                            </div>
+                        </div>
+                    `;
+
+                    document.getElementById('caseDetailContent').innerHTML = html;
+                    new bootstrap.Modal(document.getElementById('caseDetailModal')).show();
+                }
+            } catch (e) {
+                console.error('加载配置详情失败:', e);
+            }
+        }
+
+        // 从详情模态框编辑
+        function editCaseFromDetail() {
+            bootstrap.Modal.getInstance(document.getElementById('caseDetailModal')).hide();
+            if (currentCaseDetail) {
+                editCase(currentCaseDetail.id);
+            }
+        }
+
+        // 从详情模态框启动
+        function startCaseFromDetail() {
+            if (currentCaseDetail) {
+                startCase(currentCaseDetail.id);
+            }
+        }
+
+        // 启动实盘
+        async function startCase(caseId) {
+            if (!confirm('确定要启动此实盘配置吗？\n这将创建一个新的交易会话。')) return;
+
+            try {
+                const response = await fetch(`${API_BASE}/traders/start/${caseId}`, {
+                    method: 'POST'
+                });
+                const result = await response.json();
+                if (result.success) {
+                    alert('实盘已启动! Session ID: ' + result.session_id);
+                    loadCases();
+                    loadActiveSessions();
+                    // 切换到活跃会话标签页
+                    document.querySelector('a[data-bs-toggle="tab"][href="#active"]').click();
+                } else {
+                    alert('启动失败: ' + result.error);
+                }
+            } catch (e) {
+                console.error('启动实盘失败:', e);
+                alert('启动失败: ' + e.message);
+            }
+        }
+
+        // 复制配置
+        async function copyCase(caseId) {
+            if (!confirm('确定要复制此配置吗？')) return;
+
+            try {
+                const response = await fetch(`${API_BASE}/live-cases/${caseId}/copy`, {
+                    method: 'POST'
+                });
+                const result = await response.json();
+                if (result.success) {
+                    alert('配置已复制! 新配置ID: ' + result.new_case_id);
+                    loadCases();
+                } else {
+                    alert('复制失败: ' + result.error);
+                }
+            } catch (e) {
+                console.error('复制配置失败:', e);
+                alert('复制失败: ' + e.message);
+            }
+        }
+
+        // 重置配置
+        async function resetCase(caseId) {
+            if (!confirm('确定要重置此配置吗？\n这将删除所有关联的会话数据！')) return;
+
+            try {
+                const response = await fetch(`${API_BASE}/live-cases/${caseId}/reset`, {
+                    method: 'POST'
+                });
+                const result = await response.json();
+                if (result.success) {
+                    alert('配置已重置! ' + result.message);
+                    loadCases();
+                    loadSessions();
+                } else {
+                    alert('重置失败: ' + result.error);
+                }
+            } catch (e) {
+                console.error('重置配置失败:', e);
+                alert('重置失败: ' + e.message);
+            }
+        }
+
+        // 删除配置
+        async function deleteCase(caseId) {
+            if (!confirm('确定要删除此配置吗？\n此操作不可恢复！')) return;
+
+            try {
+                const response = await fetch(`${API_BASE}/live-cases/${caseId}`, {
+                    method: 'DELETE'
+                });
+                const result = await response.json();
+                if (result.success) {
+                    alert('配置已删除');
+                    loadCases();
+                } else {
+                    alert('删除失败: ' + result.error);
+                }
+            } catch (e) {
+                console.error('删除配置失败:', e);
+                alert('删除失败: ' + e.message);
+            }
+        }
+
+        // 暂停交易器
+        async function pauseTrader(sessionId) {
+            if (!confirm('确定要暂停此交易会话吗？\n暂停后将停止新订单下单，但继续处理现有订单的止盈/止损事件。')) return;
+
+            try {
+                const response = await fetch(`${API_BASE}/traders/pause/${sessionId}`, {
+                    method: 'POST'
+                });
+                const result = await response.json();
+                if (result.success) {
+                    alert('交易器已暂停');
+                    loadActiveSessions();
+                } else {
+                    alert('暂停失败: ' + result.error);
+                }
+            } catch (e) {
+                console.error('暂停交易器失败:', e);
+                alert('暂停失败: ' + e.message);
+            }
+        }
+
+        // 恢复交易器
+        async function resumeTrader(sessionId) {
+            if (!confirm('确定要恢复此交易会话吗？\n恢复时将同步交易所状态后继续交易。')) return;
+
+            try {
+                const response = await fetch(`${API_BASE}/traders/resume/${sessionId}`, {
+                    method: 'POST'
+                });
+                const result = await response.json();
+                if (result.success) {
+                    alert('交易器已恢复');
+                    loadActiveSessions();
+                } else {
+                    alert('恢复失败: ' + result.error);
+                }
+            } catch (e) {
+                console.error('恢复交易器失败:', e);
+                alert('恢复失败: ' + e.message);
+            }
+        }
+
+        // 停止交易器
+        async function stopTrader(sessionId) {
+            if (!confirm('确定要停止此交易会话吗？\n停止后将断开连接并结束会话。')) return;
+
+            try {
+                const response = await fetch(`${API_BASE}/traders/stop/${sessionId}`, {
+                    method: 'POST'
+                });
+                const result = await response.json();
+                if (result.success) {
+                    alert('交易器已停止');
+                    loadActiveSessions();
+                    loadSessions();
+                } else {
+                    alert('停止失败: ' + result.error);
+                }
+            } catch (e) {
+                console.error('停止交易器失败:', e);
+                alert('停止失败: ' + e.message);
+            }
+        }
+
+        // 重置会话
+        async function resetSession(sessionId) {
+            if (!confirm('确定要重置此会话吗？\n这将清除会话的所有状态数据！')) return;
+
+            try {
+                const response = await fetch(`${API_BASE}/live-sessions/${sessionId}/reset`, {
+                    method: 'POST'
+                });
+                const result = await response.json();
+                if (result.success) {
+                    alert('会话已重置');
+                    loadSessions();
+                } else {
+                    alert('重置失败: ' + result.error);
+                }
+            } catch (e) {
+                console.error('重置会话失败:', e);
+                alert('重置失败: ' + e.message);
+            }
+        }
+
+        // 显示会话详情
+        async function showSession(sessionId) {
+            try {
+                const response = await fetch(`${API_BASE}/live-sessions/${sessionId}`);
+                const data = await response.json();
+                if (data.success) {
+                    const session = data.data;
+
+                    // 获取订单
+                    const ordersResp = await fetch(`${API_BASE}/live-sessions/${sessionId}/orders`);
+                    const ordersData = await ordersResp.json();
+                    const orders = ordersData.data || [];
+
+                    // 获取交易记录
+                    const tradesResp = await fetch(`${API_BASE}/live-sessions/${sessionId}/trades`);
+                    const tradesData = await tradesResp.json();
+                    const trades = tradesData.data || [];
+
+                    let html = `
+                        <div class="row">
+                            <div class="col-md-6">
+                                <h6>基本信息</h6>
+                                <table class="table table-sm">
+                                    <tr><td>会话ID</td><td>${session.id}</td></tr>
+                                    <tr><td>配置ID</td><td>${session.case_id || '-'}</td></tr>
+                                    <tr><td>交易对</td><td>${session.symbol}</td></tr>
+                                    <tr><td>状态</td><td>${getStatusBadge(session.status)}</td></tr>
+                                    <tr><td>开始时间</td><td>${session.start_time || '-'}</td></tr>
+                                    <tr><td>结束时间</td><td>${session.end_time || '-'}</td></tr>
+                                    <tr><td>总交易次数</td><td>${session.total_trades || 0}</td></tr>
+                                    <tr><td>净盈亏</td><td class="${getProfitClass(session.net_profit)}">${formatCurrency(session.net_profit)}</td></tr>
+                                </table>
+                            </div>
+                            <div class="col-md-6">
+                                <h6>订单列表</h6>
+                                <div style="max-height: 200px; overflow-y: auto;">
+                                    <table class="table table-sm">
+                                        <thead><tr><th>层级</th><th>状态</th><th>入场价</th><th>盈亏</th></tr></thead>
+                                        <tbody>
+                                            ${orders.map(o => `
+                                                <tr>
+                                                    <td>${getLevelBadge(o.level)}</td>
+                                                    <td><span class="state-${o.state}">${o.state}</span></td>
+                                                    <td>${formatNumber(o.entry_price)}</td>
+                                                    <td class="${getProfitClass(o.profit)}">${formatCurrency(o.profit)}</td>
+                                                </tr>
+                                            `).join('')}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+                        <hr>
+                        <h6>交易记录 (${trades.length})</h6>
+                        <div style="max-height: 200px; overflow-y: auto;">
+                            <table class="table table-sm">
+                                <thead><tr><th>类型</th><th>入场价</th><th>出场价</th><th>盈亏</th><th>时间</th></tr></thead>
+                                <tbody>
+                                    ${trades.map(t => `
+                                        <tr>
+                                            <td>${t.trade_type === 'take_profit' ? '止盈' : '止损'}</td>
+                                            <td>${formatNumber(t.entry_price)}</td>
+                                            <td>${formatNumber(t.exit_price)}</td>
+                                            <td class="${getProfitClass(t.profit)}">${formatCurrency(t.profit)}</td>
+                                            <td>${t.exit_time || '-'}</td>
+                                        </tr>
+                                    `).join('')}
+                                </tbody>
+                            </table>
+                        </div>
+                    `;
+
+                    document.getElementById('sessionModalContent').innerHTML = html;
+                    new bootstrap.Modal(document.getElementById('sessionModal')).show();
+                }
+            } catch (e) {
+                console.error('加载会话详情失败:', e);
+            }
+        }
+
+        // 自动刷新
+        function startAutoRefresh(interval = 5000) {
+            if (refreshInterval) {
+                clearInterval(refreshInterval);
+            }
+            refreshInterval = setInterval(loadAll, interval);
+        }
+
+        // 页面加载完成后初始化
+        document.addEventListener('DOMContentLoaded', () => {
+            loadAll();
+            startAutoRefresh(10000); // 10秒刷新一次
+        });
+    </script>
+</body>
+</html>

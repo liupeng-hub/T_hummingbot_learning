@@ -1346,18 +1346,16 @@ class Autofish_AmplitudeAnalyzer:
         def build_config_str(decay_factor: float, decay_key: str) -> str:
             weights_dict = self.weights.get(decay_key, {})
             max_entries = min(4, len(weights_dict))
-            
+
             weight_list = []
             for amp in sorted(weights_dict.keys()):
                 w = weights_dict.get(amp, Decimal("0"))
                 weight_list.append(round(float(w), 4))
-            
+
             valid_amps = sorted(weights_dict.keys())
             total_ret = sum(self.expected_returns.get(amp, Decimal("0")) for amp in valid_amps)
-            
+
             return (f'  "d_{decay_factor}":{{\n'
-                    f'    "symbol":"{self.symbol}",\n'
-                    f'    "total_amount_quote":5000,\n'
                     f'    "leverage":{int(self.leverage)},\n'
                     f'    "decay_factor":{decay_factor},\n'
                     f'    "max_entries":{max_entries},\n'
@@ -1437,8 +1435,6 @@ class Autofish_AmplitudeAnalyzer:
             
             return [
                 f'    "d_{decay_factor}":{{',
-                f'      "symbol":"{self.symbol}",',
-                f'      "total_amount_quote":5000,',
                 f'      "leverage":{int(self.leverage)},',
                 f'      "decay_factor":{decay_factor},',
                 f'      "max_entries":{max_entries},',
@@ -2603,5 +2599,650 @@ class CapitalPoolFactory:
                 tracker.withdrawal_threshold = Decimal(str(strategy_params['withdrawal_threshold']))
             if 'withdrawal_retain' in strategy_params:
                 tracker.withdrawal_retain = Decimal(str(strategy_params['withdrawal_retain']))
-        
+
         return tracker
+
+
+# ============================================================================
+# ConfigLoader - 配置加载器
+# ============================================================================
+
+class ConfigLoader:
+    """配置加载器
+
+    提供统一的配置加载接口，支持：
+    - 从默认配置文件加载
+    - 从自定义配置文件加载
+    - 从数据库 case_id 加载
+    - 配置合并
+    - 策略默认参数获取
+    - 振幅配置加载
+    """
+
+    DEFAULT_CONFIG_PATH = "out/autofish/default_config.json"
+    STRATEGY_DEFAULTS_PATH = "out/autofish/strategy_defaults.json"
+    AMPLITUDE_DIR = "out/autofish"
+
+    _default_config_cache: Optional[Dict] = None
+    _strategy_defaults_cache: Optional[Dict] = None
+
+    # ==================== 默认配置加载 ====================
+
+    @classmethod
+    def load_default_config(cls) -> Dict:
+        """加载默认配置（带缓存）"""
+        if cls._default_config_cache is not None:
+            return cls._default_config_cache.copy()
+
+        # 获取项目根目录
+        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        config_path = os.path.join(base_dir, cls.DEFAULT_CONFIG_PATH)
+
+        if not os.path.exists(config_path):
+            logger.warning(f"默认配置文件不存在: {config_path}")
+            return {}
+
+        with open(config_path, 'r', encoding='utf-8') as f:
+            config = json.load(f)
+
+        cls._default_config_cache = config
+        return config.copy()
+
+    @classmethod
+    def load_from_file(cls, path: str, validate: bool = True) -> Dict:
+        """从指定文件加载配置
+
+        Args:
+            path: 配置文件路径
+            validate: 是否验证必要字段
+
+        Returns:
+            配置字典
+
+        Raises:
+            FileNotFoundError: 文件不存在
+            ValueError: 缺少必要字段
+        """
+        if not os.path.exists(path):
+            raise FileNotFoundError(f"配置文件不存在: {path}")
+
+        with open(path, 'r', encoding='utf-8') as f:
+            config = json.load(f)
+
+        if validate:
+            # 验证必要字段
+            if not config.get("symbol"):
+                raise ValueError("配置文件缺少 symbol 字段")
+
+            # 自动检测模式
+            if config.get("date_start") or config.get("date_end"):
+                config["_mode"] = "backtest"
+            else:
+                config["_mode"] = "live"
+
+        return config
+
+    # ==================== 策略默认参数加载 ====================
+
+    DEFAULTS_DIR = "out/autofish/defaults"
+
+    @classmethod
+    def _get_defaults_dir(cls) -> str:
+        """获取 defaults 目录路径"""
+        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        return os.path.join(base_dir, cls.DEFAULTS_DIR)
+
+    @classmethod
+    def load_defaults_with_meta(cls, strategy_type: str) -> Dict:
+        """加载带元信息的默认参数定义
+
+        Args:
+            strategy_type: 策略类型（entry_strategy/market_strategy/capital_strategy/timeout/amplitude）
+
+        Returns:
+            包含元信息的参数定义，格式如：
+            {
+                "_meta": {"description": "...", "default_strategy": "atr"},
+                "strategies": {
+                    "atr": {
+                        "_meta": {"description": "..."},
+                        "atr_period": {"default": 14, "type": "int", "min": 1, "max": 100}
+                    }
+                }
+            }
+        """
+        defaults_dir = cls._get_defaults_dir()
+        filename = f"{strategy_type}.json"
+        filepath = os.path.join(defaults_dir, filename)
+
+        if os.path.exists(filepath):
+            with open(filepath, 'r', encoding='utf-8') as f:
+                return json.load(f)
+
+        logger.warning(f"默认参数文件不存在: {filepath}")
+        return {}
+
+    @classmethod
+    def get_entry_strategy_definition(cls, strategy_name: str = None) -> Dict:
+        """获取入场策略参数定义（含元信息）
+
+        用于 Web 表单渲染、参数验证
+
+        Args:
+            strategy_name: 策略名称，不指定则返回所有策略定义
+
+        Returns:
+            参数定义字典
+        """
+        definition = cls.load_defaults_with_meta("entry_strategy")
+        strategies = definition.get("strategies", {})
+
+        if strategy_name:
+            return strategies.get(strategy_name, {})
+        return definition
+
+    @classmethod
+    def get_market_strategy_definition(cls, algorithm_name: str = None) -> Dict:
+        """获取行情策略参数定义（含元信息）"""
+        definition = cls.load_defaults_with_meta("market_strategy")
+        algorithms = definition.get("algorithms", {})
+
+        if algorithm_name:
+            return algorithms.get(algorithm_name, {})
+        return definition
+
+    @classmethod
+    def get_capital_strategy_definition(cls, strategy_name: str = None) -> Dict:
+        """获取资金策略参数定义（含元信息）"""
+        definition = cls.load_defaults_with_meta("capital_strategy")
+        strategies = definition.get("strategies", {})
+
+        if strategy_name:
+            return strategies.get(strategy_name, {})
+        return definition
+
+    @classmethod
+    def get_timeout_definition(cls) -> Dict:
+        """获取超时参数定义（含元信息）"""
+        return cls.load_defaults_with_meta("timeout")
+
+    @classmethod
+    def get_amplitude_definition(cls) -> Dict:
+        """获取振幅参数定义（含元信息）"""
+        return cls.load_defaults_with_meta("amplitude")
+
+    @classmethod
+    def get_default_value(cls, definition: Dict, param_name: str) -> Any:
+        """从参数定义中提取默认值
+
+        Args:
+            definition: 参数定义（含 default 字段）
+            param_name: 参数名称
+
+        Returns:
+            默认值
+        """
+        param_def = definition.get(param_name, {})
+        if isinstance(param_def, dict):
+            return param_def.get("default")
+        return param_def
+
+    @classmethod
+    def extract_defaults_from_definition(cls, definition: Dict) -> Dict:
+        """从参数定义中提取所有默认值
+
+        Args:
+            definition: 参数定义（含 _meta 和各参数定义）
+
+        Returns:
+            只有默认值的字典
+        """
+        result = {}
+        for key, value in definition.items():
+            if key.startswith("_"):
+                continue
+            if isinstance(value, dict):
+                if "default" in value:
+                    result[key] = value["default"]
+                elif key in ["strategies", "algorithms", "params", "common_params"]:
+                    # 递归处理嵌套结构
+                    for sub_key, sub_value in value.items():
+                        if sub_key.startswith("_"):
+                            continue
+                        if isinstance(sub_value, dict):
+                            if "default" in sub_value:
+                                result[sub_key] = sub_value["default"]
+                            else:
+                                # 更深层嵌套
+                                for k, v in sub_value.items():
+                                    if k.startswith("_"):
+                                        continue
+                                    if isinstance(v, dict) and "default" in v:
+                                        result[k] = v["default"]
+        return result
+
+    @classmethod
+    def load_strategy_defaults(cls) -> Dict:
+        """加载扩展策略默认参数（带缓存）
+
+        优先从 defaults 目录加载，回退到 strategy_defaults.json
+        """
+        if cls._strategy_defaults_cache is not None:
+            return cls._strategy_defaults_cache.copy()
+
+        # 尝试从新的 defaults 目录加载并合并
+        defaults_dir = cls._get_defaults_dir()
+        if os.path.exists(defaults_dir):
+            config = {
+                "entry_price_strategy": {},
+                "market_aware": {},
+                "capital_pool_strategy": {},
+                "timeout_first_entry": {}
+            }
+
+            # 加载入场策略
+            entry_def = cls.load_defaults_with_meta("entry_strategy")
+            if entry_def:
+                config["entry_price_strategy"]["strategy"] = entry_def.get("_meta", {}).get("default_strategy", "atr")
+                for name, params in entry_def.get("strategies", {}).items():
+                    config["entry_price_strategy"][name] = cls.extract_defaults_from_definition(params)
+
+            # 加载行情策略
+            market_def = cls.load_defaults_with_meta("market_strategy")
+            if market_def:
+                config["market_aware"]["algorithm"] = market_def.get("_meta", {}).get("default_algorithm", "dual_thrust")
+                config["market_aware"]["trading_statuses"] = market_def.get("trading_statuses", {}).get("default", ["ranging"])
+                for name, params in market_def.get("algorithms", {}).items():
+                    config["market_aware"][name] = cls.extract_defaults_from_definition(params)
+
+            # 加载资金策略
+            capital_def = cls.load_defaults_with_meta("capital_strategy")
+            if capital_def:
+                config["capital_pool_strategy"]["strategy"] = capital_def.get("_meta", {}).get("default_strategy", "guding")
+                config["capital_pool_strategy"]["entry_mode"] = capital_def.get("_meta", {}).get("default_entry_mode", "compound")
+                for name, params in capital_def.get("strategies", {}).items():
+                    config["capital_pool_strategy"][name] = cls.extract_defaults_from_definition(params)
+
+            # 加载超时参数
+            timeout_def = cls.load_defaults_with_meta("timeout")
+            if timeout_def:
+                config["timeout_first_entry"] = cls.extract_defaults_from_definition(timeout_def.get("params", {}))
+
+            cls._strategy_defaults_cache = config
+            return config.copy()
+
+        # 回退到旧的 strategy_defaults.json
+        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        config_path = os.path.join(base_dir, cls.STRATEGY_DEFAULTS_PATH)
+
+        if not os.path.exists(config_path):
+            logger.warning(f"策略默认配置文件不存在: {config_path}")
+            return {}
+
+        with open(config_path, 'r', encoding='utf-8') as f:
+            config = json.load(f)
+
+        cls._strategy_defaults_cache = config
+        return config.copy()
+
+    @classmethod
+    def get_entry_strategy_defaults(cls, strategy_name: str = None) -> Dict:
+        """获取入场策略默认参数
+
+        Args:
+            strategy_name: 策略名称（atr/bollinger/support/composite/fixed），不指定则返回所有
+
+        Returns:
+            指定策略的参数，或所有策略定义
+        """
+        defaults = cls.load_strategy_defaults()
+        entry_config = defaults.get('entry_price_strategy', {})
+
+        if strategy_name:
+            return entry_config.get(strategy_name, {})
+        return entry_config
+
+    @classmethod
+    def get_market_strategy_defaults(cls, algorithm_name: str = None) -> Dict:
+        """获取行情策略默认参数
+
+        Args:
+            algorithm_name: 算法名称（dual_thrust/improved/composite/adx/always_ranging），不指定则返回所有
+
+        Returns:
+            指定算法的参数，或所有算法定义
+        """
+        defaults = cls.load_strategy_defaults()
+        market_config = defaults.get('market_aware', {})
+
+        if algorithm_name:
+            return market_config.get(algorithm_name, {})
+        return market_config
+
+    @classmethod
+    def get_capital_strategy_defaults(cls, strategy_name: str = None) -> Dict:
+        """获取资金策略默认参数
+
+        Args:
+            strategy_name: 策略名称（guding/wenjian/jijin/fuli/baoshou），不指定则返回所有
+
+        Returns:
+            指定策略的参数，或所有策略定义
+        """
+        defaults = cls.load_strategy_defaults()
+        capital_config = defaults.get('capital_pool_strategy', {})
+
+        if strategy_name:
+            return capital_config.get(strategy_name, {})
+        return capital_config
+
+    @classmethod
+    def get_timeout_defaults(cls) -> Dict:
+        """获取超时参数默认值"""
+        defaults = cls.load_strategy_defaults()
+        return defaults.get('timeout_first_entry', {})
+
+    # ==================== 振幅配置加载 ====================
+
+    @classmethod
+    def load_amplitude_config(cls, symbol: str, exchange: str = "binance",
+                               decay_factor: float = None) -> Dict:
+        """加载振幅配置
+
+        Args:
+            symbol: 标的 (BTCUSDT)
+            exchange: 交易所 (binance, longport)
+            decay_factor: 衰减因子，不指定则返回所有预设
+
+        Returns:
+            振幅参数字典
+        """
+        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        filename = f"{exchange}_{symbol}_amplitude_config.json"
+        config_path = os.path.join(base_dir, cls.AMPLITUDE_DIR, filename)
+
+        if not os.path.exists(config_path):
+            logger.warning(f"振幅配置文件不存在: {config_path}")
+            return {}
+
+        with open(config_path, 'r', encoding='utf-8') as f:
+            config = json.load(f)
+
+        if decay_factor is not None:
+            preset_key = f"d_{decay_factor}"
+            return config.get(preset_key, {})
+        return config
+
+    @classmethod
+    def list_available_amplitudes(cls) -> List[Dict]:
+        """列出所有可用的振幅配置文件
+
+        Returns:
+            [{'exchange': 'binance', 'symbol': 'BTCUSDT', 'filename': 'binance_BTCUSDT_amplitude_config.json'}, ...]
+        """
+        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        amplitude_dir = os.path.join(base_dir, cls.AMPLITUDE_DIR)
+
+        if not os.path.exists(amplitude_dir):
+            return []
+
+        files = []
+        for f in os.listdir(amplitude_dir):
+            if f.endswith("_amplitude_config.json"):
+                # 解析: binance_BTCUSDT_amplitude_config.json
+                parts = f.replace("_amplitude_config.json", "").split("_", 1)
+                if len(parts) == 2:
+                    files.append({
+                        "exchange": parts[0],
+                        "symbol": parts[1],
+                        "filename": f
+                    })
+        return files
+
+    # ==================== 数据库配置加载 ====================
+
+    # ==================== 数据库配置加载 ====================
+
+    @classmethod
+    def _parse_json_field(cls, value, default=None):
+        """解析 JSON 字段"""
+        if not value:
+            return default or {}
+        if isinstance(value, dict):
+            return value
+        try:
+            return json.loads(value)
+        except:
+            return default or {}
+
+    @classmethod
+    def _parse_case(cls, case: Dict, is_live: bool = True) -> Dict:
+        """解析 case 记录为统一配置格式
+
+        Args:
+            case: 数据库记录（live_cases 或 test_cases）
+            is_live: 是否为实盘配置
+
+        Returns:
+            统一格式的配置字典
+        """
+        config = {
+            "symbol": case.get("symbol"),
+            "amplitude": cls._parse_json_field(case.get("amplitude")),
+            "market": cls._parse_json_field(case.get("market")),
+            "entry": cls._parse_json_field(case.get("entry")),
+            "timeout": cls._parse_json_field(case.get("timeout")),
+            "capital": cls._parse_json_field(case.get("capital")),
+        }
+
+        if is_live:
+            # 实盘特有字段
+            config["testnet"] = bool(case.get("testnet", 1))
+        else:
+            # 回测特有字段
+            config["interval"] = case.get("interval", "1m")
+            config["date_start"] = case.get("date_start")
+            config["date_end"] = case.get("date_end")
+            config["test_type"] = case.get("test_type", "market_aware")
+
+        return config
+
+    @classmethod
+    def load_from_case_id(cls, case_id: int) -> Dict:
+        """从 live_cases 表加载配置（实盘）
+
+        Args:
+            case_id: 实盘配置 ID
+
+        Returns:
+            配置字典
+        """
+        from database.live_trading_db import LiveTradingDB
+
+        db = LiveTradingDB()
+        case = db.get_case(case_id)
+
+        if not case:
+            raise ValueError(f"case_id={case_id} 不存在")
+
+        return cls._parse_case(case, is_live=True)
+
+    @classmethod
+    def load_from_test_case_id(cls, case_id: int) -> Dict:
+        """从 test_cases 表加载配置（回测）
+
+        Args:
+            case_id: 测试用例 ID
+
+        Returns:
+            配置字典
+        """
+        from database.test_results_db import TestResultsDB
+
+        db = TestResultsDB()
+        case = db.get_case(case_id)
+
+        if not case:
+            raise ValueError(f"test_case_id={case_id} 不存在")
+
+        return cls._parse_case(case, is_live=False)
+
+    # ==================== 配置合并与构建 ====================
+
+    @classmethod
+    def merge_config(cls, base: Dict, override: Dict) -> Dict:
+        """深度合并配置
+
+        Args:
+            base: 基础配置
+            override: 覆盖配置
+
+        Returns:
+            合并后的配置
+        """
+        result = base.copy()
+
+        for key, value in override.items():
+            if key in result and isinstance(result[key], dict) and isinstance(value, dict):
+                result[key] = cls.merge_config(result[key], value)
+            else:
+                result[key] = value
+
+        return result
+
+    @classmethod
+    def get_weights_for_decay(cls, decay_factor: float) -> List[float]:
+        """根据 decay_factor 获取对应的权重
+
+        Args:
+            decay_factor: 衰减因子
+
+        Returns:
+            对应的权重数组
+        """
+        config = cls.load_default_config()
+        amplitude = config.get("amplitude", {})
+        weight_presets = amplitude.get("weight_presets", {})
+
+        # 查找匹配的 decay_factor
+        preset_key = f"d_{decay_factor}"
+        if preset_key in weight_presets:
+            return weight_presets[preset_key]
+
+        # 返回默认权重
+        return amplitude.get("weights", [])
+
+    @classmethod
+    def build_full_config(cls, symbol: str, exchange: str = "binance",
+                          decay_factor: float = 0.5,
+                          user_entry: Dict = None, user_market: Dict = None,
+                          user_capital: Dict = None, user_timeout: Dict = None,
+                          testnet: bool = True) -> Dict:
+        """构建完整配置（合并默认值和用户配置）
+
+        Args:
+            symbol: 标的
+            exchange: 交易所
+            decay_factor: 衰减因子
+            user_entry: 用户自定义入场参数（部分）
+            user_market: 用户自定义行情参数
+            user_capital: 用户自定义资金参数
+            user_timeout: 用户自定义超时参数
+            testnet: 是否测试网
+
+        Returns:
+            完整的配置字典
+        """
+        # 1. 加载振幅参数
+        amplitude = cls.load_amplitude_config(exchange, symbol, decay_factor)
+
+        # 2. 加载策略默认值
+        strategy_defaults = cls.load_strategy_defaults()
+
+        # 3. 构建入场配置
+        entry_defaults = strategy_defaults.get('entry_price_strategy', {})
+        entry_strategy = (user_entry or {}).get('strategy', entry_defaults.get('strategy', 'atr'))
+        entry_params = entry_defaults.get(entry_strategy, {})
+        entry = {**{'strategy': entry_strategy}, **entry_params, **(user_entry or {})}
+
+        # 4. 构建行情配置
+        market_defaults = strategy_defaults.get('market_aware', {})
+        market_algorithm = (user_market or {}).get('algorithm', market_defaults.get('algorithm', 'dual_thrust'))
+        market_params = market_defaults.get(market_algorithm, {})
+        market = {
+            'algorithm': market_algorithm,
+            'trading_statuses': (user_market or {}).get('trading_statuses', market_defaults.get('trading_statuses', ['ranging'])),
+            **market_params,
+            **{k: v for k, v in (user_market or {}).items() if k not in ['algorithm', 'trading_statuses']}
+        }
+
+        # 5. 构建资金配置
+        capital_defaults = strategy_defaults.get('capital_pool_strategy', {})
+        capital_strategy = (user_capital or {}).get('strategy', capital_defaults.get('strategy', 'guding'))
+        capital_params = capital_defaults.get(capital_strategy, {})
+        capital = {
+            'strategy': capital_strategy,
+            'entry_mode': (user_capital or {}).get('entry_mode', capital_defaults.get('entry_mode', 'compound')),
+            **capital_params,
+            **{k: v for k, v in (user_capital or {}).items() if k not in ['strategy', 'entry_mode']}
+        }
+
+        # 6. 构建超时配置
+        timeout_defaults = strategy_defaults.get('timeout_first_entry', {})
+        timeout = {**timeout_defaults, **(user_timeout or {})}
+
+        return {
+            'symbol': symbol,
+            'testnet': testnet,
+            'amplitude': amplitude,
+            'entry': entry,
+            'market': market,
+            'capital': capital,
+            'timeout': timeout
+        }
+
+    @classmethod
+    def build_config_for_trader(cls,
+                                  symbol: str = None,
+                                  amplitude: Dict = None,
+                                  market: Dict = None,
+                                  entry: Dict = None,
+                                  timeout: Dict = None,
+                                  capital: Dict = None,
+                                  testnet: bool = True) -> Dict:
+        """构建完整的交易器配置
+
+        从默认配置开始，用提供的参数覆盖。
+
+        Args:
+            symbol: 交易对
+            amplitude: 振幅参数
+            market: 行情配置
+            entry: 入场策略
+            timeout: 超时参数
+            capital: 资金池配置
+            testnet: 是否测试网
+
+        Returns:
+            完整配置
+        """
+        # 加载默认配置
+        config = cls.load_default_config()
+
+        # 覆盖参数
+        if symbol:
+            config["symbol"] = symbol
+        if amplitude:
+            config["amplitude"] = cls.merge_config(config.get("amplitude", {}), amplitude)
+        if market:
+            config["market"] = cls.merge_config(config.get("market", {}), market)
+        if entry:
+            config["entry"] = cls.merge_config(config.get("entry", {}), entry)
+        if timeout:
+            config["timeout"] = cls.merge_config(config.get("timeout", {}), timeout)
+        if capital:
+            config["capital"] = cls.merge_config(config.get("capital", {}), capital)
+
+        config["testnet"] = testnet
+
+        return config

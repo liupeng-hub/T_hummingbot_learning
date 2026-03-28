@@ -15,6 +15,7 @@ import json
 import logging
 import os
 import argparse
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, date
 from decimal import Decimal
@@ -769,9 +770,11 @@ class MarketAwareBacktestEngine(BacktestEngine):
         self.results['total_trading_minutes'] = 0
         self.results['total_stopped_minutes'] = 0
         self.results['market_statistics'] = {}
-        
-        self.total_amount_quote = Decimal(str(amplitude.get('total_amount_quote', 10000)))
-        self.initial_capital = self.total_amount_quote
+
+        # total_amount_quote 从 capital 读取（统一设计），兼容旧配置从 amplitude 读取
+        total_amount_quote = Decimal(str((capital or {}).get('total_amount_quote') or amplitude.get('total_amount_quote', 10000)))
+        self.total_amount_quote = total_amount_quote
+        self.initial_capital = total_amount_quote
         self.stop_loss = float(amplitude.get('stop_loss', 0.08))
         self.leverage = int(amplitude.get('leverage', 10))
         
@@ -1192,69 +1195,91 @@ class MarketAwareBacktestEngine(BacktestEngine):
 async def main():
     """主函数"""
     parser = argparse.ArgumentParser(description="行情感知回测")
-    parser.add_argument("--symbol", type=str, required=True, help="交易对（必选）")
-    parser.add_argument("--date-range", type=str, required=True, help="时间范围 (yyyymmdd-yyyymmdd)（必选）")
-    parser.add_argument("--id", type=int, default=None, help="测试用例ID")
-    parser.add_argument("--interval", type=str, default="1m", help="K线周期（默认: 1m）")
-    parser.add_argument("--amplitude-params", type=str, default=None, help="振幅参数（JSON字符串）")
-    parser.add_argument("--market-params", type=str, default=None, help="行情算法参数（JSON字符串，格式: {\"algorithm\": \"dual_thrust\", \"dual_thrust\": {...}, \"trading_statuses\": [\"ranging\"]}）")
-    parser.add_argument("--entry-params", type=str, default=None, help="入场价格策略参数（JSON字符串，格式: {\"strategy\": \"atr\", \"atr\": {...}}）")
-    parser.add_argument("--timeout-params", type=str, default=None, help="超时参数（JSON字符串）")
-    parser.add_argument("--capital-params", type=str, default=None, help="资金池参数（JSON字符串，格式: {\"mode\": \"progressive\", \"initial_capital\": 10000, \"strategy\": \"conservative\"}）")
-    
+
+    # 配置加载方式（二选一）
+    parser.add_argument("--case-id", type=int, default=None, help="测试用例ID（从数据库加载配置）")
+    parser.add_argument("--config", type=str, default=None, help="配置文件路径（默认: out/autofish/example_strategy.json）")
+
     args = parser.parse_args()
-    
-    amplitude = json.loads(args.amplitude_params) if args.amplitude_params else {}
-    market = json.loads(args.market_params) if args.market_params else {"algorithm": "always_ranging"}
-    entry = json.loads(args.entry_params) if args.entry_params else {}
-    timeout = json.loads(args.timeout_params) if args.timeout_params else {"a1_timeout_minutes": 0}
-    capital = json.loads(args.capital_params) if args.capital_params else {"strategy": "guding"}
-    
-    logger.info(f"[参数] symbol={args.symbol}")
-    logger.info(f"[参数] date_range={args.date_range}")
+
+    # ==================== 配置加载 ====================
+    from autofish_core import ConfigLoader
+
+    if args.case_id:
+        # 从数据库加载
+        config = ConfigLoader.load_from_test_case_id(args.case_id)
+        logger.info(f"[配置] 从 case_id={args.case_id} 加载配置")
+    elif args.config:
+        # 从配置文件加载
+        config = ConfigLoader.load_from_file(args.config, validate=True)
+        logger.info(f"[配置] 从文件 {args.config} 加载配置")
+    else:
+        # 使用默认配置
+        config = ConfigLoader.load_default_config()
+        logger.info("[配置] 使用默认配置")
+
+    # 提取参数
+    symbol = config.get("symbol")
+    date_start = config.get("date_start")
+    date_end = config.get("date_end")
+    interval = config.get("interval", "1m")
+    amplitude = config.get("amplitude", {})
+    market = config.get("market", {"algorithm": "always_ranging"})
+    entry = config.get("entry", {})
+    timeout = config.get("timeout", {"a1_timeout_minutes": 0})
+    capital = config.get("capital", {"strategy": "guding"})
+
+    # 验证必要参数
+    if not symbol:
+        parser.error("配置中缺少 symbol 字段")
+    if not date_start or not date_end:
+        parser.error("配置中缺少 date_start 或 date_end 字段")
+
+    logger.info(f"[参数] symbol={symbol}")
+    logger.info(f"[参数] date_start={date_start}, date_end={date_end}")
     logger.info(f"[参数] amplitude={amplitude}")
     logger.info(f"[参数] market={market}")
     logger.info(f"[参数] entry={entry}")
     logger.info(f"[参数] timeout={timeout}")
     logger.info(f"[参数] capital={capital}")
-    
+
+    # 解析日期范围
     date_ranges = []
-    
-    if args.date_range:
-        range_parts = args.date_range.split(",")
-        
-        for range_str in range_parts:
-            range_str = range_str.strip()
-            if not range_str:
-                continue
-            
-            try:
-                if range_str.count("-") == 1:
-                    parts = range_str.split("-")
-                    start_date = datetime.strptime(parts[0], "%Y%m%d")
-                    end_date = datetime.strptime(parts[1], "%Y%m%d")
-                else:
-                    logger.error(f"[时间范围] 格式错误: {range_str}")
-                    continue
-                
-                start_time = int(start_date.timestamp() * 1000)
-                end_time = int(end_date.timestamp() * 1000) + 86400000 - 1
-                days = (end_date - start_date).days + 1
-                date_range_str = f"{days}d_{start_date.strftime('%Y%m%d')}-{end_date.strftime('%Y%m%d')}"
-                
-                date_ranges.append({
-                    "start_time": start_time,
-                    "end_time": end_time,
-                    "days": days,
-                    "date_range_str": date_range_str,
-                    "start_date": start_date,
-                    "end_date": end_date,
-                })
-            except ValueError as e:
-                logger.error(f"[时间范围] 解析失败: {range_str}, 错误: {e}")
-    
+
+    if date_start and date_end:
+        try:
+            # 支持两种格式：2024-01-01 和 20240101
+            if '-' in date_start:
+                start_date = datetime.strptime(date_start, "%Y-%m-%d")
+            else:
+                start_date = datetime.strptime(date_start, "%Y%m%d")
+
+            if '-' in date_end:
+                end_date = datetime.strptime(date_end, "%Y-%m-%d")
+            else:
+                end_date = datetime.strptime(date_end, "%Y%m%d")
+
+            start_time = int(start_date.timestamp() * 1000)
+            end_time = int(end_date.timestamp() * 1000) + 86400000 - 1
+            days = (end_date - start_date).days + 1
+            date_range_str = f"{days}d_{start_date.strftime('%Y%m%d')}-{end_date.strftime('%Y%m%d')}"
+
+            date_ranges.append({
+                "start_time": start_time,
+                "end_time": end_time,
+                "days": days,
+                "date_range_str": date_range_str,
+                "start_date": start_date,
+                "end_date": end_date,
+            })
+        except ValueError as e:
+            logger.error(f"[时间范围] 解析失败: {date_start} - {date_end}, 错误: {e}")
+    else:
+        logger.error("[时间范围] 未指定日期范围")
+        return
+
     decay_factor = Decimal(str(amplitude.get("decay_factor", 0.5))) if amplitude else Decimal("0.5")
-    
+
     def ensure_decimal(value, default="0"):
         """确保值为 Decimal 类型"""
         if value is None:
@@ -1262,10 +1287,10 @@ async def main():
         if isinstance(value, Decimal):
             return value
         return Decimal(str(value))
-    
+
     if not amplitude:
         from autofish_core import Autofish_AmplitudeConfig
-        amplitude_config = Autofish_AmplitudeConfig.load_latest(args.symbol, decay_factor=decay_factor)
+        amplitude_config = Autofish_AmplitudeConfig.load_latest(symbol, decay_factor=decay_factor)
         if amplitude_config:
             amplitude = {
                 "leverage": amplitude_config.get_leverage(),
@@ -1287,36 +1312,74 @@ async def main():
         amplitude["decay_factor"] = ensure_decimal(amplitude.get("decay_factor"), "0.5")
     
     print(f"\n📊 共 {len(date_ranges)} 个时间段需要回测")
-    
+
     for i, dr in enumerate(date_ranges, 1):
         print(f"\n{'='*60}")
         print(f"📅 第 {i}/{len(date_ranges)} 个时间段: {dr['start_date'].strftime('%Y-%m-%d')} ~ {dr['end_date'].strftime('%Y-%m-%d')} ({dr['days']} 天)")
         print(f"{'='*60}")
-        
+
         engine = MarketAwareBacktestEngine(amplitude, market, entry, timeout, capital)
         await engine.run(
-            symbol=args.symbol, 
-            interval=args.interval, 
-            start_time=dr['start_time'], 
+            symbol=symbol,
+            interval=interval,
+            start_time=dr['start_time'],
             end_time=dr['end_time']
         )
-        
-        _save_to_database(args, engine, dr['date_range_str'], amplitude, market, entry, timeout, capital)
+
+        _save_to_database(
+            symbol=symbol,
+            interval=interval,
+            date_start=date_start,
+            date_end=date_end,
+            case_id=args.case_id,
+            engine=engine,
+            date_range_str=dr['date_range_str'],
+            amplitude=amplitude,
+            market=market,
+            entry=entry,
+            timeout=timeout,
+            capital=capital
+        )
 
 
-def _save_to_database(args, engine, date_range_str, amplitude, market, entry, timeout, capital):
-    """保存行情感知回测结果到数据库"""
+def _save_to_database(symbol, interval, date_start, date_end, case_id, engine, date_range_str, amplitude, market, entry, timeout, capital):
+    """保存行情感知回测结果到数据库
+
+    如果没有 case_id，会自动创建一个临时测试用例，确保结果可管理。
+    """
     try:
-        from database.test_results_db import TestResultsDB, TestResult, TradeDetail
+        from database.test_results_db import TestResultsDB, TestResult, TradeDetail, TestCase
         from datetime import datetime
-        
+
         db = TestResultsDB()
-        
-        id = args.id if args.id else 0
-        
+
+        # 如果没有 case_id，自动创建一个临时测试用例
+        if case_id is None or case_id == 0:
+            temp_case = TestCase(
+                name=f"{symbol}_{date_start}_{date_end}_temp",
+                symbol=symbol,
+                date_start=date_start,
+                date_end=date_end,
+                test_type='market_aware',
+                description='CLI 临时创建的测试用例',
+                amplitude=json.dumps(amplitude),
+                market=json.dumps(market),
+                entry=json.dumps(entry),
+                timeout=json.dumps(timeout),
+                capital=json.dumps(capital),
+                status='completed',  # 标记为已完成
+            )
+            case_id = db.create_case(temp_case)
+            if case_id:
+                print(f"   📝 自动创建测试用例: case_id={case_id}")
+            else:
+                print(f"   ⚠️ 创建测试用例失败，使用 case_id=0")
+                case_id = 0
+
         params = {
-            "symbol": args.symbol,
-            "date_range": args.date_range,
+            "symbol": symbol,
+            "date_start": date_start,
+            "date_end": date_end,
             "amplitude": amplitude,
             "market": market,
             "entry": entry,
@@ -1381,7 +1444,7 @@ def _save_to_database(args, engine, date_range_str, amplitude, market, entry, ti
         capital_stats = engine.capital_pool.get_statistics() if engine.capital_pool and hasattr(engine.capital_pool, 'get_statistics') else {}
         
         result = TestResult(
-            case_id=id,
+            case_id=case_id,
             symbol=args.symbol,
             interval="1m",
             start_time=engine.start_time.strftime('%Y-%m-%d %H:%M') if engine.start_time else '',
@@ -1451,3 +1514,518 @@ def _save_to_database(args, engine, date_range_str, amplitude, market, entry, ti
 
 if __name__ == "__main__":
     asyncio.run(main())
+
+
+# ============================================================================
+# BacktestManager - 回测实例管理器
+# ============================================================================
+
+class BacktestManager:
+    """回测实例管理器
+
+    用于管理多个回测实例，支持：
+    - 从配置创建并启动回测实例
+    - 实时监控回测进度
+    - 获取回测状态和结果
+    - 停止正在运行的回测
+
+    使用方式:
+        manager = BacktestManager()
+
+        # 从 case_id 创建实例
+        engine = await manager.create_engine_from_case(case_id=1)
+
+        # 启动回测
+        result_id = await manager.start_backtest(engine)
+
+        # 获取回测状态
+        status = await manager.get_backtest_status(result_id)
+
+        # 停止回测
+        await manager.stop_backtest(result_id)
+    """
+
+    def __init__(self):
+        self._engines: Dict[int, MarketAwareBacktestEngine] = {}  # result_id -> engine
+        self._tasks: Dict[int, asyncio.Task] = {}  # result_id -> task
+        self._results: Dict[int, Dict] = {}  # result_id -> final results
+        self._lock = asyncio.Lock()
+
+    async def create_engine_from_config(self, config: Dict[str, Any]) -> MarketAwareBacktestEngine:
+        """从配置创建回测引擎
+
+        参数:
+            config: 配置字典，包含:
+                - symbol: 交易对
+                - start_time: 开始时间戳（毫秒）
+                - end_time: 结束时间戳（毫秒）
+                - amplitude: 振幅参数
+                - market: 行情参数
+                - entry: 入场策略参数
+                - timeout: 超时参数
+                - capital: 资金池参数
+
+        返回:
+            MarketAwareBacktestEngine 实例
+        """
+        amplitude = config.get('amplitude', {})
+        market = config.get('market', {'algorithm': 'always_ranging'})
+        entry = config.get('entry', {})
+        timeout = config.get('timeout', {'a1_timeout_minutes': 0})
+        capital = config.get('capital', {'strategy': 'guding'})
+
+        engine = MarketAwareBacktestEngine(amplitude, market, entry, timeout, capital)
+        engine.symbol = config.get('symbol', 'BTCUSDT')
+        engine.start_time = config.get('start_time')
+        engine.end_time = config.get('end_time')
+        engine.case_id = config.get('case_id', 0)
+        # 保存原始配置，用于创建临时用例
+        engine.entry_config = entry
+        engine.timeout_config = timeout
+        engine.capital_config = capital
+
+        return engine
+
+    async def create_engine_from_case(self, case_id: int) -> Optional[MarketAwareBacktestEngine]:
+        """从 case_id 创建回测引擎
+
+        参数:
+            case_id: 测试用例 ID
+
+        返回:
+            MarketAwareBacktestEngine 实例，失败返回 None
+        """
+        from database.test_results_db import TestResultsDB
+
+        db = TestResultsDB()
+        case = db.get_case(case_id)
+        if not case:
+            logger.error(f"[BacktestManager] case_id={case_id} 不存在")
+            return None
+
+        # 解析日期范围
+        date_start = case.get('date_start')
+        date_end = case.get('date_end')
+
+        if date_start and date_end:
+            # 兼容两种日期格式：2021-01-01 和 20210101
+            try:
+                if '-' in date_start:
+                    start_date = datetime.strptime(date_start, '%Y-%m-%d')
+                else:
+                    start_date = datetime.strptime(date_start, '%Y%m%d')
+
+                if '-' in date_end:
+                    end_date = datetime.strptime(date_end, '%Y-%m-%d')
+                else:
+                    end_date = datetime.strptime(date_end, '%Y%m%d')
+            except ValueError as e:
+                logger.error(f"[BacktestManager] case_id={case_id} 日期格式错误: {e}")
+                return None
+
+            start_time = int(start_date.timestamp() * 1000)
+            end_time = int(end_date.timestamp() * 1000) + 86400000 - 1
+        else:
+            logger.error(f"[BacktestManager] case_id={case_id} 缺少日期范围")
+            return None
+
+        # 解析 JSON 配置
+        amplitude = json.loads(case.get('amplitude', '{}'))
+        market = json.loads(case.get('market', '{"algorithm": "always_ranging"}'))
+        entry = json.loads(case.get('entry', '{}'))
+        timeout = json.loads(case.get('timeout', '{"a1_timeout_minutes": 0}'))
+        capital = json.loads(case.get('capital', '{"strategy": "guding"}'))
+
+        config = {
+            'symbol': case.get('symbol', 'BTCUSDT'),
+            'start_time': start_time,
+            'end_time': end_time,
+            'amplitude': amplitude,
+            'market': market,
+            'entry': entry,
+            'timeout': timeout,
+            'capital': capital,
+            'case_id': case_id,
+        }
+
+        engine = await self.create_engine_from_config(config)
+        engine.case_id = case_id
+
+        return engine
+
+    async def start_backtest(self, engine: MarketAwareBacktestEngine) -> int:
+        """启动回测（后台运行）
+
+        参数:
+            engine: MarketAwareBacktestEngine 实例
+
+        返回:
+            result_id（回测完成后保存到数据库的结果ID）
+            如果为 0 表示启动失败
+        """
+        async with self._lock:
+            # 预生成 result_id（使用临时ID，完成后更新）
+            temp_id = int(time.time() * 1000) % 1000000
+
+            # 创建任务
+            task = asyncio.create_task(
+                self._run_backtest_wrapper(engine, temp_id)
+            )
+
+            self._engines[temp_id] = engine
+            self._tasks[temp_id] = task
+
+            logger.info(f"[BacktestManager] 回测已启动: temp_id={temp_id}, symbol={engine.symbol}")
+            return temp_id
+
+    async def _run_backtest_wrapper(self, engine: MarketAwareBacktestEngine, temp_id: int):
+        """回测执行包装器，完成后保存结果"""
+        try:
+            await engine.run(
+                symbol=engine.symbol,
+                interval='1m',
+                start_time=engine.start_time,
+                end_time=engine.end_time
+            )
+
+            # 回测完成，保存结果
+            result_id = await self._save_results(engine)
+
+            # 更新映射
+            if result_id > 0:
+                self._results[result_id] = engine.results
+                # 清理临时映射
+                self._engines.pop(temp_id, None)
+                self._tasks.pop(temp_id, None)
+                # 重新映射到真实 result_id
+                self._engines[result_id] = engine
+
+                logger.info(f"[BacktestManager] 回测完成: result_id={result_id}")
+
+                # 更新测试用例状态
+                if engine.case_id > 0:
+                    self._update_case_status(engine.case_id, 'completed')
+            else:
+                logger.warning(f"[BacktestManager] 回测完成但保存失败: temp_id={temp_id}")
+                if engine.case_id > 0:
+                    self._update_case_status(engine.case_id, 'error')
+
+            self._results[temp_id] = engine.results
+
+        except asyncio.CancelledError:
+            logger.info(f"[BacktestManager] 回测被取消: temp_id={temp_id}")
+            self._results[temp_id] = {'status': 'cancelled', 'results': engine.results}
+            if engine.case_id > 0:
+                self._update_case_status(engine.case_id, 'stopped')
+        except Exception as e:
+            logger.error(f"[BacktestManager] 回测异常: temp_id={temp_id}, error={e}")
+            self._results[temp_id] = {'status': 'error', 'error': str(e)}
+            if engine.case_id > 0:
+                self._update_case_status(engine.case_id, 'error')
+        finally:
+            self._tasks.pop(temp_id, None)
+
+    def _update_case_status(self, case_id: int, status: str):
+        """更新测试用例状态"""
+        try:
+            from database.test_results_db import TestResultsDB
+            db = TestResultsDB()
+            db.update_case_status(case_id, status)
+            logger.info(f"[BacktestManager] 更新用例状态: case_id={case_id}, status={status}")
+        except Exception as e:
+            logger.error(f"[BacktestManager] 更新用例状态失败: {e}")
+
+    async def _save_results(self, engine: MarketAwareBacktestEngine) -> int:
+        """保存回测结果到数据库
+
+        如果 engine.case_id 为 0，会自动创建一个临时测试用例。
+        """
+        try:
+            from database.test_results_db import TestResultsDB, TestResult, TradeDetail, TestCase
+
+            db = TestResultsDB()
+
+            # 如果没有 case_id，自动创建临时测试用例
+            case_id = getattr(engine, 'case_id', 0)
+            if case_id == 0:
+                start_dt = datetime.fromtimestamp(engine.start_time / 1000) if engine.start_time else datetime.now()
+                end_dt = datetime.fromtimestamp(engine.end_time / 1000) if engine.end_time else datetime.now()
+                date_range = f"{start_dt.strftime('%Y%m%d')}-{end_dt.strftime('%Y%m%d')}"
+
+                temp_case = TestCase(
+                    name=f"{engine.symbol}_{date_range}_temp",
+                    symbol=engine.symbol,
+                    date_start=start_dt.strftime('%Y-%m-%d'),
+                    date_end=end_dt.strftime('%Y-%m-%d'),
+                    test_type='market_aware',
+                    description='BacktestManager 临时创建的测试用例',
+                    amplitude=json.dumps(engine.config),
+                    market=json.dumps(getattr(engine, 'market', {})),
+                    entry=json.dumps(getattr(engine, 'entry_config', {})),
+                    timeout=json.dumps(getattr(engine, 'timeout_config', {})),
+                    capital=json.dumps(getattr(engine, 'capital_config', {})),
+                    status='completed',
+                )
+                case_id = db.create_case(temp_case)
+                if case_id:
+                    logger.info(f"[BacktestManager] 自动创建测试用例: case_id={case_id}")
+                    engine.case_id = case_id
+                else:
+                    logger.warning(f"[BacktestManager] 创建测试用例失败，使用 case_id=0")
+
+            results = engine.results
+            total_trades = results.get('total_trades', 0)
+            win_trades = results.get('win_trades', 0)
+            loss_trades = results.get('loss_trades', 0)
+            total_profit = float(results.get('total_profit', 0))
+            total_loss = float(results.get('total_loss', 0))
+            net_profit = total_profit - total_loss
+            win_rate = (win_trades / total_trades * 100) if total_trades > 0 else 0
+
+            total_amount = float(engine.config.get('total_amount_quote', 1200))
+            roi = (net_profit / total_amount * 100) if total_amount > 0 else 0
+
+            first_price = float(results.get('first_price', 0))
+            last_price = float(results.get('last_price', 0))
+            price_change = ((last_price - first_price) / first_price * 100) if first_price > 0 else 0
+            excess_return = roi - price_change
+
+            start_dt = datetime.fromtimestamp(engine.start_time / 1000) if engine.start_time else datetime.now()
+            end_dt = datetime.fromtimestamp(engine.end_time / 1000) if engine.end_time else datetime.now()
+
+            result = TestResult(
+                case_id=case_id,
+                symbol=engine.symbol,
+                test_type='market_aware',
+                start_time=start_dt.strftime('%Y-%m-%d %H:%M:%S'),
+                end_time=end_dt.strftime('%Y-%m-%d %H:%M:%S'),
+                total_trades=total_trades,
+                win_trades=win_trades,
+                loss_trades=loss_trades,
+                win_rate=win_rate,
+                total_profit=total_profit,
+                total_loss=total_loss,
+                net_profit=net_profit,
+                initial_capital=total_amount,
+                final_capital=total_amount + net_profit,
+                roi=roi,
+                price_change=price_change,
+                excess_return=excess_return,
+                avg_profit=total_profit / win_trades if win_trades > 0 else 0,
+                avg_loss=total_loss / loss_trades if loss_trades > 0 else 0,
+                amplitude=json.dumps(engine.config),
+                market=json.dumps(engine.market),
+            )
+
+            result_id = db.save_result(result)
+
+            # 保存交易详情
+            trades = results.get('trades', [])
+            if trades and result_id:
+                sorted_trades = sorted(trades, key=lambda x: x.get('entry_time', '') or '')
+                trade_details = []
+                for i, t in enumerate(sorted_trades):
+                    trade_details.append(TradeDetail(
+                        result_id=result_id,
+                        order_group_id=t.get('group_id', 0),
+                        trade_seq=i + 1,
+                        level=str(t.get('level', '')),
+                        entry_price=float(t.get('entry_price', 0)),
+                        exit_price=float(t.get('exit_price', 0)),
+                        creation_time=t.get('creation_time', ''),
+                        entry_time=t.get('entry_time', ''),
+                        exit_time=t.get('exit_time', ''),
+                        trade_type=t.get('trade_type', ''),
+                        profit=float(t.get('profit', 0)),
+                        quantity=float(t.get('quantity', 0)),
+                        stake=float(t.get('stake', 0)),
+                        entry_capital=float(t.get('entry_capital', 0)),
+                        entry_total_capital=float(t.get('entry_total_capital', 0)),
+                    ))
+                db.save_trade_details(result_id, trade_details)
+
+            return result_id
+
+        except Exception as e:
+            logger.error(f"[BacktestManager] 保存结果失败: {e}")
+            return 0
+
+    async def stop_backtest(self, result_id: int) -> bool:
+        """停止回测
+
+        参数:
+            result_id: 结果 ID
+
+        返回:
+            是否成功
+        """
+        async with self._lock:
+            task = self._tasks.get(result_id)
+
+            if not task:
+                logger.warning(f"[BacktestManager] result_id={result_id} 不存在或已完成")
+                return False
+
+            # 取消任务
+            if not task.done():
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+
+            # 清理
+            self._engines.pop(result_id, None)
+            self._tasks.pop(result_id, None)
+
+            logger.info(f"[BacktestManager] 回测已停止: result_id={result_id}")
+            return True
+
+    def get_engine(self, result_id: int) -> Optional[MarketAwareBacktestEngine]:
+        """获取回测引擎"""
+        return self._engines.get(result_id)
+
+    def get_all_engines(self) -> Dict[int, MarketAwareBacktestEngine]:
+        """获取所有回测引擎"""
+        return self._engines.copy()
+
+    def get_result(self, result_id: int) -> Optional[Dict]:
+        """获取回测结果"""
+        return self._results.get(result_id)
+
+    def get_running_backtests(self) -> List[int]:
+        """获取所有运行中的 result_id"""
+        return list(self._tasks.keys())
+
+    async def list_backtests(self) -> List[Dict[str, Any]]:
+        """获取所有回测实例的信息列表
+
+        返回:
+            实例信息列表，每个包含:
+            - result_id / temp_id
+            - case_id
+            - symbol
+            - status (running, completed, error, cancelled)
+            - progress (如果运行中)
+            - results (如果已完成)
+        """
+        result = []
+
+        # 运行中的回测
+        for temp_id, task in self._tasks.items():
+            engine = self._engines.get(temp_id)
+            info = {
+                'temp_id': temp_id,
+                'case_id': getattr(engine, 'case_id', 0) if engine else 0,
+                'symbol': getattr(engine, 'symbol', '') if engine else '',
+                'status': 'running' if not task.done() else 'completed',
+                'kline_count': getattr(engine, 'kline_count', 0) if engine else 0,
+            }
+            if engine and hasattr(engine, 'start_time') and engine.start_time:
+                start_dt = datetime.fromtimestamp(engine.start_time / 1000)
+                end_dt = datetime.fromtimestamp(engine.end_time / 1000)
+                total_days = (end_dt - start_dt).days + 1
+                info['date_range'] = f"{start_dt.strftime('%Y-%m-%d')} ~ {end_dt.strftime('%Y-%m-%d')}"
+                info['total_days'] = total_days
+            result.append(info)
+
+        # 已完成的回测
+        for result_id, res in self._results.items():
+            if result_id in self._tasks:
+                continue  # 已经在运行中列表
+
+            info = {
+                'result_id': result_id,
+                'status': res.get('status', 'completed'),
+                'total_trades': res.get('total_trades', 0),
+                'win_trades': res.get('win_trades', 0),
+                'loss_trades': res.get('loss_trades', 0),
+                'total_profit': float(res.get('total_profit', 0)),
+                'total_loss': float(res.get('total_loss', 0)),
+            }
+
+            engine = self._engines.get(result_id)
+            if engine:
+                info['case_id'] = getattr(engine, 'case_id', 0)
+                info['symbol'] = getattr(engine, 'symbol', '')
+
+            result.append(info)
+
+        return result
+
+    async def get_backtest_status(self, result_id: int) -> Optional[Dict[str, Any]]:
+        """获取指定回测的详细状态
+
+        参数:
+            result_id: 结果 ID 或临时 ID
+
+        返回:
+            回测详细信息
+        """
+        # 检查是否运行中
+        task = self._tasks.get(result_id)
+        engine = self._engines.get(result_id)
+
+        if task and engine:
+            status = 'running' if not task.done() else 'completed'
+            info = {
+                'result_id': result_id,
+                'case_id': getattr(engine, 'case_id', 0),
+                'symbol': getattr(engine, 'symbol', ''),
+                'status': status,
+                'kline_count': getattr(engine, 'kline_count', 0),
+                'interval': getattr(engine, 'interval', '1m'),
+            }
+
+            # 日期范围
+            if hasattr(engine, 'start_time') and engine.start_time:
+                start_dt = datetime.fromtimestamp(engine.start_time / 1000)
+                end_dt = datetime.fromtimestamp(engine.end_time / 1000)
+                info['date_range'] = f"{start_dt.strftime('%Y-%m-%d')} ~ {end_dt.strftime('%Y-%m-%d')}"
+
+            # 当前配置
+            info['config'] = {
+                'amplitude': engine.config,
+                'market': getattr(engine, 'market', {}),
+            }
+
+            # 当前统计（如果运行中）
+            if hasattr(engine, 'results'):
+                info['current_results'] = {
+                    'total_trades': engine.results.get('total_trades', 0),
+                    'win_trades': engine.results.get('win_trades', 0),
+                    'loss_trades': engine.results.get('loss_trades', 0),
+                    'total_profit': float(engine.results.get('total_profit', 0)),
+                    'total_loss': float(engine.results.get('total_loss', 0)),
+                }
+
+            return info
+
+        # 检查已完成的结果
+        res = self._results.get(result_id)
+        if res:
+            info = {
+                'result_id': result_id,
+                'status': res.get('status', 'completed'),
+                'results': res,
+            }
+            engine = self._engines.get(result_id)
+            if engine:
+                info['case_id'] = getattr(engine, 'case_id', 0)
+                info['symbol'] = getattr(engine, 'symbol', '')
+            return info
+
+        return None
+
+    async def stop_all(self):
+        """停止所有回测"""
+        result_ids = list(self._tasks.keys())
+        for result_id in result_ids:
+            await self.stop_backtest(result_id)
+
+
+__all__ = [
+    'BacktestEngine',
+    'MarketAwareBacktestEngine',
+    'BacktestManager',
+]
