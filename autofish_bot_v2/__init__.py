@@ -13,7 +13,8 @@ from .autofish_core import (
     Autofish_WeightCalculator,
     Autofish_OrderCalculator,
     Autofish_AmplitudeAnalyzer,
-    Autofish_AmplitudeConfig,
+    AmplitudeParams,
+    Autofish_ConfigLoader,
 )
 
 
@@ -24,5 +25,6 @@ __all__ = [
     "Autofish_WeightCalculator",
     "Autofish_OrderCalculator",
     "Autofish_AmplitudeAnalyzer",
-    "Autofish_AmplitudeConfig",
+    "AmplitudeParams",
+    "Autofish_ConfigLoader",
 ]

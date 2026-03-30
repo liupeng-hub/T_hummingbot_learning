@@ -267,15 +267,22 @@ class KlineFetcher:
             else:
                 # 缓存数量足够，检查边界
                 missing_ranges = []
-                
-                # 检查开始时间之前的缺失
+
+                # 获取当前 interval 的毫秒数
+                interval_ms = minutes * 60 * 1000
+
+                # 检查开始时间之前的缺失（忽略小于 1 个 interval 的范围）
                 if min_time > start_time:
-                    missing_ranges.append((start_time, min_time - 1))
-                
-                # 检查结束时间之后的缺失
+                    gap = min_time - start_time
+                    if gap >= interval_ms:
+                        missing_ranges.append((start_time, min_time - 1))
+
+                # 检查结束时间之后的缺失（忽略小于 1 个 interval 的范围）
                 if max_time < end_time:
-                    missing_ranges.append((max_time + 1, end_time))
-                
+                    gap = end_time - max_time
+                    if gap >= interval_ms:
+                        missing_ranges.append((max_time + 1, end_time))
+
                 conn.close()
                 return missing_ranges
             

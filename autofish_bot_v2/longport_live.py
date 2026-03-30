@@ -1303,37 +1303,25 @@ async def main():
     """主函数"""
     import argparse
     from dotenv import load_dotenv
-    from autofish_core import Autofish_AmplitudeConfig, Autofish_OrderCalculator
-    
+    from autofish_core import Autofish_ConfigLoader, Autofish_OrderCalculator
+
     parser = argparse.ArgumentParser(description="Autofish V2 LongPort 实盘交易")
     parser.add_argument("--symbol", type=str, default="700.HK", help="交易对 (默认: 700.HK)")
     parser.add_argument("--stop-loss", type=float, default=0.08, help="止损比例 (默认: 0.08)")
     parser.add_argument("--total-amount", type=float, default=1200, help="总投入金额 (默认: 1200)")
     parser.add_argument("--decay-factor", type=float, default=0.5, help="衰减因子 (默认: 0.5)")
-    
+
     args = parser.parse_args()
-    
+
     load_dotenv()
-    
+
     decay_factor = Decimal(str(args.decay_factor))
-    amplitude_config = Autofish_AmplitudeConfig.load_latest(args.symbol, decay_factor=decay_factor)
-    
-    if amplitude_config:
-        config = {
-            "symbol": amplitude_config.get_symbol(),
-            "leverage": amplitude_config.get_leverage(),
-            "grid_spacing": amplitude_config.get_grid_spacing(),
-            "exit_profit": amplitude_config.get_exit_profit(),
-            "stop_loss": amplitude_config.get_stop_loss(),
-            "total_amount_quote": amplitude_config.get_total_amount_quote(),
-            "max_entries": amplitude_config.get_max_entries(),
-            "decay_factor": amplitude_config.get_decay_factor(),
-            "weights": amplitude_config.get_weights(),
-            "valid_amplitudes": amplitude_config.get_valid_amplitudes(),
-            "total_expected_return": amplitude_config.get_total_expected_return(),
-            "entry_price_strategy": amplitude_config.get_entry_price_strategy(),
-        }
-        config_file = amplitude_config.config_path
+    amplitude_params = Autofish_ConfigLoader.load_amplitude_params(args.symbol, decay_factor=float(decay_factor))
+
+    if amplitude_params:
+        config = amplitude_params.to_dict()
+        config["entry_price_strategy"] = {"strategy": "fixed"}
+        config_file = f"out/autofish/amplitudes/longport/{args.symbol}.json"
     else:
         config = Autofish_OrderCalculator.get_default_config("longport")
         config["symbol"] = args.symbol
@@ -1343,13 +1331,13 @@ async def main():
             "total_amount_quote": Decimal(str(args.total_amount)),
         })
         config_file = "无（使用内置默认配置）"
-    
+
     config["app_key"] = os.getenv("LONGPORT_APP_KEY", "")
     config["app_secret"] = os.getenv("LONGPORT_APP_SECRET", "")
     config["access_token"] = os.getenv("LONGPORT_ACCESS_TOKEN", "")
-    
+
     currency = _get_currency_from_symbol(args.symbol)
-    logger.info(f"[配置加载] {'使用振幅分析配置' if amplitude_config else '使用默认配置'}: {args.symbol}")
+    logger.info(f"[配置加载] {'使用振幅分析配置' if amplitude_params else '使用默认配置'}: {args.symbol}")
     logger.info(f"  配置文件: {config_file}")
     logger.info(f"  交易标的: {config.get('symbol')}")
     logger.info(f"  资金投入: {config['total_amount_quote']} {currency}")

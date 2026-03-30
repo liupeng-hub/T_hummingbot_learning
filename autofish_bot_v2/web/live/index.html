@@ -8,20 +8,20 @@
     <style>
         body {
             padding: 20px;
-            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            background: #f8f9fa;
             min-height: 100vh;
-            color: #e0e0e0;
+            color: #212529;
         }
         .card {
-            background: rgba(255, 255, 255, 0.05);
-            border: 1px solid rgba(255, 255, 255, 0.1);
+            background: #fff;
+            border: 1px solid #dee2e6;
             margin-bottom: 20px;
-            backdrop-filter: blur(10px);
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
         }
         .card-header {
-            background: transparent;
-            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-            color: #00d4ff;
+            background: #f8f9fa;
+            border-bottom: 1px solid #dee2e6;
+            color: #0d6efd;
         }
         .metric-card {
             text-align: center;
@@ -30,28 +30,28 @@
         .metric-value {
             font-size: 2em;
             font-weight: bold;
-            color: #00d4ff;
+            color: #0d6efd;
         }
         .metric-label {
-            color: #888;
+            color: #6c757d;
             margin-top: 5px;
         }
-        .positive { color: #00ff88; }
-        .negative { color: #ff4757; }
+        .positive { color: #198754; }
+        .negative { color: #dc3545; }
         .table {
-            color: #e0e0e0;
+            color: #212529;
         }
         .table-hover tbody tr:hover {
-            background-color: rgba(255, 255, 255, 0.05);
+            background-color: #f8f9fa;
         }
         .nav-tabs .nav-link {
-            color: #888;
+            color: #6c757d;
             border: none;
         }
         .nav-tabs .nav-link.active {
-            color: #00d4ff;
-            background: rgba(255, 255, 255, 0.05);
-            border-bottom: 2px solid #00d4ff;
+            color: #0d6efd;
+            background: #fff;
+            border-bottom: 2px solid #0d6efd;
         }
         .status-badge {
             padding: 4px 12px;
@@ -59,82 +59,71 @@
             font-size: 12px;
             font-weight: 500;
         }
-        .status-running { background: #00d4ff; color: #000; }
-        .status-stopped { background: #666; color: #fff; }
-        .status-error { background: #ff4757; color: #fff; }
+        .status-running { background: #0dcaf0; color: #000; }
+        .status-stopped { background: #6c757d; color: #fff; }
+        .status-error { background: #dc3545; color: #fff; }
         .status-draft { background: #e9ecef; color: #495057; }
-        .status-active { background: #00ff88; color: #000; }
-        .status-paused { background: #ffd700; color: #000; }
+        .status-active { background: #198754; color: #fff; }
+        .status-paused { background: #ffc107; color: #000; }
         .level-badge {
             padding: 2px 8px;
             border-radius: 4px;
             font-size: 12px;
             font-weight: bold;
         }
-        .level-1 { background: #00d4ff; color: #000; }
-        .level-2 { background: #00ff88; color: #000; }
-        .level-3 { background: #ffd700; color: #000; }
-        .level-4 { background: #ff6b6b; color: #000; }
-        .state-pending { color: #ffd700; }
-        .state-filled { color: #00ff88; }
-        .state-closed { color: #888; }
-        h1 { color: #00d4ff; text-shadow: 0 0 10px rgba(0, 212, 255, 0.5); }
+        .level-1 { background: #0dcaf0; color: #000; }
+        .level-2 { background: #198754; color: #fff; }
+        .level-3 { background: #ffc107; color: #000; }
+        .level-4 { background: #dc3545; color: #fff; }
+        .state-pending { color: #ffc107; }
+        .state-filled { color: #198754; }
+        .state-closed { color: #6c757d; }
+        h1 { color: #0d6efd; }
         .refresh-btn {
-            background: #00d4ff;
-            color: #000;
+            background: #0d6efd;
+            color: #fff;
             border: none;
             padding: 10px 20px;
             border-radius: 6px;
             cursor: pointer;
         }
         .refresh-btn:hover {
-            background: #00b8e6;
+            background: #0b5ed7;
         }
         .last-update {
             text-align: center;
-            color: #666;
+            color: #6c757d;
             font-size: 0.85em;
             margin-top: 20px;
         }
         .modal-content {
-            background: #1a1a2e;
-            color: #e0e0e0;
+            background: #fff;
+            color: #212529;
         }
         .modal-header {
-            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+            border-bottom: 1px solid #dee2e6;
         }
         .modal-footer {
-            border-top: 1px solid rgba(255, 255, 255, 0.1);
+            border-top: 1px solid #dee2e6;
         }
         .form-control, .form-select {
-            background: rgba(255, 255, 255, 0.1);
-            border: 1px solid rgba(255, 255, 255, 0.2);
-            color: #e0e0e0;
+            background: #fff;
+            border: 1px solid #ced4da;
+            color: #212529;
         }
         .form-control:focus, .form-select:focus {
-            background: rgba(255, 255, 255, 0.15);
-            border-color: #00d4ff;
-            color: #e0e0e0;
-            box-shadow: 0 0 0 0.25rem rgba(0, 212, 255, 0.25);
-        }
-        .btn-close-white {
-            filter: invert(1);
+            background: #fff;
+            border-color: #0d6efd;
+            color: #212529;
+            box-shadow: 0 0 0 0.25rem rgba(13, 110, 253, 0.25);
         }
         .trader-card {
-            border: 1px solid rgba(0, 212, 255, 0.3);
+            border: 1px solid #0d6efd;
             margin-bottom: 10px;
         }
         .action-btn-group .btn {
             margin-right: 5px;
         }
-        .btn-outline-success { color: #00ff88; border-color: #00ff88; }
-        .btn-outline-success:hover { background: #00ff88; color: #000; }
-        .btn-outline-warning { color: #ffd700; border-color: #ffd700; }
-        .btn-outline-warning:hover { background: #ffd700; color: #000; }
-        .btn-outline-danger { color: #ff4757; border-color: #ff4757; }
-        .btn-outline-danger:hover { background: #ff4757; color: #fff; }
-        .btn-outline-info { color: #00d4ff; border-color: #00d4ff; }
-        .btn-outline-info:hover { background: #00d4ff; color: #000; }
     </style>
 </head>
 <body>
@@ -309,7 +298,7 @@
                                     </div>
                                     <div class="col-md-4">
                                         <label class="form-label">交易对</label>
-                                        <input type="text" class="form-control" id="formSymbol" placeholder="BTCUSDT">
+                                        <input type="text" class="form-control" id="formSymbol" placeholder="BTCUSDT" oninput="onSymbolInputChange()" onchange="onSymbolInputChange()">
                                     </div>
                                     <div class="col-md-4">
                                         <label class="form-label">网络</label>
@@ -330,39 +319,55 @@
                             <!-- 振幅参数 -->
                             <div class="tab-pane fade" id="amplitude-tab-pane" role="tabpanel">
                                 <div class="row mb-3">
+                                    <div class="col-md-12">
+                                        <label class="form-label">振幅预设（选择交易对后自动加载）</label>
+                                        <div class="input-group">
+                                            <select class="form-select" id="formAmplitudePreset" onchange="onAmplitudePresetChange()">
+                                                <option value="">-- 请先输入交易对 --</option>
+                                            </select>
+                                            <button class="btn btn-outline-info" type="button" onclick="loadAmplitudePresets()">刷新预设</button>
+                                        </div>
+                                        <small class="text-muted">选择交易对后，自动从振幅配置文件加载预设参数</small>
+                                    </div>
+                                </div>
+                                <hr>
+                                <div class="row mb-3">
                                     <div class="col-md-3">
-                                        <label class="form-label">衰减因子</label>
+                                        <label class="form-label">衰减因子 <small class="text-muted">(0.1~2.0)</small></label>
                                         <input type="number" class="form-control" id="formDecayFactor" value="0.5" step="0.1">
+                                        <small class="text-muted">权重分布，越小越集中前几层</small>
                                     </div>
                                     <div class="col-md-3">
-                                        <label class="form-label">止损比例</label>
+                                        <label class="form-label">止损比例 <small class="text-muted">(0.01~0.5)</small></label>
                                         <input type="number" class="form-control" id="formStopLoss" value="0.08" step="0.01">
+                                        <small class="text-muted">触发止损的价格比例</small>
                                     </div>
                                     <div class="col-md-3">
-                                        <label class="form-label">总金额(USDT)</label>
-                                        <input type="number" class="form-control" id="formTotalAmount" value="10000" step="100">
-                                    </div>
-                                    <div class="col-md-3">
-                                        <label class="form-label">杠杆</label>
+                                        <label class="form-label">杠杆 <small class="text-muted">(1~125)</small></label>
                                         <input type="number" class="form-control" id="formLeverage" value="10" step="1">
+                                        <small class="text-muted">合约杠杆倍数</small>
                                     </div>
                                 </div>
                                 <div class="row mb-3">
                                     <div class="col-md-3">
-                                        <label class="form-label">最大层级</label>
+                                        <label class="form-label">最大层级 <small class="text-muted">(1~10)</small></label>
                                         <input type="number" class="form-control" id="formMaxEntries" value="4" min="1" max="10">
+                                        <small class="text-muted">最多入场层数</small>
                                     </div>
                                     <div class="col-md-3">
-                                        <label class="form-label">网格间距</label>
+                                        <label class="form-label">网格间距 <small class="text-muted">(0.001~0.1)</small></label>
                                         <input type="number" class="form-control" id="formGridSpacing" value="0.01" step="0.005">
+                                        <small class="text-muted">每层价格间距比例</small>
                                     </div>
                                     <div class="col-md-3">
-                                        <label class="form-label">止盈比例</label>
+                                        <label class="form-label">止盈比例 <small class="text-muted">(0.001~0.1)</small></label>
                                         <input type="number" class="form-control" id="formExitProfit" value="0.01" step="0.005">
+                                        <small class="text-muted">每层止盈比例</small>
                                     </div>
                                     <div class="col-md-3">
                                         <label class="form-label">权重(JSON)</label>
                                         <input type="text" class="form-control" id="formWeights" value='[0.0831, 0.2996, 0.3167, 0.1365, 0.1005, 0.0281, 0.027, 0.0066, 0.0018]'>
+                                        <small class="text-muted">各层资金权重数组</small>
                                     </div>
                                 </div>
                             </div>
@@ -373,11 +378,11 @@
                                     <div class="col-md-4">
                                         <label class="form-label">算法选择</label>
                                         <select class="form-select" id="formMarketAlgorithm" onchange="toggleMarketParams()">
-                                            <option value="always_ranging">始终震荡</option>
-                                            <option value="dual_thrust">DualThrust</option>
-                                            <option value="improved">改进算法</option>
-                                            <option value="composite">复合算法</option>
-                                            <option value="adx">ADX算法</option>
+                                            <option value="always_ranging">始终震荡 - 用于对比测试</option>
+                                            <option value="dual_thrust">Dual Thrust - 状态过滤器</option>
+                                            <option value="improved">支撑阻力 - 支撑阻力+箱体震荡</option>
+                                            <option value="composite">综合指标 - ADX+ATR+布林带组合</option>
+                                            <option value="adx">ADX趋势 - ADX趋势强度判断</option>
                                         </select>
                                     </div>
                                     <div class="col-md-8">
@@ -399,87 +404,108 @@
                                     </div>
                                 </div>
 
+                                <!-- 算法描述区域 -->
+                                <div id="algorithmDescription" class="alert alert-info mb-3" style="display:none;">
+                                    <small id="algorithmDescText"></small>
+                                </div>
+
                                 <!-- DualThrust 参数 -->
                                 <div class="row mb-3 dual-thrust-params">
                                     <div class="col-12"><small class="text-muted">DualThrust 参数:</small></div>
                                     <div class="col-md-2">
-                                        <label class="form-label">N天数</label>
+                                        <label class="form-label">N天数 <small class="text-muted">(1~30)</small></label>
                                         <input type="number" class="form-control" id="formDualNDays" value="4">
+                                        <small class="text-muted">回看天数</small>
                                     </div>
                                     <div class="col-md-2">
-                                        <label class="form-label">K1</label>
+                                        <label class="form-label">K1 <small class="text-muted">(0.1~1.0)</small></label>
                                         <input type="number" class="form-control" id="formDualK1" value="0.4" step="0.1">
+                                        <small class="text-muted">上轨系数</small>
                                     </div>
                                     <div class="col-md-2">
-                                        <label class="form-label">K2</label>
+                                        <label class="form-label">K2 <small class="text-muted">(0.1~1.0)</small></label>
                                         <input type="number" class="form-control" id="formDualK2" value="0.4" step="0.1">
+                                        <small class="text-muted">下轨系数</small>
                                     </div>
                                     <div class="col-md-2">
-                                        <label class="form-label">下跌确认天数</label>
+                                        <label class="form-label">下跌确认 <small class="text-muted">(1~5)</small></label>
                                         <input type="number" class="form-control" id="formDualDownConfirm" value="2">
+                                        <small class="text-muted">确认天数</small>
                                     </div>
                                     <div class="col-md-2">
-                                        <label class="form-label">K2下跌因子</label>
+                                        <label class="form-label">K2下跌因子 <small class="text-muted">(0.5~1.0)</small></label>
                                         <input type="number" class="form-control" id="formDualK2Down" value="0.8" step="0.1">
+                                        <small class="text-muted">下跌调整</small>
                                     </div>
                                     <div class="col-md-2">
-                                        <label class="form-label">冷却天数</label>
+                                        <label class="form-label">冷却天数 <small class="text-muted">(0~10)</small></label>
                                         <input type="number" class="form-control" id="formDualCooldown" value="1">
+                                        <small class="text-muted">切换后冷却</small>
                                     </div>
                                 </div>
 
                                 <!-- Improved 参数 -->
                                 <div class="row mb-3 improved-params" style="display:none;">
-                                    <div class="col-12"><small class="text-muted">改进算法参数:</small></div>
+                                    <div class="col-12"><small class="text-muted">改进算法参数 - 基于价格波动范围和突破判断:</small></div>
                                     <div class="col-md-3">
-                                        <label class="form-label">回看周期</label>
+                                        <label class="form-label">回看周期 <small class="text-muted">(10~200)</small></label>
                                         <input type="number" class="form-control" id="formImprovedLookback" value="20">
+                                        <small class="text-muted">回看天数</small>
                                     </div>
                                     <div class="col-md-3">
-                                        <label class="form-label">最小震荡时长</label>
+                                        <label class="form-label">最小震荡时长 <small class="text-muted">(3~30)</small></label>
                                         <input type="number" class="form-control" id="formImprovedMinDuration" value="3">
+                                        <small class="text-muted">持续天数</small>
                                     </div>
                                     <div class="col-md-3">
-                                        <label class="form-label">最大震荡比例</label>
+                                        <label class="form-label">最大震荡比例 <small class="text-muted">(0.05~0.3)</small></label>
                                         <input type="number" class="form-control" id="formImprovedMaxRangePct" value="0.05" step="0.01">
+                                        <small class="text-muted">震荡幅度</small>
                                     </div>
                                     <div class="col-md-3">
-                                        <label class="form-label">突破阈值</label>
+                                        <label class="form-label">突破阈值 <small class="text-muted">(0.01~0.1)</small></label>
                                         <input type="number" class="form-control" id="formImprovedBreakout" value="0.02" step="0.01">
+                                        <small class="text-muted">突破比例</small>
                                     </div>
                                 </div>
 
                                 <!-- Composite 参数 -->
                                 <div class="row mb-3 composite-params" style="display:none;">
-                                    <div class="col-12"><small class="text-muted">复合算法参数:</small></div>
+                                    <div class="col-12"><small class="text-muted">复合算法参数 - 综合ADX、ATR、布林带等指标:</small></div>
                                     <div class="col-md-3">
-                                        <label class="form-label">ADX周期</label>
+                                        <label class="form-label">ADX周期 <small class="text-muted">(5~50)</small></label>
                                         <input type="number" class="form-control" id="formCompositeAdxPeriod" value="14">
+                                        <small class="text-muted">计算周期</small>
                                     </div>
                                     <div class="col-md-3">
-                                        <label class="form-label">ADX阈值</label>
+                                        <label class="form-label">ADX阈值 <small class="text-muted">(15~40)</small></label>
                                         <input type="number" class="form-control" id="formCompositeAdxThreshold" value="25">
+                                        <small class="text-muted">低于此值震荡</small>
                                     </div>
                                     <div class="col-md-3">
-                                        <label class="form-label">ATR周期</label>
+                                        <label class="form-label">ATR周期 <small class="text-muted">(5~50)</small></label>
                                         <input type="number" class="form-control" id="formCompositeAtrPeriod" value="14">
+                                        <small class="text-muted">计算周期</small>
                                     </div>
                                     <div class="col-md-3">
-                                        <label class="form-label">ATR倍数</label>
+                                        <label class="form-label">ATR倍数 <small class="text-muted">(0.5~3.0)</small></label>
                                         <input type="number" class="form-control" id="formCompositeAtrMultiplier" value="2" step="0.5">
+                                        <small class="text-muted">波动倍数</small>
                                     </div>
                                 </div>
 
                                 <!-- ADX 参数 -->
                                 <div class="row mb-3 adx-params" style="display:none;">
-                                    <div class="col-12"><small class="text-muted">ADX算法参数:</small></div>
+                                    <div class="col-12"><small class="text-muted">ADX算法参数 - 基于ADX指标判断趋势强度:</small></div>
                                     <div class="col-md-6">
-                                        <label class="form-label">ADX周期</label>
+                                        <label class="form-label">ADX周期 <small class="text-muted">(5~50)</small></label>
                                         <input type="number" class="form-control" id="formAdxPeriod" value="14">
+                                        <small class="text-muted">计算周期</small>
                                     </div>
                                     <div class="col-md-6">
-                                        <label class="form-label">ADX阈值</label>
+                                        <label class="form-label">ADX阈值 <small class="text-muted">(15~40)</small></label>
                                         <input type="number" class="form-control" id="formAdxThreshold" value="25">
+                                        <small class="text-muted">低于此值震荡</small>
                                     </div>
                                 </div>
                             </div>
@@ -490,46 +516,53 @@
                                     <div class="col-md-4">
                                         <label class="form-label">策略选择</label>
                                         <select class="form-select" id="formEntryStrategy" onchange="toggleEntryParams()">
-                                            <option value="fixed">固定间距</option>
-                                            <option value="atr">ATR动态</option>
-                                            <option value="bollinger">Bollinger</option>
-                                            <option value="support">支撑位</option>
-                                            <option value="composite">复合策略</option>
+                                            <option value="fixed">固定间距 - 使用固定网格间距</option>
+                                            <option value="atr">ATR动态 - 根据ATR调整间距</option>
+                                            <option value="bollinger">Bollinger - 布林带动态间距</option>
+                                            <option value="support">支撑位 - 基于支撑阻力位</option>
+                                            <option value="composite">复合策略 - 多指标组合</option>
                                         </select>
+                                        <small class="text-muted">选择入场价格间距的计算方式</small>
                                     </div>
                                 </div>
 
                                 <!-- ATR 参数 -->
                                 <div class="row mb-3 atr-params" style="display:none;">
-                                    <div class="col-12"><small class="text-muted">ATR参数:</small></div>
+                                    <div class="col-12"><small class="text-muted">ATR动态参数 - 根据市场波动自动调整入场间距:</small></div>
                                     <div class="col-md-3">
-                                        <label class="form-label">ATR周期</label>
+                                        <label class="form-label">ATR周期 <small class="text-muted">(5~50)</small></label>
                                         <input type="number" class="form-control" id="formEntryAtrPeriod" value="14">
+                                        <small class="text-muted">计算周期</small>
                                     </div>
                                     <div class="col-md-3">
-                                        <label class="form-label">ATR倍数</label>
+                                        <label class="form-label">ATR倍数 <small class="text-muted">(0.5~3.0)</small></label>
                                         <input type="number" class="form-control" id="formEntryAtrMultiplier" value="1.5" step="0.5">
+                                        <small class="text-muted">间距=ATR×倍数</small>
                                     </div>
                                     <div class="col-md-3">
-                                        <label class="form-label">最小间距</label>
+                                        <label class="form-label">最小间距 <small class="text-muted">(0.001~0.1)</small></label>
                                         <input type="number" class="form-control" id="formEntryMinSpacing" value="0.005" step="0.001">
+                                        <small class="text-muted">间距下限</small>
                                     </div>
                                     <div class="col-md-3">
-                                        <label class="form-label">最大间距</label>
+                                        <label class="form-label">最大间距 <small class="text-muted">(0.01~0.1)</small></label>
                                         <input type="number" class="form-control" id="formEntryMaxSpacing" value="0.02" step="0.005">
+                                        <small class="text-muted">间距上限</small>
                                     </div>
                                 </div>
 
                                 <!-- Bollinger 参数 -->
                                 <div class="row mb-3 bollinger-params" style="display:none;">
-                                    <div class="col-12"><small class="text-muted">Bollinger参数:</small></div>
+                                    <div class="col-12"><small class="text-muted">Bollinger参数 - 基于布林带宽度动态调整间距:</small></div>
                                     <div class="col-md-6">
-                                        <label class="form-label">周期</label>
+                                        <label class="form-label">周期 <small class="text-muted">(5~50)</small></label>
                                         <input type="number" class="form-control" id="formBollingerPeriod" value="20">
+                                        <small class="text-muted">布林带计算周期</small>
                                     </div>
                                     <div class="col-md-6">
-                                        <label class="form-label">标准差倍数</label>
+                                        <label class="form-label">标准差倍数 <small class="text-muted">(1.0~3.0)</small></label>
                                         <input type="number" class="form-control" id="formBollingerStd" value="2" step="0.5">
+                                        <small class="text-muted">带宽标准差倍数</small>
                                     </div>
                                 </div>
                             </div>
@@ -548,34 +581,55 @@
                             <div class="tab-pane fade" id="capital-tab-pane" role="tabpanel">
                                 <div class="row mb-3">
                                     <div class="col-md-4">
-                                        <label class="form-label">策略</label>
-                                        <select class="form-select" id="formCapitalStrategy">
-                                            <option value="guding">固定策略</option>
-                                            <option value="jijin">基金策略</option>
-                                        </select>
+                                        <label class="form-label">总金额(USDT) <small class="text-muted">(≥100)</small></label>
+                                        <input type="number" class="form-control" id="formTotalAmount" value="10000" step="100" min="100">
+                                        <small class="text-muted">初始投入资金</small>
                                     </div>
                                     <div class="col-md-4">
-                                        <label class="form-label">入场模式</label>
+                                        <label class="form-label">资金池策略</label>
+                                        <select class="form-select" id="formCapitalStrategy" onchange="onCapitalStrategyChange()">
+                                            <option value="guding">固定模式 (guding)</option>
+                                            <option value="baoshou">保守策略 (baoshou)</option>
+                                            <option value="wenjian">稳健策略 (wenjian)</option>
+                                            <option value="jijin">激进策略 (jijin)</option>
+                                            <option value="fuli">复利策略 (fuli)</option>
+                                            <option value="zidingyi">自定义策略 (zidingyi)</option>
+                                        </select>
+                                        <small class="text-muted">固定模式: 每轮使用初始资金; 递进模式: 支持提现和资金增长</small>
+                                    </div>
+                                    <div class="col-md-4">
+                                        <label class="form-label">入场资金计算模式</label>
                                         <select class="form-select" id="formCapitalEntryMode">
-                                            <option value="fixed">固定</option>
-                                            <option value="compound">复合</option>
-                                            <option value="default">默认</option>
+                                            <option value="fixed">固定模式 (fixed)</option>
+                                            <option value="compound">复利模式 (compound)</option>
+                                            <option value="default">默认模式 (default)</option>
                                         </select>
-                                    </div>
-                                    <div class="col-md-4">
-                                        <label class="form-label">提现阈值(USDT)</label>
-                                        <input type="number" class="form-control" id="formWithdrawThreshold" value="2.0" step="0.5">
+                                        <small class="text-muted">fixed: 使用初始资金; compound: 使用总资金; default: 入场资金=交易资金</small>
                                     </div>
                                 </div>
-                                <div class="row mb-3">
-                                    <div class="col-md-4">
-                                        <label class="form-label">保留金额(USDT)</label>
-                                        <input type="number" class="form-control" id="formWithdrawRetain" value="1.5" step="0.5">
+                                <!-- 资金校验提示 -->
+                                <div id="capitalValidationAlert" class="alert alert-warning mb-3" style="display:none;">
+                                    <small id="capitalValidationText"></small>
+                                </div>
+                                <div id="capitalParamsSection" style="display:none;">
+                                    <div class="row mb-3">
+                                        <div class="col-md-6">
+                                            <label class="form-label">提现阈值</label>
+                                            <input type="number" class="form-control" id="formWithdrawThreshold" step="0.1" placeholder="默认: 2.0">
+                                            <small class="text-muted">资金增长倍数达到此值时触发提现</small>
+                                        </div>
+                                        <div class="col-md-6">
+                                            <label class="form-label">保留比例</label>
+                                            <input type="number" class="form-control" id="formWithdrawRetain" step="0.1" placeholder="默认: 1.5">
+                                            <small class="text-muted">提现后保留的资金倍数</small>
+                                        </div>
                                     </div>
-                                    <div class="col-md-4">
-                                        <label class="form-label">爆仓阈值</label>
-                                        <input type="number" class="form-control" id="formLiquidationThreshold" value="0.1" step="0.05">
+                                    <div class="alert alert-info mb-2">
+                                        <small>爆仓阈值自动计算: 1 - (stop_loss × leverage)，如止损8%杠杆10倍则 = 1 - 0.08×10 = 0.2</small>
                                     </div>
+                                </div>
+                                <div id="capitalStrategyDesc" class="alert alert-info mb-3">
+                                    <small id="capitalStrategyDescText">固定模式: 每轮使用初始资金，记录盈亏</small>
                                 </div>
                             </div>
                         </div>
@@ -628,6 +682,18 @@
         let refreshInterval = null;
         let currentCaseDetail = null;
 
+        // 显示错误信息（可复制）
+        function showError(title, message) {
+            console.error(title, message);
+            // 使用 prompt 让用户可以复制错误信息
+            prompt(title + ' (可复制下方内容):', message);
+        }
+
+        // 显示成功信息
+        function showSuccess(message) {
+            alert(message);
+        }
+
         // 策略默认参数缓存（仅值）
         let strategyDefaults = {
             entry: {},
@@ -646,10 +712,116 @@
             amplitude: {}
         };
 
+        // 缓存当前加载的振幅预设
+        let currentAmplitudePresets = {};
+
         // 格式化数字
         function formatNumber(num, decimals = 2) {
             if (num === null || num === undefined) return '-';
             return parseFloat(num).toFixed(decimals);
+        }
+
+        // 检测交易所类型
+        function detectExchange(symbol) {
+            if (symbol.includes('.HK') || symbol.includes('.US')) {
+                return 'longport';
+            }
+            return 'binance';
+        }
+
+        // 加载振幅预设
+        async function loadAmplitudePresets() {
+            const symbol = document.getElementById('formSymbol').value.trim().toUpperCase();
+            if (!symbol) {
+                alert('请先输入交易对');
+                return;
+            }
+
+            const exchange = detectExchange(symbol);
+            const presetSelect = document.getElementById('formAmplitudePreset');
+
+            try {
+                presetSelect.innerHTML = '<option value="">加载中...</option>';
+
+                const response = await fetch(`${API_BASE}/amplitudes/${exchange}/${symbol}`);
+                const data = await response.json();
+
+                if (data.success && data.data) {
+                    currentAmplitudePresets = data.data;
+                    const presetKeys = Object.keys(data.data);
+
+                    if (presetKeys.length === 0) {
+                        presetSelect.innerHTML = '<option value="">暂无预设</option>';
+                        return;
+                    }
+
+                    presetSelect.innerHTML = presetKeys
+                        .map(key => `<option value="${key}">${key}</option>`)
+                        .join('');
+
+                    // 自动选择第一个预设并填充参数
+                    if (presetKeys.length > 0) {
+                        onAmplitudePresetChange();
+                    }
+                } else {
+                    presetSelect.innerHTML = '<option value="">暂无预设</option>';
+                    currentAmplitudePresets = {};
+                }
+            } catch (e) {
+                console.error('加载振幅预设失败:', e);
+                presetSelect.innerHTML = '<option value="">加载失败</option>';
+            }
+        }
+
+        // 振幅预设变化时填充参数
+        function onAmplitudePresetChange() {
+            const presetKey = document.getElementById('formAmplitudePreset').value;
+            if (!presetKey || !currentAmplitudePresets[presetKey]) {
+                return;
+            }
+
+            const preset = currentAmplitudePresets[presetKey];
+
+            // 填充振幅参数
+            if (preset.decay_factor !== undefined) {
+                document.getElementById('formDecayFactor').value = preset.decay_factor;
+            }
+            if (preset.stop_loss !== undefined) {
+                document.getElementById('formStopLoss').value = preset.stop_loss;
+            }
+            if (preset.leverage !== undefined) {
+                document.getElementById('formLeverage').value = preset.leverage;
+            }
+            if (preset.max_entries !== undefined) {
+                document.getElementById('formMaxEntries').value = preset.max_entries;
+            }
+            if (preset.grid_spacing !== undefined) {
+                document.getElementById('formGridSpacing').value = preset.grid_spacing;
+            }
+            if (preset.exit_profit !== undefined) {
+                document.getElementById('formExitProfit').value = preset.exit_profit;
+            }
+            if (preset.weights) {
+                document.getElementById('formWeights').value = JSON.stringify(preset.weights);
+            }
+
+            // total_amount_quote 可能在 preset 中（旧格式），也可能不在（新格式放在 capital 中）
+            if (preset.total_amount_quote !== undefined) {
+                document.getElementById('formTotalAmount').value = preset.total_amount_quote;
+            }
+        }
+
+        // 交易对输入变化时加载预设
+        function onSymbolInputChange() {
+            const symbol = document.getElementById('formSymbol').value.trim().toUpperCase();
+            if (symbol.length >= 3) {
+                // 延迟加载，避免输入过程中频繁请求
+                clearTimeout(window.symbolInputTimeout);
+                window.symbolInputTimeout = setTimeout(() => {
+                    loadAmplitudePresets();
+                    fetchSymbolInfo(symbol);  // 获取标的特定的最小金额要求
+                }, 500);
+            }
         }
 
         // 格式化货币
@@ -668,7 +840,10 @@
         }
 
         // 获取状态徽章
-        function getStatusBadge(status, paused = false) {
+        function getStatusBadge(status, paused = false, isRunning = true) {
+            if (!isRunning) {
+                return '<span class="status-badge status-stopped">stopped</span>';
+            }
             if (paused && status === 'running') {
                 return '<span class="status-badge status-paused">paused</span>';
             }
@@ -771,12 +946,20 @@
         }
 
         // 加载活跃会话
+        // 加载活跃会话（只显示真正在内存中运行的）
         async function loadActiveSessions() {
             try {
+                // 先获取所有运行中的 traders
+                const tradersResp = await fetch(`${API_BASE}/traders`);
+                const tradersData = await tradersResp.json();
+                const runningSessionIds = new Set(tradersData.success ? (tradersData.data || []).map(t => t.session_id) : []);
+
+                // 获取数据库中 status=running 的会话
                 const response = await fetch(`${API_BASE}/active-sessions`);
                 const data = await response.json();
                 if (data.success) {
-                    const sessions = data.data || [];
+                    // 只保留真正在内存中运行的会话
+                    const sessions = (data.data || []).filter(s => runningSessionIds.has(s.id));
                     document.getElementById('runningSessions').textContent = sessions.length;
 
                     if (sessions.length === 0) {
@@ -784,14 +967,17 @@
                         return;
                     }
 
+                    // 获取每个 trader 的详细状态
+                    const traderMap = new Map();
+                    for (const t of (tradersData.data || [])) {
+                        traderMap.set(t.session_id, t);
+                    }
+
                     let html = '<div class="row">';
                     for (const session of sessions) {
-                        // 获取交易器状态
-                        const traderResp = await fetch(`${API_BASE}/traders/${session.id}`);
-                        const traderData = await traderResp.json();
-                        const traderInfo = traderData.data || {};
-                        const isPaused = traderInfo.paused || false;
-                        const statusBadge = getStatusBadge(session.status, isPaused);
+                        const trader = traderMap.get(session.id) || {};
+                        const isPaused = trader.paused || false;
+                        const statusBadge = getStatusBadge('running', isPaused, true);
 
                         // 获取订单和状态
                         const ordersResp = await fetch(`${API_BASE}/live-sessions/${session.id}/orders`);
@@ -899,21 +1085,31 @@
                         return;
                     }
 
-                    document.getElementById('sessionsTable').innerHTML = sessions.map(s => `
+                    // 检查哪些会话实际上在运行（有 trader 在内存中）
+                    const tradersResp = await fetch(`${API_BASE}/traders`);
+                    const tradersData = await tradersResp.json();
+                    const runningSessionIds = new Set(tradersData.success ? (tradersData.data || []).map(t => t.session_id) : []);
+
+                    document.getElementById('sessionsTable').innerHTML = sessions.map(s => {
+                        const isActuallyRunning = runningSessionIds.has(s.id);
+                        return `
                         <tr>
                             <td>${s.id}</td>
                             <td>${s.case_id || '-'}</td>
                             <td>${s.symbol}</td>
-                            <td>${getStatusBadge(s.status)}</td>
+                            <td>${getStatusBadge(s.status, false, isActuallyRunning)}</td>
                             <td>${s.start_time || '-'}</td>
                             <td>${s.end_time || '-'}</td>
                             <td class="${getProfitClass(s.net_profit)}">${formatCurrency(s.net_profit)}</td>
                             <td>
                                 <button class="btn btn-sm btn-outline-info" onclick="showSession(${s.id})">详情</button>
-                                ${s.status !== 'running' ? `<button class="btn btn-sm btn-outline-warning" onclick="resetSession(${s.id})">重置</button>` : ''}
+                                ${!isActuallyRunning ? `
+                                    <button class="btn btn-sm btn-outline-warning" onclick="resetSession(${s.id})">重置</button>
+                                    <button class="btn btn-sm btn-outline-danger" onclick="confirmDeleteSession(${s.id})">删除</button>
+                                ` : ''}
                             </td>
                         </tr>
-                    `).join('');
+                    `}).join('');
                 }
             } catch (e) {
                 console.error('加载会话失败:', e);
@@ -944,6 +1140,8 @@
 
             toggleMarketParams();
             toggleEntryParams();
+            onCapitalStrategyChange();  // 初始化资金策略状态
+            updateCapitalValidation();  // 初始化资金校验提示
         }
 
         // 应用振幅参数默认值和验证属性
@@ -1033,25 +1231,18 @@
         // 应用超时参数默认值和验证属性
         function applyTimeoutDefaults() {
             const timeoutDef = strategyDefinitions.timeout?.params || {};
-            setFieldDefaults('formA1Timeout', timeoutDef.a1_timeout_minutes, 0);
+            setFieldDefaults('formA1Timeout', timeoutDef.a1_timeout_minutes, 30);
         }
 
         // 应用资金池参数默认值和验证属性
         function applyCapitalDefaults() {
-            const capitalDefaults = strategyDefaults.capital || {};
             const capitalDef = strategyDefinitions.capital || {};
 
+            // 设置默认策略
             document.getElementById('formCapitalStrategy').value = capitalDef._meta?.default_strategy || 'guding';
             document.getElementById('formCapitalEntryMode').value = capitalDef.entry_modes?.default || 'compound';
 
-            // guding 策略参数
-            const gudingDef = capitalDef.strategies?.guding || {};
-            setFieldDefaults('formWithdrawThreshold', gudingDef.withdrawal_threshold, 2.0);
-            setFieldDefaults('formWithdrawRetain', gudingDef.withdrawal_retain, 1.5);
-
-            // 爆仓阈值（common_params）
-            const commonDef = capitalDef.common_params || {};
-            setFieldDefaults('formLiquidationThreshold', commonDef.liquidation_threshold, 0.1);
+            // 策略参数由 onCapitalStrategyChange 处理
         }
 
         // 设置单个字段的默认值和验证属性
@@ -1109,16 +1300,18 @@
 
             // 验证资金参数
             const capitalDef = strategyDefinitions.capital?.common_params || {};
-            errors.push(...validateParam('total_amount_quote', formData.amplitude.total_amount_quote, capitalDef.total_amount_quote));
+            errors.push(...validateParam('total_amount_quote', formData.capital.total_amount_quote, capitalDef.total_amount_quote));
 
             // 验证超时参数
             const timeoutDef = strategyDefinitions.timeout?.params || {};
             errors.push(...validateParam('a1_timeout_minutes', formData.timeout.a1_timeout_minutes, timeoutDef.a1_timeout_minutes));
 
-            // 验证资金池参数
-            const capitalStratDef = strategyDefinitions.capital?.strategies?.[formData.capital.strategy] || {};
-            errors.push(...validateParam('withdraw_threshold', formData.capital.withdraw_threshold, capitalStratDef.withdrawal_threshold));
-            errors.push(...validateParam('withdraw_retain', formData.capital.withdraw_retain, capitalStratDef.withdrawal_retain));
+            // 验证资金池策略参数
+            const capitalStrategy = formData.capital.strategy;
+            const capitalStratDef = strategyDefinitions.capital?.strategies?.[capitalStrategy] || {};
+            const stratConfig = formData.capital[capitalStrategy] || {};
+            errors.push(...validateParam('withdrawal_threshold', stratConfig.withdrawal_threshold, capitalStratDef.withdrawal_threshold));
+            errors.push(...validateParam('withdrawal_retain', stratConfig.withdrawal_retain, capitalStratDef.withdrawal_retain));
 
             // 验证权重数组
             if (formData.amplitude.weights) {
@@ -1133,7 +1326,55 @@
                 }
             }
 
+            // 验证最小资金要求
+            const minFundCheck = checkMinFundRequirement(formData);
+            if (!minFundCheck.passed) {
+                errors.push(`资金不足: ${minFundCheck.message}`);
+            }
+
             return errors;
+        }
+
+        // 检查最小资金要求
+        function checkMinFundRequirement(formData) {
+            const totalAmount = parseFloat(formData.capital.total_amount_quote) || 0;
+            const maxEntries = parseInt(formData.amplitude.max_entries) || 4;
+            const leverage = parseInt(formData.amplitude.leverage) || 10;
+            const stopLoss = parseFloat(formData.amplitude.stop_loss) || 0.08;
+
+            // 使用从 API 获取的最小金额，或默认 100 USDT
+            const minNotional = window.currentSymbolMinNotional || 100;
+
+            // 计算权重总和（用于估算最大层级资金需求）
+            const weights = formData.amplitude.weights || [];
+            let maxWeight = 0.25; // 默认假设最大权重
+            if (weights.length > 0) {
+                maxWeight = Math.max(...weights);
+            }
+
+            // 最小资金估算：最大层级需要的资金 + 缓冲
+            // 考虑止损后的最大回撤
+            const maxDrawdown = stopLoss * leverage;
+            const suggestedMinAmount = minNotional * maxEntries * (1 + maxDrawdown);
+
+            // 资金充足性检查
+            const result = {
+                passed: totalAmount >= minNotional,
+                totalAmount: totalAmount,
+                minNotional: minNotional,
+                suggestedMin: Math.ceil(suggestedMinAmount),
+                message: ''
+            };
+
+            if (totalAmount < minNotional) {
+                result.message = `总资金 ${totalAmount} USDT 小于最小金额要求 ${minNotional} USDT`;
+            } else if (totalAmount < suggestedMinAmount) {
+                // 警告但不阻止
+                result.message = `当前资金 ${totalAmount} USDT，建议最小资金 ${Math.ceil(suggestedMinAmount)} USDT`;
+                result.passed = true; // 只是警告，不阻止保存
+            }
+
+            return result;
         }
 
         // 验证单个参数
@@ -1178,6 +1419,25 @@
             document.querySelectorAll('.improved-params').forEach(el => el.style.display = algo === 'improved' ? 'flex' : 'none');
             document.querySelectorAll('.composite-params').forEach(el => el.style.display = algo === 'composite' ? 'flex' : 'none');
             document.querySelectorAll('.adx-params').forEach(el => el.style.display = algo === 'adx' ? 'flex' : 'none');
+
+            // 显示算法描述
+            const descriptions = {
+                'always_ranging': '始终返回震荡行情（用于对比测试）。此算法无参数，始终返回震荡行情状态，适用于与原 binance_backtest 的测试结果对比。',
+                'dual_thrust': 'Dual Thrust 状态过滤器（增强版）。基于历史波动幅度构建突破区间：价格在轨道内为震荡行情，突破上轨为上涨趋势，跌破下轨为下跌趋势。针对下跌行情有特殊处理：下跌阈值更敏感、下跌趋势确认需要连续多天、切换冷却期避免频繁切换。',
+                'improved': '改进的行情判断算法（支撑阻力+箱体震荡）。核心改进：更长的回看周期（60-90天）、支撑阻力位识别、箱体震荡识别、更严格的趋势确认。',
+                'composite': 'ADX + ATR + 布林带宽度组合判断。综合多指标判断趋势强度：ADX判断趋势强度、ATR判断波动率变化、布林带宽度判断波动范围。',
+                'adx': '基于 ADX 的趋势强度判断。ADX>=threshold 为趋势行情，否则为震荡。趋势行情时根据价格与MA50的关系判断上涨或下跌方向。'
+            };
+
+            const descEl = document.getElementById('algorithmDescription');
+            const descTextEl = document.getElementById('algorithmDescText');
+
+            if (descriptions[algo]) {
+                descTextEl.textContent = descriptions[algo];
+                descEl.style.display = 'block';
+            } else {
+                descEl.style.display = 'none';
+            }
         }
 
         // 切换入场策略参数显示
@@ -1185,6 +1445,95 @@
             const strategy = document.getElementById('formEntryStrategy').value;
             document.querySelectorAll('.atr-params').forEach(el => el.style.display = strategy === 'atr' ? 'flex' : 'none');
             document.querySelectorAll('.bollinger-params').forEach(el => el.style.display = strategy === 'bollinger' ? 'flex' : 'none');
+        }
+
+        // 资金策略切换
+        function onCapitalStrategyChange() {
+            const strategy = document.getElementById('formCapitalStrategy').value;
+            const paramsSection = document.getElementById('capitalParamsSection');
+            const descText = document.getElementById('capitalStrategyDescText');
+            const thresholdInput = document.getElementById('formWithdrawThreshold');
+            const retainInput = document.getElementById('formWithdrawRetain');
+
+            // 从策略定义中读取默认值
+            const strategiesDef = strategyDefinitions.capital?.strategies || {};
+            const strategyDef = strategiesDef[strategy] || {};
+            const strategyMeta = strategyDef._meta || {};
+
+            // 获取默认值
+            const defaultThreshold = strategyDef.withdrawal_threshold?.default || 2.0;
+            const defaultRetain = strategyDef.withdrawal_retain?.default || 1.5;
+            const description = strategyMeta.description || strategyMeta.display_name || strategy;
+
+            // 设置描述
+            descText.textContent = description;
+
+            if (strategy === 'guding') {
+                paramsSection.style.display = 'none';
+            } else if (strategy === 'fuli') {
+                paramsSection.style.display = 'block';
+                thresholdInput.value = defaultThreshold;
+                retainInput.value = defaultRetain;
+                thresholdInput.readOnly = true;
+                retainInput.readOnly = true;
+                thresholdInput.disabled = true;
+                retainInput.disabled = true;
+            } else {
+                paramsSection.style.display = 'block';
+                thresholdInput.value = defaultThreshold;
+                retainInput.value = defaultRetain;
+                thresholdInput.readOnly = false;
+                retainInput.readOnly = false;
+                thresholdInput.disabled = false;
+                retainInput.disabled = false;
+            }
+
+            // 更新资金校验提示
+            updateCapitalValidation();
+        }
+
+        // 更新资金校验提示
+        function updateCapitalValidation() {
+            const alertEl = document.getElementById('capitalValidationAlert');
+            const textEl = document.getElementById('capitalValidationText');
+
+            // 收集当前表单数据进行校验
+            const totalAmount = parseFloat(document.getElementById('formTotalAmount').value) || 0;
+            const maxEntries = parseInt(document.getElementById('formMaxEntries').value) || 4;
+            const leverage = parseInt(document.getElementById('formLeverage').value) || 10;
+            const stopLoss = parseFloat(document.getElementById('formStopLoss').value) || 0.08;
+
+            // 使用从 API 获取的最小金额，或默认 100 USDT
+            const minNotional = window.currentSymbolMinNotional || 100;
+            const maxDrawdown = stopLoss * leverage;
+            const suggestedMinAmount = minNotional * maxEntries * (1 + maxDrawdown);
+
+            if (totalAmount < minNotional) {
+                alertEl.style.display = 'block';
+                alertEl.className = 'alert alert-danger mb-3';
+                textEl.textContent = `❌ 总资金 ${totalAmount} USDT 小于最小金额要求 ${minNotional} USDT`;
+            } else if (totalAmount < suggestedMinAmount) {
+                alertEl.style.display = 'block';
+                alertEl.className = 'alert alert-warning mb-3';
+                textEl.textContent = `⚠️ 当前资金 ${totalAmount} USDT，建议最小资金 ${Math.ceil(suggestedMinAmount)} USDT（考虑 ${maxEntries} 层 + ${((stopLoss * leverage) * 100).toFixed(0)}% 最大回撤）`;
+            } else {
+                alertEl.style.display = 'none';
+            }
+        }
+
+        // 获取标的信息（最小金额等）
+        async function fetchSymbolInfo(symbol) {
+            try {
+                const response = await fetch(`${API_BASE}/symbol-info/${symbol}`);
+                const data = await response.json();
+                if (data.success && data.data) {
+                    window.currentSymbolMinNotional = data.data.min_notional || 100;
+                    updateCapitalValidation();
+                }
+            } catch (e) {
+                console.error('获取标的信息失败:', e);
+                window.currentSymbolMinNotional = 100;
+            }
         }
 
         // 收集表单数据
@@ -1232,13 +1581,17 @@
             const entryStrategy = document.getElementById('formEntryStrategy').value;
             let entryConfig = { strategy: entryStrategy };
             if (entryStrategy === 'atr') {
-                entryConfig.atr_period = parseInt(document.getElementById('formEntryAtrPeriod').value);
-                entryConfig.atr_multiplier = parseFloat(document.getElementById('formEntryAtrMultiplier').value);
-                entryConfig.min_spacing = parseFloat(document.getElementById('formEntryMinSpacing').value);
-                entryConfig.max_spacing = parseFloat(document.getElementById('formEntryMaxSpacing').value);
+                entryConfig.atr = {
+                    atr_period: parseInt(document.getElementById('formEntryAtrPeriod').value),
+                    atr_multiplier: parseFloat(document.getElementById('formEntryAtrMultiplier').value),
+                    min_spacing: parseFloat(document.getElementById('formEntryMinSpacing').value),
+                    max_spacing: parseFloat(document.getElementById('formEntryMaxSpacing').value)
+                };
             } else if (entryStrategy === 'bollinger') {
-                entryConfig.period = parseInt(document.getElementById('formBollingerPeriod').value);
-                entryConfig.num_std = parseFloat(document.getElementById('formBollingerStd').value);
+                entryConfig.bollinger = {
+                    period: parseInt(document.getElementById('formBollingerPeriod').value),
+                    num_std: parseFloat(document.getElementById('formBollingerStd').value)
+                };
             }
 
             // 尝试解析权重 JSON
@@ -1257,7 +1610,6 @@
                 amplitude: {
                     decay_factor: parseFloat(document.getElementById('formDecayFactor').value),
                     stop_loss: parseFloat(document.getElementById('formStopLoss').value),
-                    total_amount_quote: parseFloat(document.getElementById('formTotalAmount').value),
                     leverage: parseInt(document.getElementById('formLeverage').value),
                     max_entries: parseInt(document.getElementById('formMaxEntries').value),
                     grid_spacing: parseFloat(document.getElementById('formGridSpacing').value),
@@ -1267,18 +1619,20 @@
                 market: {
                     algorithm: algo,
                     trading_statuses: tradingStatuses,
-                    algo_config: algoConfig
+                    [algo]: algoConfig
                 },
                 entry: entryConfig,
                 timeout: {
                     a1_timeout_minutes: parseInt(document.getElementById('formA1Timeout').value)
                 },
                 capital: {
+                    total_amount_quote: parseFloat(document.getElementById('formTotalAmount').value) || 10000,
                     strategy: document.getElementById('formCapitalStrategy').value,
                     entry_mode: document.getElementById('formCapitalEntryMode').value,
-                    withdraw_threshold: parseFloat(document.getElementById('formWithdrawThreshold').value),
-                    withdraw_retain: parseFloat(document.getElementById('formWithdrawRetain').value),
-                    liquidation_threshold: parseFloat(document.getElementById('formLiquidationThreshold').value)
+                    [document.getElementById('formCapitalStrategy').value]: {
+                        withdrawal_threshold: parseFloat(document.getElementById('formWithdrawThreshold').value) || 2.0,
+                        withdrawal_retain: parseFloat(document.getElementById('formWithdrawRetain').value) || 1.5
+                    }
                 }
             };
         }
@@ -1318,11 +1672,16 @@
                     loadCases();
                     alert(caseId ? '配置已更新' : '配置已创建');
                 } else {
-                    alert('保存失败: ' + result.error);
+                    // 特殊处理常见错误
+                    if (result.error === 'Cannot update while running') {
+                        alert('⚠️ 无法修改配置：该配置有正在运行的实盘会话。\n\n请先在"活跃会话"标签页停止相关会话后再修改配置。');
+                    } else {
+                        showError('保存失败', result.error);
+                    }
                 }
             } catch (e) {
                 console.error('保存配置失败:', e);
-                alert('保存失败: ' + e.message);
+                showError('保存失败', e.message);
             }
         }
 
@@ -1354,7 +1713,6 @@
             const amp = caseData.amplitude || {};
             document.getElementById('formDecayFactor').value = amp.decay_factor || 0.5;
             document.getElementById('formStopLoss').value = amp.stop_loss || 0.08;
-            document.getElementById('formTotalAmount').value = amp.total_amount_quote || 10000;
             document.getElementById('formLeverage').value = amp.leverage || 10;
             document.getElementById('formMaxEntries').value = amp.max_entries || 4;
             document.getElementById('formGridSpacing').value = amp.grid_spacing || 0.01;
@@ -1365,15 +1723,16 @@
 
             // 行情参数
             const market = caseData.market || {};
-            document.getElementById('formMarketAlgorithm').value = market.algorithm || 'always_ranging';
+            const algo = market.algorithm || 'always_ranging';
+            document.getElementById('formMarketAlgorithm').value = algo;
             const statuses = market.trading_statuses || [];
             document.getElementById('formStatusRanging').checked = statuses.includes('ranging');
             document.getElementById('formStatusTrendingUp').checked = statuses.includes('trending_up');
             document.getElementById('formStatusTrendingDown').checked = statuses.includes('trending_down');
 
-            // 行情算法配置
-            const algoConfig = market.algo_config || {};
-            if (market.algorithm === 'dual_thrust') {
+            // 行情算法配置 - 从 market[algorithm_name] 读取
+            const algoConfig = market[algo] || {};
+            if (algo === 'dual_thrust') {
                 document.getElementById('formDualNDays').value = algoConfig.n_days || 4;
                 document.getElementById('formDualK1').value = algoConfig.k1 || 0.4;
                 document.getElementById('formDualK2').value = algoConfig.k2 || 0.4;
@@ -1383,31 +1742,42 @@
             }
             toggleMarketParams();
 
-            // 入场策略
+            // 入场策略 - 从 entry[strategy_name] 读取
             const entry = caseData.entry || {};
-            document.getElementById('formEntryStrategy').value = entry.strategy || 'fixed';
-            if (entry.strategy === 'atr') {
-                document.getElementById('formEntryAtrPeriod').value = entry.atr_period || 14;
-                document.getElementById('formEntryAtrMultiplier').value = entry.atr_multiplier || 1.5;
-                document.getElementById('formEntryMinSpacing').value = entry.min_spacing || 0.005;
-                document.getElementById('formEntryMaxSpacing').value = entry.max_spacing || 0.02;
-            } else if (entry.strategy === 'bollinger') {
-                document.getElementById('formBollingerPeriod').value = entry.period || 20;
-                document.getElementById('formBollingerStd').value = entry.num_std || 2;
+            const entryStrategy = entry.strategy || 'fixed';
+            document.getElementById('formEntryStrategy').value = entryStrategy;
+            const entryConfig = entry[entryStrategy] || {};
+            if (entryStrategy === 'atr') {
+                document.getElementById('formEntryAtrPeriod').value = entryConfig.atr_period || 14;
+                document.getElementById('formEntryAtrMultiplier').value = entryConfig.atr_multiplier || 1.5;
+                document.getElementById('formEntryMinSpacing').value = entryConfig.min_spacing || 0.005;
+                document.getElementById('formEntryMaxSpacing').value = entryConfig.max_spacing || 0.02;
+            } else if (entryStrategy === 'bollinger') {
+                document.getElementById('formBollingerPeriod').value = entryConfig.period || 20;
+                document.getElementById('formBollingerStd').value = entryConfig.num_std || 2;
             }
             toggleEntryParams();
 
             // 超时参数
             const timeout = caseData.timeout || {};
-            document.getElementById('formA1Timeout').value = timeout.a1_timeout_minutes || 0;
+            document.getElementById('formA1Timeout').value = timeout.a1_timeout_minutes || 30;
 
-            // 资金池参数
+            // 资金池参数 - 从 capital 读取
             const capital = caseData.capital || {};
-            document.getElementById('formCapitalStrategy').value = capital.strategy || 'guding';
-            document.getElementById('formCapitalEntryMode').value = capital.entry_mode || 'fixed';
-            document.getElementById('formWithdrawThreshold').value = capital.withdraw_threshold || 2.0;
-            document.getElementById('formWithdrawRetain').value = capital.withdraw_retain || 1.5;
-            document.getElementById('formLiquidationThreshold').value = capital.liquidation_threshold || 0.1;
+            document.getElementById('formTotalAmount').value = capital.total_amount_quote || 10000;
+            const capitalStrategy = capital.strategy || 'guding';
+            document.getElementById('formCapitalStrategy').value = capitalStrategy;
+            document.getElementById('formCapitalEntryMode').value = capital.entry_mode || 'compound';
+            const strategyConfig = capital[capitalStrategy] || {};
+            document.getElementById('formWithdrawThreshold').value = strategyConfig.withdrawal_threshold || '';
+            document.getElementById('formWithdrawRetain').value = strategyConfig.withdrawal_retain || '';
+
+            // 触发资金策略切换以正确显示参数区域
+            onCapitalStrategyChange();
+
+            // 获取标的信息以更新最小金额验证
+            const symbol = caseData.symbol || 'BTCUSDT';
+            fetchSymbolInfo(symbol);
         }
 
         // 显示配置详情
@@ -1418,6 +1788,19 @@
                 if (data.success) {
                     currentCaseDetail = data.data;
                     const caseData = data.data;
+
+                    // 构建 CLI 可用的完整配置
+                    const cliConfig = buildCliConfig(caseData);
+
+                    // 获取资金策略默认值
+                    const capitalStrategy = caseData.capital?.strategy || 'guding';
+                    const strategyDef = strategyDefinitions.capital?.strategies?.[capitalStrategy] || {};
+                    const defaultThreshold = strategyDef.withdrawal_threshold?.default;
+                    const defaultRetain = strategyDef.withdrawal_retain?.default;
+
+                    // 提现阈值和保留金额：优先数据库值，否则显示默认值
+                    const withdrawThreshold = caseData.capital?.withdraw_threshold ?? defaultThreshold ?? '-';
+                    const withdrawRetain = caseData.capital?.withdraw_retain ?? defaultRetain ?? '-';
 
                     let html = `
                         <div class="row">
@@ -1438,7 +1821,6 @@
                                 <table class="table table-sm">
                                     <tr><td>衰减因子</td><td>${caseData.amplitude?.decay_factor || '-'}</td></tr>
                                     <tr><td>止损比例</td><td>${caseData.amplitude?.stop_loss || '-'}</td></tr>
-                                    <tr><td>总金额</td><td>${caseData.amplitude?.total_amount_quote || '-'}</td></tr>
                                     <tr><td>杠杆</td><td>${caseData.amplitude?.leverage || '-'}</td></tr>
                                     <tr><td>最大层级</td><td>${caseData.amplitude?.max_entries || '-'}</td></tr>
                                     <tr><td>网格间距</td><td>${caseData.amplitude?.grid_spacing || '-'}</td></tr>
@@ -1473,11 +1855,19 @@
                             <div class="col-md-6">
                                 <h6>资金池参数</h6>
                                 <table class="table table-sm">
+                                    <tr><td>总金额</td><td>${caseData.capital?.total_amount_quote || '-'}</td></tr>
                                     <tr><td>策略</td><td>${caseData.capital?.strategy || '-'}</td></tr>
                                     <tr><td>入场模式</td><td>${caseData.capital?.entry_mode || '-'}</td></tr>
-                                    <tr><td>提现阈值</td><td>${caseData.capital?.withdraw_threshold || '-'}</td></tr>
-                                    <tr><td>保留金额</td><td>${caseData.capital?.withdraw_retain || '-'}</td></tr>
+                                    <tr><td>提现阈值</td><td>${withdrawThreshold}</td></tr>
+                                    <tr><td>保留金额</td><td>${withdrawRetain}</td></tr>
                                 </table>
+                            </div>
+                        </div>
+                        <hr>
+                        <div class="row">
+                            <div class="col-12">
+                                <h6>CLI 配置 JSON <button class="btn btn-sm btn-outline-primary" onclick="copyLiveConfig()">复制</button></h6>
+                                <pre class="bg-light p-2" style="max-height: 300px; overflow-y: auto;">${JSON.stringify(cliConfig, null, 2)}</pre>
                             </div>
                         </div>
                     `;
@@ -1487,6 +1877,114 @@
                 }
             } catch (e) {
                 console.error('加载配置详情失败:', e);
+            }
+        }
+
+        // 构建 CLI 可用的完整配置
+        function buildCliConfig(caseData) {
+            const config = {
+                symbol: caseData.symbol,
+                testnet: caseData.testnet === 1 || caseData.testnet === true,
+                amplitude: {
+                    decay_factor: caseData.amplitude?.decay_factor || 0.5,
+                    stop_loss: caseData.amplitude?.stop_loss || 0.08,
+                    leverage: caseData.amplitude?.leverage || 10,
+                    max_entries: caseData.amplitude?.max_entries || 4,
+                    grid_spacing: caseData.amplitude?.grid_spacing || 0.01,
+                    exit_profit: caseData.amplitude?.exit_profit || 0.01,
+                    valid_amplitudes: caseData.amplitude?.valid_amplitudes || [],
+                    weights: caseData.amplitude?.weights || []
+                },
+                market: buildMarketConfig(caseData.market),
+                entry: buildEntryConfig(caseData.entry),
+                timeout: {
+                    a1_timeout_minutes: caseData.timeout?.a1_timeout_minutes || 0
+                },
+                capital: buildCapitalConfig(caseData.capital)
+            };
+            return config;
+        }
+
+        // 构建行情配置
+        function buildMarketConfig(market) {
+            if (!market) return { algorithm: 'always_ranging', trading_statuses: ['ranging'] };
+
+            const algo = market.algorithm || 'always_ranging';
+            const result = { algorithm: algo };
+
+            if (market.trading_statuses) result.trading_statuses = market.trading_statuses;
+
+            // 算法特定参数
+            if (algo === 'dual_thrust' && market.dual_thrust) {
+                result.dual_thrust = market.dual_thrust;
+            } else if (algo === 'improved' && market.improved) {
+                result.improved = market.improved;
+            } else if (algo === 'composite' && market.composite) {
+                result.composite = market.composite;
+            } else if (algo === 'adx' && market.adx) {
+                result.adx = market.adx;
+            }
+
+            return result;
+        }
+
+        // 构建入场配置
+        function buildEntryConfig(entry) {
+            if (!entry || !entry.strategy) return {};
+
+            const result = { strategy: entry.strategy };
+
+            if (entry.strategy === 'atr' && entry.atr) {
+                result.atr = entry.atr;
+            } else if (entry.strategy === 'bollinger' && entry.bollinger) {
+                result.bollinger = entry.bollinger;
+            } else if (entry.strategy === 'fixed' && entry.fixed) {
+                result.fixed = entry.fixed;
+            }
+
+            return result;
+        }
+
+        // 构建资金配置（嵌套策略参数）
+        function buildCapitalConfig(capital) {
+            const strategy = capital?.strategy || 'guding';
+
+            // 从策略定义获取默认值
+            const strategyDef = strategyDefinitions.capital?.strategies?.[strategy] || {};
+            const defaultThreshold = strategyDef.withdrawal_threshold?.default || 2.0;
+            const defaultRetain = strategyDef.withdrawal_retain?.default || 1.5;
+
+            const result = {
+                total_amount_quote: capital?.total_amount_quote || 10000,
+                strategy: strategy,
+                entry_mode: capital?.entry_mode || 'compound'
+            };
+
+            // 添加策略特定参数（嵌套在策略名称下）
+            result[strategy] = {
+                withdrawal_threshold: capital?.withdrawal_threshold || capital?.withdraw_threshold || defaultThreshold,
+                withdrawal_retain: capital?.withdrawal_retain || capital?.withdraw_retain || defaultRetain
+            };
+
+            return result;
+        }
+
+        // 复制实盘配置到剪贴板
+        function copyLiveConfig() {
+            const preElement = document.querySelector('#caseDetailContent pre');
+            if (preElement) {
+                navigator.clipboard.writeText(preElement.textContent).then(() => {
+                    alert('配置已复制到剪贴板，可直接用于: python binance_live.py --config xxx.json');
+                }).catch(err => {
+                    console.error('复制失败:', err);
+                    // fallback
+                    const range = document.createRange();
+                    range.selectNode(preElement);
+                    window.getSelection().removeAllRanges();
+                    window.getSelection().addRange(range);
+                    document.execCommand('copy');
+                    alert('配置已复制');
+                });
             }
         }
 
@@ -1515,17 +2013,17 @@
                 });
                 const result = await response.json();
                 if (result.success) {
-                    alert('实盘已启动! Session ID: ' + result.session_id);
+                    alert('实盘已启动! Session ID: ' + result.data.session_id);
                     loadCases();
                     loadActiveSessions();
                     // 切换到活跃会话标签页
                     document.querySelector('a[data-bs-toggle="tab"][href="#active"]').click();
                 } else {
-                    alert('启动失败: ' + result.error);
+                    showError('启动失败', result.error);
                 }
             } catch (e) {
                 console.error('启动实盘失败:', e);
-                alert('启动失败: ' + e.message);
+                showError('启动失败', e.message);
             }
         }
 
@@ -1539,14 +2037,14 @@
                 });
                 const result = await response.json();
                 if (result.success) {
-                    alert('配置已复制! 新配置ID: ' + result.new_case_id);
+                    alert('配置已复制! 新配置ID: ' + result.data.id);
                     loadCases();
                 } else {
-                    alert('复制失败: ' + result.error);
+                    showError('复制失败', result.error);
                 }
             } catch (e) {
                 console.error('复制配置失败:', e);
-                alert('复制失败: ' + e.message);
+                showError('复制失败', e.message);
             }
         }
 
@@ -1564,11 +2062,11 @@
                     loadCases();
                     loadSessions();
                 } else {
-                    alert('重置失败: ' + result.error);
+                    showError('重置失败', result.error);
                 }
             } catch (e) {
                 console.error('重置配置失败:', e);
-                alert('重置失败: ' + e.message);
+                showError('重置失败', e.message);
             }
         }
 
@@ -1585,11 +2083,11 @@
                     alert('配置已删除');
                     loadCases();
                 } else {
-                    alert('删除失败: ' + result.error);
+                    showError('删除失败', result.error);
                 }
             } catch (e) {
                 console.error('删除配置失败:', e);
-                alert('删除失败: ' + e.message);
+                showError('删除失败', e.message);
             }
         }
 
@@ -1606,11 +2104,11 @@
                     alert('交易器已暂停');
                     loadActiveSessions();
                 } else {
-                    alert('暂停失败: ' + result.error);
+                    showError('暂停失败', result.error);
                 }
             } catch (e) {
                 console.error('暂停交易器失败:', e);
-                alert('暂停失败: ' + e.message);
+                showError('暂停失败', e.message);
             }
         }
 
@@ -1627,11 +2125,11 @@
                     alert('交易器已恢复');
                     loadActiveSessions();
                 } else {
-                    alert('恢复失败: ' + result.error);
+                    showError('恢复失败', result.error);
                 }
             } catch (e) {
                 console.error('恢复交易器失败:', e);
-                alert('恢复失败: ' + e.message);
+                showError('恢复失败', e.message);
             }
         }
 
@@ -1649,11 +2147,11 @@
                     loadActiveSessions();
                     loadSessions();
                 } else {
-                    alert('停止失败: ' + result.error);
+                    showError('停止失败', result.error);
                 }
             } catch (e) {
                 console.error('停止交易器失败:', e);
-                alert('停止失败: ' + e.message);
+                showError('停止失败', e.message);
             }
         }
 
@@ -1670,11 +2168,77 @@
                     alert('会话已重置');
                     loadSessions();
                 } else {
-                    alert('重置失败: ' + result.error);
+                    showError('重置失败', result.error);
                 }
             } catch (e) {
                 console.error('重置会话失败:', e);
-                alert('重置失败: ' + e.message);
+                showError('重置失败', e.message);
+            }
+        }
+
+        // 确认删除会话（显示数据统计）
+        async function confirmDeleteSession(sessionId) {
+            try {
+                // 获取会话数据统计
+                const statsResp = await fetch(`${API_BASE}/live-sessions/${sessionId}/stats`);
+                const statsData = await statsResp.json();
+
+                if (!statsData.success) {
+                    showError('获取会话数据统计失败', statsData.error);
+                    return;
+                }
+
+                const stats = statsData.data;
+                const totalRecords = Object.values(stats).reduce((a, b) => a + b, 0);
+
+                // 构建确认消息
+                let confirmMsg = `即将删除会话 ${sessionId}\n`;
+                confirmMsg += `将删除关联数据 ${totalRecords} 条记录\n\n`;
+
+                const tableNames = {
+                    'live_state_snapshots': '状态快照',
+                    'live_capital_history': '资金历史',
+                    'live_capital_statistics': '资金统计',
+                    'live_notifications': '通知记录',
+                    'live_orders': '订单记录',
+                    'live_trades': '交易记录',
+                    'live_market_cases': '行情配置',
+                    'live_market_results': '行情结果'
+                };
+
+                for (const [table, count] of Object.entries(stats)) {
+                    if (count > 0) {
+                        confirmMsg += `${tableNames[table] || table}: ${count} 条\n`;
+                    }
+                }
+
+                confirmMsg += '\n输入 YES 确认删除:';
+
+                // 使用 prompt 让用户可以复制信息并确认
+                const userInput = prompt(confirmMsg, '');
+                if (userInput !== 'YES') {
+                    if (userInput !== null) {
+                        alert('已取消删除');
+                    }
+                    return;
+                }
+
+                // 执行删除
+                const deleteResp = await fetch(`${API_BASE}/live-sessions/${sessionId}`, {
+                    method: 'DELETE'
+                });
+                const deleteResult = await deleteResp.json();
+
+                if (deleteResult.success) {
+                    alert('会话已删除');
+                    loadSessions();
+                    loadActiveSessions();
+                } else {
+                    showError('删除失败', deleteResult.error);
+                }
+            } catch (e) {
+                console.error('删除会话失败:', e);
+                showError('删除失败', e.message);
             }
         }
 
@@ -1770,6 +2334,24 @@
         document.addEventListener('DOMContentLoaded', () => {
             loadAll();
             startAutoRefresh(10000); // 10秒刷新一次
+
+            // 初始化默认最小金额（后续会根据实际标的更新）
+            window.currentSymbolMinNotional = 100;
+
+            // 如果表单有默认标的，获取其最小金额要求
+            const defaultSymbol = document.getElementById('formSymbol').value.trim().toUpperCase();
+            if (defaultSymbol) {
+                fetchSymbolInfo(defaultSymbol);
+            }
+
+            // 添加资金相关字段变化监听
+            ['formTotalAmount', 'formMaxEntries', 'formLeverage', 'formStopLoss'].forEach(id => {
+                const el = document.getElementById(id);
+                if (el) {
+                    el.addEventListener('input', updateCapitalValidation);
+                    el.addEventListener('change', updateCapitalValidation);
+                }
+            });
         });
     </script>
 </body>

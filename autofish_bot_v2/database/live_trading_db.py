@@ -486,6 +486,23 @@ class LiveTradingDB:
             )
         """)
 
+        # live_notifications - 通知记录表
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS live_notifications (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id INTEGER NOT NULL,
+                msg_num INTEGER NOT NULL,
+                msg_type TEXT,
+                title TEXT,
+                content TEXT,
+                payload TEXT,
+                send_status TEXT DEFAULT 'pending',
+                send_error TEXT,
+                sent_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (session_id) REFERENCES live_sessions(id) ON DELETE CASCADE
+            )
+        """)
+
         # ==================== 索引创建 ====================
 
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_live_cases_symbol ON live_cases(symbol)")
@@ -501,6 +518,7 @@ class LiveTradingDB:
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_live_market_results_case ON live_market_results(case_id)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_live_market_results_time ON live_market_results(check_time)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_live_snapshots_session ON live_state_snapshots(session_id)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_live_notifications_session ON live_notifications(session_id)")
 
         conn.commit()
         conn.close()
@@ -524,6 +542,24 @@ class LiveTradingDB:
             if 'sl_supplemented' not in columns:
                 cursor.execute("ALTER TABLE live_orders ADD COLUMN sl_supplemented INTEGER DEFAULT 0")
                 print("迁移: live_orders 添加 sl_supplemented 字段")
+
+            conn.commit()
+
+            # 检查 live_notifications 表是否有新字段
+            cursor.execute("PRAGMA table_info(live_notifications)")
+            columns = [row[1] for row in cursor.fetchall()]
+
+            if 'send_status' not in columns:
+                cursor.execute("ALTER TABLE live_notifications ADD COLUMN send_status TEXT DEFAULT 'pending'")
+                print("迁移: live_notifications 添加 send_status 字段")
+
+            if 'send_error' not in columns:
+                cursor.execute("ALTER TABLE live_notifications ADD COLUMN send_error TEXT")
+                print("迁移: live_notifications 添加 send_error 字段")
+
+            if 'payload' not in columns:
+                cursor.execute("ALTER TABLE live_notifications ADD COLUMN payload TEXT")
+                print("迁移: live_notifications 添加 payload 字段")
 
             conn.commit()
 
@@ -916,6 +952,42 @@ class LiveTradingDB:
         cursor.execute("DELETE FROM live_state_snapshots WHERE session_id = ?", (session_id,))
         cursor.execute("DELETE FROM live_trades WHERE session_id = ?", (session_id,))
         cursor.execute("DELETE FROM live_orders WHERE session_id = ?", (session_id,))
+        cursor.execute("DELETE FROM live_notifications WHERE session_id = ?", (session_id,))
+
+    def get_session_data_stats(self, session_id: int) -> Dict[str, int]:
+        """获取会话关联数据统计"""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+
+        try:
+            stats = {}
+            cursor.execute("SELECT COUNT(*) as cnt FROM live_state_snapshots WHERE session_id = ?", (session_id,))
+            stats['live_state_snapshots'] = cursor.fetchone()['cnt']
+
+            cursor.execute("SELECT COUNT(*) as cnt FROM live_capital_history WHERE session_id = ?", (session_id,))
+            stats['live_capital_history'] = cursor.fetchone()['cnt']
+
+            cursor.execute("SELECT COUNT(*) as cnt FROM live_capital_statistics WHERE session_id = ?", (session_id,))
+            stats['live_capital_statistics'] = cursor.fetchone()['cnt']
+
+            cursor.execute("SELECT COUNT(*) as cnt FROM live_notifications WHERE session_id = ?", (session_id,))
+            stats['live_notifications'] = cursor.fetchone()['cnt']
+
+            cursor.execute("SELECT COUNT(*) as cnt FROM live_orders WHERE session_id = ?", (session_id,))
+            stats['live_orders'] = cursor.fetchone()['cnt']
+
+            cursor.execute("SELECT COUNT(*) as cnt FROM live_trades WHERE session_id = ?", (session_id,))
+            stats['live_trades'] = cursor.fetchone()['cnt']
+
+            cursor.execute("SELECT COUNT(*) as cnt FROM live_market_cases WHERE session_id = ?", (session_id,))
+            stats['live_market_cases'] = cursor.fetchone()['cnt']
+
+            cursor.execute("SELECT COUNT(*) as cnt FROM live_market_results WHERE case_id IN (SELECT id FROM live_market_cases WHERE session_id = ?)", (session_id,))
+            stats['live_market_results'] = cursor.fetchone()['cnt']
+
+            return stats
+        finally:
+            conn.close()
 
     def delete_session(self, session_id: int) -> bool:
         """删除会话及其关联数据"""
@@ -1579,6 +1651,113 @@ class LiveTradingDB:
             if row:
                 return dict(row)
             return {}
+        finally:
+            conn.close()
+
+    # ==================== 通知记录方法 ====================
+
+    def get_next_message_number(self, session_id: int) -> int:
+        """获取指定 session 的下一个消息号
+
+        Args:
+            session_id: 会话 ID
+
+        Returns:
+            下一个消息号（从 1 开始）
+        """
+        conn = self._get_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT MAX(msg_num) FROM live_notifications WHERE session_id = ?",
+                (session_id,)
+            )
+            row = cursor.fetchone()
+            if row and row[0] is not None:
+                return row[0] + 1
+            return 1
+        finally:
+            conn.close()
+
+    def save_notification(self, session_id: int, msg_num: int, msg_type: str,
+                          title: str, content: str, send_status: str = 'pending',
+                          payload: str = None) -> int:
+        """保存通知记录
+
+        Args:
+            session_id: 会话 ID
+            msg_num: 消息号
+            msg_type: 消息类型（如 entry, exit, warning 等）
+            title: 标题
+            content: 内容
+            send_status: 发送状态（pending, skipped, sent, failed）
+            payload: 完整的请求数据（JSON 字符串）
+
+        Returns:
+            新记录的 ID
+        """
+        conn = self._get_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT INTO live_notifications (session_id, msg_num, msg_type, title, content, send_status, payload)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, (session_id, msg_num, msg_type, title, content, send_status, payload))
+            conn.commit()
+            return cursor.lastrowid
+        finally:
+            conn.close()
+
+    def update_notification_status(self, notification_id: int, send_status: str, send_error: str = None):
+        """更新通知发送状态
+
+        Args:
+            notification_id: 通知记录 ID
+            send_status: 发送状态（sent, failed）
+            send_error: 错误信息（可选）
+        """
+        conn = self._get_connection()
+        try:
+            cursor = conn.cursor()
+            if send_error:
+                cursor.execute("""
+                    UPDATE live_notifications
+                    SET send_status = ?, send_error = ?
+                    WHERE id = ?
+                """, (send_status, send_error, notification_id))
+            else:
+                cursor.execute("""
+                    UPDATE live_notifications
+                    SET send_status = ?
+                    WHERE id = ?
+                """, (send_status, notification_id))
+            conn.commit()
+        finally:
+            conn.close()
+
+    def get_notifications(self, session_id: int, limit: int = 100) -> List[Dict]:
+        """获取指定 session 的通知记录
+
+        Args:
+            session_id: 会话 ID
+            limit: 最大返回数量
+
+        Returns:
+            通知记录列表
+        """
+        conn = self._get_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT id, session_id, msg_num, msg_type, title, content, payload, send_status, send_error, sent_at
+                FROM live_notifications
+                WHERE session_id = ?
+                ORDER BY msg_num DESC
+                LIMIT ?
+            """, (session_id, limit))
+            rows = cursor.fetchall()
+            columns = ['id', 'session_id', 'msg_num', 'msg_type', 'title', 'content', 'payload', 'send_status', 'send_error', 'sent_at']
+            return [dict(zip(columns, row)) for row in rows]
         finally:
             conn.close()
 

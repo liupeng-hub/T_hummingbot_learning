@@ -41,6 +41,10 @@ from urllib.parse import urlencode
 from market_status_detector import MarketStatusDetector, MarketStatus, StatusResult
 from database.live_trading_db import LiveTradingDB, DbStateRepository
 
+# 在模块导入时加载环境变量（确保通知服务能获取 WECHAT_WEBHOOK）
+from dotenv import load_dotenv
+load_dotenv()
+
 
 # ============================================================================
 # 常量定义
@@ -144,38 +148,8 @@ def get_logger() -> logging.Logger:
     return logging.getLogger("autofish")
 
 
-logger = logging.getLogger("autofish")
-
-
-def get_next_message_number() -> int:
-    """获取下一个消息号（实盘专用）
-
-    使用简单的本地计数器，基于文件存储。
-    """
-    import os
-    from pathlib import Path
-
-    counter_file = Path(__file__).parent / "logs" / ".message_counter"
-
-    try:
-        # 确保 logs 目录存在
-        counter_file.parent.mkdir(exist_ok=True)
-
-        # 读取当前计数
-        if counter_file.exists():
-            current = int(counter_file.read_text().strip())
-        else:
-            current = 0
-
-        # 增加计数并保存
-        next_num = current + 1
-        counter_file.write_text(str(next_num))
-
-        return next_num
-    except Exception as e:
-        logger.error(f"[消息号] 获取失败: {e}")
-        # 使用时间戳作为备选
-        return int(datetime.now().timestamp() % 100000)
+# 在模块导入时配置日志（确保 Web 服务导入时日志也能正确输出）
+logger = setup_logger(name="autofish", log_file=LOG_FILE, log_dir=LOG_DIR)
 
 
 # ============================================================================
@@ -391,37 +365,74 @@ class NotificationTemplate:
         return datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
 
-def send_wechat_notification(title: str, content: str):
-    msg_num = get_next_message_number()
-    content_with_num = f"> **消息号**: {msg_num}\n\n{content}"
-    
-    wechat_webhook = os.getenv("WECHAT_WEBHOOK")
-    
-    if not wechat_webhook:
-        logger.warning("[通知发送] 未配置 WECHAT_WEBHOOK，跳过发送")
-        return
-    
-    try:
-        data = {
-            "msgtype": "markdown",
-            "markdown": {
-                "content": f"## {title}\n\n{content_with_num}"
-            }
+def send_wechat_notification(title: str, content: str, session_id: int, db, msg_type: str = None):
+    """发送微信通知并保存到数据库
+
+    Args:
+        title: 通知标题
+        content: 通知内容
+        session_id: 会话 ID（用于按 session 计数消息ID）
+        db: 数据库实例
+        msg_type: 消息类型（可选，如 entry, exit, warning）
+    """
+    logger.info(f"[通知] 开始发送通知: title={title}, session_id={session_id}, msg_type={msg_type}")
+
+    # 对于错误类通知，记录详细内容方便排查
+    if msg_type in ('error', 'exit') or '错误' in title:
+        logger.info(f"[通知] 详细内容:\n{content}")
+
+    # 获取消息ID（按 session）
+    msg_num = db.get_next_message_number(session_id)
+    logger.info(f"[通知] 消息ID: msg_num={msg_num}")
+
+    # 构造完整的请求数据
+    content_with_num = f"> **实例ID**: {session_id}\n> **消息ID**: {msg_num}\n\n{content}"
+    payload = {
+        "msgtype": "markdown",
+        "markdown": {
+            "content": f"## {title}\n\n{content_with_num}"
         }
-        response = requests.post(wechat_webhook, json=data, timeout=30)
+    }
+    payload_str = json.dumps(payload, ensure_ascii=False)
+
+    # 发送到微信（可选）
+    wechat_webhook = os.getenv("WECHAT_WEBHOOK")
+    logger.info(f"[通知] WECHAT_WEBHOOK 配置: {'已配置' if wechat_webhook else '未配置'}")
+
+    if not wechat_webhook:
+        # 未配置 webhook，保存为 skipped 状态
+        notification_id = db.save_notification(session_id, msg_num, msg_type or "general", title, content, 'skipped', payload_str)
+        logger.info(f"[通知] 未配置 webhook，已保存为 skipped: notification_id={notification_id}")
+        return
+
+    # 先保存为 pending 状态
+    notification_id = db.save_notification(session_id, msg_num, msg_type or "general", title, content, 'pending', payload_str)
+    logger.info(f"[通知] 已保存为 pending: notification_id={notification_id}")
+
+    try:
+        logger.info(f"[通知] 发送请求到微信 webhook...")
+        response = requests.post(wechat_webhook, json=payload, timeout=30)
+        logger.info(f"[通知] 微信响应: status_code={response.status_code}")
         if response.status_code == 200:
             result = response.json()
+            logger.info(f"[通知] 微信响应内容: {result}")
             if result.get("errcode") == 0:
-                logger.info(f"[通知发送] 微信机器人发送成功: {title}, 消息号={msg_num}")
+                db.update_notification_status(notification_id, 'sent')
+                logger.info(f"[通知发送] 微信机器人发送成功: {title}, 消息ID={msg_num}")
             else:
-                logger.warning(f"[通知发送] 微信机器人发送失败: {result}")
+                error_msg = result.get('errmsg', str(result))
+                db.update_notification_status(notification_id, 'failed', error_msg)
+                logger.warning(f"[通知发送] 微信机器人发送失败: {error_msg}")
         else:
-            logger.warning(f"[通知发送] 微信机器人请求失败: {response.status_code}")
+            error_msg = f"HTTP {response.status_code}"
+            db.update_notification_status(notification_id, 'failed', error_msg)
+            logger.warning(f"[通知发送] 微信机器人请求失败: {error_msg}")
     except Exception as e:
-        logger.warning(f"[通知发送] 微信机器人发送异常: {e}")
+        db.update_notification_status(notification_id, 'failed', str(e))
+        logger.error(f"[通知发送] 微信机器人发送异常: {e}")
 
 
-def notify_entry_order(order, config: dict):
+def notify_entry_order(order, config: dict, session_id: int, db):
     max_entries = config.get('max_entries', 4)
     content = dedent(f"""\
         > **层级**: A{order.level} (第{order.level}层/共{max_entries}层)
@@ -432,11 +443,11 @@ def notify_entry_order(order, config: dict):
         > **止损价**: {order.stop_loss_price:.2f} USDT (-{float(config.get('stop_loss', Decimal('0.08')))*100:.1f}%)
         > **订单ID**: {order.order_id}
         > **时间**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}""").strip()
-    
-    send_wechat_notification(f"🟢 入场单下单 A{order.level}", content)
+
+    send_wechat_notification(f"🟢 入场单下单 A{order.level}", content, session_id, db, "entry")
 
 
-def notify_entry_order_supplement(order, config: dict):
+def notify_entry_order_supplement(order, config: dict, session_id: int, db):
     max_entries = config.get('max_entries', 4)
     content = dedent(f"""\
         > **层级**: A{order.level} (第{order.level}层/共{max_entries}层)
@@ -447,11 +458,11 @@ def notify_entry_order_supplement(order, config: dict):
         > **止损价**: {order.stop_loss_price:.2f} USDT (-{float(config.get('stop_loss', Decimal('0.08')))*100:.1f}%)
         > **订单ID**: {order.order_id}
         > **时间**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}""").strip()
-    
-    send_wechat_notification(f"📥 入场单补下 A{order.level}", content)
+
+    send_wechat_notification(f"📥 入场单补下 A{order.level}", content, session_id, db, "entry")
 
 
-def notify_entry_filled(order, filled_price: Decimal, commission: Decimal, config: dict):
+def notify_entry_filled(order, filled_price: Decimal, commission: Decimal, config: dict, session_id: int, db):
     max_entries = config.get('max_entries', 4)
     content = dedent(f"""
             > **层级**: A{order.level} (第{order.level}层/共{max_entries}层)
@@ -462,10 +473,10 @@ def notify_entry_filled(order, filled_price: Decimal, commission: Decimal, confi
             > **止损价**: {order.stop_loss_price:.2f} USDT (-{float(config.get('stop_loss', Decimal('0.08')))*100:.1f}%)
             > **时间**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
         """).strip()
-    send_wechat_notification(f"✅ 入场成交 A{order.level}", content)
+    send_wechat_notification(f"✅ 入场成交 A{order.level}", content, session_id, db, "filled")
 
 
-def notify_take_profit(order, profit: Decimal, config: dict):
+def notify_take_profit(order, profit: Decimal, config: dict, session_id: int, db):
     max_entries = config.get('max_entries', 4)
     content = dedent(f"""
             > **层级**: A{order.level} (第{order.level}层/共{max_entries}层)
@@ -473,10 +484,10 @@ def notify_take_profit(order, profit: Decimal, config: dict):
             > **盈亏**: +{profit:.2f} USDT
             > **时间**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
         """).strip()
-    send_wechat_notification(f"🎯 止盈触发 A{order.level}", content)
+    send_wechat_notification(f"🎯 止盈触发 A{order.level}", content, session_id, db, "take_profit")
 
 
-def notify_stop_loss(order, profit: Decimal, config: dict):
+def notify_stop_loss(order, profit: Decimal, config: dict, session_id: int, db):
     max_entries = config.get('max_entries', 4)
     content = dedent(f"""
             > **层级**: A{order.level} (第{order.level}层/共{max_entries}层)
@@ -484,10 +495,10 @@ def notify_stop_loss(order, profit: Decimal, config: dict):
             > **盈亏**: {profit:.2f} USDT
             > **时间**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
         """).strip()
-    send_wechat_notification(f"🛑 止损触发 A{order.level}", content)
+    send_wechat_notification(f"🛑 止损触发 A{order.level}", content, session_id, db, "stop_loss")
 
 
-def notify_withdrawal(withdrawal_info: dict, config: dict):
+def notify_withdrawal(withdrawal_info: dict, config: dict, session_id: int, db):
     """通知提现触发"""
     content = dedent(f"""
             > **提现金额**: {withdrawal_info.get('withdrawal_amount', 0):.2f} USDT
@@ -495,10 +506,10 @@ def notify_withdrawal(withdrawal_info: dict, config: dict):
             > **交易资金**: {withdrawal_info.get('trading_capital', 0):.2f} USDT
             > **时间**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
         """).strip()
-    send_wechat_notification("💰 提现触发", content)
+    send_wechat_notification("💰 提现触发", content, session_id, db, "withdrawal")
 
 
-def notify_liquidation(liquidation_info: dict, config: dict):
+def notify_liquidation(liquidation_info: dict, config: dict, session_id: int, db):
     """通知爆仓恢复"""
     content = dedent(f"""
             > **交易资金**: {liquidation_info.get('trading_capital', 0):.2f} USDT
@@ -506,10 +517,10 @@ def notify_liquidation(liquidation_info: dict, config: dict):
             > **爆仓次数**: {liquidation_info.get('liquidation_count', 0)}
             > **时间**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
         """).strip()
-    send_wechat_notification("⚠️ 爆仓恢复", content)
+    send_wechat_notification("⚠️ 爆仓恢复", content, session_id, db, "liquidation")
 
 
-def notify_orders_recovered(orders: list, config: dict, current_price: Decimal, pnl_info: dict = None):
+def notify_orders_recovered(orders: list, config: dict, current_price: Decimal, pnl_info: dict, session_id: int, db):
     max_entries = config.get('max_entries', 4)
     symbol = config.get('symbol', 'BTCUSDT')
     exit_profit_pct = float(config.get('exit_profit', Decimal('0.01'))) * 100
@@ -595,10 +606,10 @@ def notify_orders_recovered(orders: list, config: dict, current_price: Decimal, 
             content_lines.append(f"> **已实现盈亏**: {pnl_info.get('realized_pnl', 'N/A')} USDT")
     
     content = "\n".join(content_lines)
-    send_wechat_notification("🔄 订单同步", content)
+    send_wechat_notification("🔄 订单同步", content, session_id, db, "sync")
 
 
-def notify_exit(reason: str, config: dict, cancelled_orders: list = None, remaining_orders: list = None, pnl_info: dict = None, current_price: Decimal = None):
+def notify_exit(reason: str, config: dict, session_id: int, db, cancelled_orders: list = None, remaining_orders: list = None, pnl_info: dict = None, current_price: Decimal = None):
     symbol = config.get('symbol', 'BTCUSDT')
     max_level = config.get('max_entries', 4)
     
@@ -674,10 +685,10 @@ def notify_exit(reason: str, config: dict, cancelled_orders: list = None, remain
     content_lines.append("请检查程序状态并手动重启。")
     
     content = "\n".join(content_lines)
-    send_wechat_notification("⏹️ Autofish V2 退出", content)
+    send_wechat_notification("⏹️ Autofish V2 退出", content, session_id, db, "exit")
 
 
-def notify_startup(config: dict, current_price: Decimal):
+def notify_startup(config: dict, current_price: Decimal, session_id: int, db):
     symbol = config.get('symbol', 'BTCUSDT')
     
     weights_str = ""
@@ -698,10 +709,10 @@ def notify_startup(config: dict, current_price: Decimal):
             {weights_str}
             > **启动时间**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
         """).strip()
-    send_wechat_notification("🚀 Autofish V2 启动", content)
+    send_wechat_notification("🚀 Autofish V2 启动", content, session_id, db, "startup")
 
 
-def notify_critical_error(error_msg: str, config: dict):
+def notify_critical_error(error_msg: str, config: dict, session_id: int, db):
     """发送严重错误通知"""
     symbol = config.get('symbol', 'BTCUSDT')
     content = dedent(f"""
@@ -711,10 +722,10 @@ def notify_critical_error(error_msg: str, config: dict):
         > **状态**: 程序强制退出
         > **时间**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
     """).strip()
-    send_wechat_notification("🚨 Autofish V2 严重错误", content)
+    send_wechat_notification("🚨 Autofish V2 严重错误", content, session_id, db, "error")
 
 
-def notify_warning(warning_msg: str, config: dict):
+def notify_warning(warning_msg: str, config: dict, session_id: int, db):
     """发送警告通知"""
     symbol = config.get('symbol', 'BTCUSDT')
     content = dedent(f"""
@@ -723,10 +734,10 @@ def notify_warning(warning_msg: str, config: dict):
         > **提醒内容**: {warning_msg}
         > **时间**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
     """).strip()
-    send_wechat_notification("⚠️ Autofish 资金提醒", content)
+    send_wechat_notification("⚠️ Autofish 资金提醒", content, session_id, db, "warning")
 
 
-def notify_market_status(old_status: str, new_status: str, reason: str, config: dict):
+def notify_market_status(old_status: str, new_status: str, reason: str, config: dict, session_id: int, db):
     """发送行情状态变化通知"""
     symbol = config.get('symbol', 'BTCUSDT')
     content = dedent(f"""
@@ -737,10 +748,10 @@ def notify_market_status(old_status: str, new_status: str, reason: str, config: 
         > **原因**: {reason}
         > **时间**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
     """).strip()
-    send_wechat_notification("🔄 行情状态变化", content)
+    send_wechat_notification("🔄 行情状态变化", content, session_id, db, "market")
 
 
-def notify_first_entry_timeout_refresh(old_order, new_order: dict, current_price: Decimal, timeout_minutes: int, config: dict):
+def notify_first_entry_timeout_refresh(old_order, new_order: dict, current_price: Decimal, timeout_minutes: int, config: dict, session_id: int, db):
     """发送第一笔入场订单超时重挂通知"""
     symbol = config.get('symbol', 'BTCUSDT')
     max_entries = config.get('max_entries', 4)
@@ -780,7 +791,7 @@ def notify_first_entry_timeout_refresh(old_order, new_order: dict, current_price
         > 
         > **价格调整**: {price_diff:.2f} ({price_diff_pct:.2f}%)
         > **时间**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}""").strip()
-    send_wechat_notification(f"⏰ A1 超时重挂", content)
+    send_wechat_notification(f"⏰ A1 超时重挂", content, session_id, db, "timeout")
 
 
 # ============================================================================
@@ -1254,7 +1265,7 @@ class AlgoHandler:
             withdrawal = self.trader.capital_pool.check_withdrawal()
             if withdrawal:
                 logger.info(f"[提现触发] 金额={withdrawal['withdrawal_amount']:.2f}")
-                notify_withdrawal(withdrawal, self.trader.config)
+                notify_withdrawal(withdrawal, self.trader.config, self.trader.session_id, self.trader.db)
 
             # === 检查爆仓 ===
             if self.trader.capital_pool.check_liquidation():
@@ -1298,7 +1309,7 @@ class AlgoHandler:
 
             self.trader._log_order_closed(order, "止盈")
 
-            notify_take_profit(order, profit, self.trader.config)
+            notify_take_profit(order, profit, self.trader.config, self.trader.session_id, self.trader.db)
 
             await self._cancel_next_level_and_restart(order)
 
@@ -1382,7 +1393,7 @@ class AlgoHandler:
 
             self.trader._log_order_closed(order, "止损")
 
-            notify_stop_loss(order, profit, self.trader.config)
+            notify_stop_loss(order, profit, self.trader.config, self.trader.session_id, self.trader.db)
 
             await self._cancel_next_level(order)
 
@@ -1479,7 +1490,7 @@ class AlgoHandler:
             self.trader.results["total_profit"] += profit
             logger.info(f"[止盈] A{order.level}: 盈利={profit:.2f}")
             print(f"[{datetime.now().strftime('%H:%M:%S')}] 🎯 A{order.level} 止盈: 盈利={profit:.2f} USDT")
-            notify_take_profit(order, profit, self.trader.config)
+            notify_take_profit(order, profit, self.trader.config, self.trader.session_id, self.trader.db)
         else:
             order.state = "closed"
             order.close_reason = "stop_loss"
@@ -1487,7 +1498,7 @@ class AlgoHandler:
             self.trader.results["total_loss"] += abs(profit)
             logger.info(f"[止损] A{order.level}: 亏损={profit:.2f}")
             print(f"[{datetime.now().strftime('%H:%M:%S')}] 🛑 A{order.level} 止损: 亏损={profit:.2f} USDT")
-            notify_stop_loss(order, profit, self.trader.config)
+            notify_stop_loss(order, profit, self.trader.config, self.trader.session_id, self.trader.db)
         
         if is_tp and order.sl_order_id:
             await self.trader.client.cancel_algo_order(
@@ -1789,9 +1800,11 @@ class BinanceLiveTrader:
 
         self.ws = None
         self.ws_connected = False
-        self.ws_message_count = 0
         self.ws_error_count = 0
         self.ws_last_message_time: Optional[datetime] = None
+
+        # === 启动信息（用于日志）===
+        self._proxy_logged = False
 
         self.results = {
             "total_trades": 0,
@@ -1999,7 +2012,7 @@ class BinanceLiveTrader:
                 await self._close_all_positions(current_price, "market_status_change")
                 self.chain_state.is_active = False
                 self._save_state()
-                notify_market_status(old_status.value, new_status.value, f"非交易状态({new_status.value})，停止交易", self.config)
+                notify_market_status(old_status.value, new_status.value, f"非交易状态({new_status.value})，停止交易", self.config, self.session_id, self.db)
         
         elif is_trading_status and not was_trading_status:
             if not self.chain_state or not self.chain_state.orders:
@@ -2009,7 +2022,7 @@ class BinanceLiveTrader:
                 self.chain_state = Autofish_ChainState(base_price=current_price, orders=[first_order])
                 await self._place_entry_order(first_order)
                 self._save_state()
-                notify_market_status(old_status.value, new_status.value, "可交易状态，开始交易", self.config)
+                notify_market_status(old_status.value, new_status.value, "可交易状态，开始交易", self.config, self.session_id, self.db)
         
         print(f"{'='*60}\n")
     
@@ -2133,7 +2146,7 @@ class BinanceLiveTrader:
             logger.error(f"[预检查] 配置不满足最小金额要求，程序退出 - 当前资金: {check_result['total_amount']} USDT，需要: {suggested_min_ceil} USDT")
             
             error_msg = f"总资金 {check_result['total_amount']} USDT 不满足最小金额要求，建议最小总资金: {suggested_min_ceil} USDT"
-            notify_critical_error(error_msg, self.config)
+            notify_critical_error(error_msg, self.config, self.session_id, self.db)
             
             print(f"\n{'='*60}")
             print(f"❌ 配置预检查失败，程序退出")
@@ -2156,7 +2169,7 @@ class BinanceLiveTrader:
             logger.warning(f"[预检查] 资金储备可能不足 - 当前资金: {check_result['total_amount']} USDT，最小资金: {suggested_min_ceil} USDT，建议资金: {suggested_amount_1_5x_ceil} USDT")
             
             warning_msg = f"当前总资金 {check_result['total_amount']} USDT，建议资金储备: {suggested_amount_1_5x_ceil} USDT（最小资金的1.5倍）"
-            notify_warning(warning_msg, self.config)
+            notify_warning(warning_msg, self.config, self.session_id, self.db)
             
             print(f"\n{'='*60}")
             print(f"⚠️ 资金储备提醒")
@@ -2186,7 +2199,7 @@ class BinanceLiveTrader:
                 > 
                 > **时间**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
             """).strip()
-            send_wechat_notification("✅ Autofish V2 配置确认", content)
+            send_wechat_notification("✅ Autofish V2 配置确认", content, self.session_id, self.db, "config_confirm")
             
             print(f"\n{'='*60}")
             print(f"✅ 资金配置检查通过")
@@ -2236,24 +2249,12 @@ class BinanceLiveTrader:
     
     async def _create_order(self, level: int, base_price: Decimal, klines: List[Dict] = None,
                             group_id: int = None) -> Any:
-        from autofish_core import Autofish_OrderCalculator, EntryPriceStrategyFactory
-
-        # 从配置创建入场价格策略
-        strategy_config = self.config.get("entry_price_strategy", {"name": "fixed"})
-        # 兼容新格式
-        if "strategy" in strategy_config:
-            strategy_name = strategy_config.get("strategy", "fixed")
-            strategy_params = strategy_config.get(strategy_name, {})
-        else:
-            strategy_name = strategy_config.get("name", "fixed")
-            strategy_params = strategy_config.get("params", {})
-        strategy = EntryPriceStrategyFactory.create(strategy_name, **strategy_params)
+        from autofish_core import Autofish_OrderCalculator
 
         order_calculator = Autofish_OrderCalculator(
             grid_spacing=self.config.get("grid_spacing", Decimal("0.01")),
             exit_profit=self.config.get("exit_profit", Decimal("0.01")),
-            stop_loss=self.config.get("stop_loss", Decimal("0.08")),
-            entry_strategy=strategy
+            stop_loss=self.config.get("stop_loss", Decimal("0.08"))
         )
 
         # 从配置文件获取权重
@@ -2400,7 +2401,7 @@ class BinanceLiveTrader:
             except Exception as e:
                 logger.warning(f"[退出处理] 获取价格/盈亏失败: {e}")
             
-            notify_exit(reason, self.config, cancelled_orders, remaining_orders,
+            notify_exit(reason, self.config, self.session_id, self.db, cancelled_orders, remaining_orders,
                        pnl_info, current_price)
 
             # === 结束数据库会话 ===
@@ -2519,13 +2520,13 @@ class BinanceLiveTrader:
             
             if is_timeout_refresh:
                 logger.info(f"A1 超时重挂成功: orderId={order.order_id}, oldOrderId={old_order.order_id if old_order else 'N/A'}")
-                notify_first_entry_timeout_refresh(old_order, order, current_price, timeout_minutes, self.config)
+                notify_first_entry_timeout_refresh(old_order, order, current_price, timeout_minutes, self.config, self.session_id, self.db)
             elif is_supplement:
                 logger.info(f"入场单补下成功: A{order.level}, orderId={order.order_id}")
-                notify_entry_order_supplement(order, self.config)
+                notify_entry_order_supplement(order, self.config, self.session_id, self.db)
             else:
                 logger.info(f"入场单下单成功: A{order.level}, orderId={order.order_id}")
-                notify_entry_order(order, self.config)
+                notify_entry_order(order, self.config, self.session_id, self.db)
 
             # === 保存订单到数据库 ===
             if self.session_id:
@@ -3066,7 +3067,7 @@ class BinanceLiveTrader:
                 
                 if self.chain_state.orders and self._is_first_connection:
                     pnl_info = await self._get_pnl_info()
-                    notify_orders_recovered(self.chain_state.orders, self.config, current_price, pnl_info or {})
+                    notify_orders_recovered(self.chain_state.orders, self.config, current_price, pnl_info or {}, self.session_id, self.db)
                     self._is_first_connection = False
                 
                 has_active_order = any(o.state in ["pending", "filled"] for o in self.chain_state.orders)
@@ -3197,9 +3198,9 @@ class BinanceLiveTrader:
             print(f"[{datetime.now().strftime('%H:%M:%S')}] 📤 A{order.level} 市价平仓成功, 成交价={filled_price:.2f}")
             
             if reason == "take_profit":
-                notify_take_profit(order, profit, self.config)
+                notify_take_profit(order, profit, self.config, self.session_id, self.db)
             else:
-                notify_stop_loss(order, profit, self.config)
+                notify_stop_loss(order, profit, self.config, self.session_id, self.db)
             
             await self._cancel_next_level_and_restart(order)
             
@@ -3344,9 +3345,9 @@ class BinanceLiveTrader:
     
     async def run(self) -> None:
         from autofish_core import Autofish_ChainState
-        
+
         self._setup_signal_handlers()
-        
+
         print(f"\n{'='*60}")
         print(f"🚀 Autofish V2 启动")
         print(f"{'='*60}")
@@ -3361,6 +3362,12 @@ class BinanceLiveTrader:
         print(f"  行情感知: {'启用' if self.market_aware else '禁用'}")
         print(f"  日志文件: {LOG_DIR}/{LOG_FILE}")
         print(f"{'='*60}\n")
+
+        logger.info("[启动] Autofish V2 启动")
+        logger.info(f"[启动] 交易对: {self.config.get('symbol')}, 测试网: {self.testnet}")
+        if not self._proxy_logged:
+            logger.info(f"[启动] 代理配置: {self.proxy if self.proxy else '未配置'}")
+            self._proxy_logged = True
 
         self.consecutive_errors = 0
         self.max_consecutive_errors = 5
@@ -3405,22 +3412,34 @@ class BinanceLiveTrader:
             logger.error("[数据库] 创建会话失败")
             return
         logger.info(f"[数据库] 创建会话: session_id={self.session_id}, case_id={self.case_id}")
+        print(f"[启动] session_id={self.session_id}, case_id={self.case_id}")
 
         # === 初始化状态仓库 ===
         self.state_repository = DbStateRepository(self.db, self.session_id)
-        
+
         try:
             while self.running:
                 try:
+                    logger.info("[启动] 开始初始化精度...")
                     await self._init_precision()
-                    
+                    logger.info("[启动] 精度初始化完成")
+
+                    logger.info("[启动] 开始初始化行情检测器...")
                     await self._init_market_detector()
-                    
+                    logger.info("[启动] 行情检测器初始化完成")
+
+                    logger.info("[启动] 获取当前价格...")
                     current_price = await self._get_current_price()
-                    
+                    logger.info(f"[启动] 当前价格: {current_price}")
+
                     if not self._startup_notified:
-                        notify_startup(self.config, current_price)
-                        self._startup_notified = True
+                        logger.info(f"[通知] 准备发送启动通知: session_id={self.session_id}")
+                        try:
+                            notify_startup(self.config, current_price, self.session_id, self.db)
+                            logger.info("[通知] 启动通知发送完成")
+                            self._startup_notified = True
+                        except Exception as e:
+                            logger.error(f"[通知] 启动通知发送失败: {e}")
                         
                         if self.market_aware and self.market_detector:
                             market_result = await self._check_market_status(current_price)
@@ -3507,7 +3526,7 @@ class BinanceLiveTrader:
                         await self._handle_exit(f"连续错误 {self.consecutive_errors} 次: {e}")
                         break
                     else:
-                        notify_critical_error(str(e), self.config)
+                        notify_critical_error(str(e), self.config, self.session_id, self.db)
                         print(f"\n{'='*60}")
                         print(f"[{datetime.now().strftime('%H:%M:%S')}] ⚠️ 发生异常，等待重试...")
                         print(f"  错误: {e}")
@@ -3705,7 +3724,7 @@ class BinanceLiveTrader:
         await self._place_exit_orders(order)
 
         commission = Decimal("0")
-        notify_entry_filled(order, filled_price, commission, self.config)
+        notify_entry_filled(order, filled_price, commission, self.config, self.session_id, self.db)
 
         await self._place_next_level_order(order)
 
@@ -3818,8 +3837,7 @@ class BinanceLiveTrader:
 async def main():
     """主函数"""
     import argparse
-    from dotenv import load_dotenv
-    from autofish_core import ConfigLoader
+    from autofish_core import Autofish_ConfigLoader
 
     parser = argparse.ArgumentParser(description="Autofish V2 Binance 实盘交易")
     parser.add_argument("--case-id", type=int, default=None, help="从数据库加载配置 (case_id)")
@@ -3827,14 +3845,11 @@ async def main():
 
     args = parser.parse_args()
 
-    load_dotenv()
-    setup_logger(name="autofish", log_file=LOG_FILE)
-
     # === 加载配置 ===
     if args.case_id is not None:
         # 从数据库加载
         try:
-            config = ConfigLoader.load_from_case_id(args.case_id)
+            config = Autofish_ConfigLoader.load_from_case_id(args.case_id)
             config_source = f"数据库 case_id={args.case_id}"
             logger.info(f"[配置加载] 从数据库加载配置: case_id={args.case_id}")
         except Exception as e:
@@ -3843,7 +3858,7 @@ async def main():
     elif args.config:
         # 从配置文件加载
         try:
-            config = ConfigLoader.load_from_file(args.config)
+            config = Autofish_ConfigLoader.load_from_file(args.config)
             config_source = f"配置文件 {args.config}"
             logger.info(f"[配置加载] 从文件加载配置: {args.config}")
         except Exception as e:
@@ -3851,7 +3866,7 @@ async def main():
             return
     else:
         # 使用默认配置
-        config = ConfigLoader.load_default_config()
+        config = Autofish_ConfigLoader.load_default_config()
         config_source = "默认配置"
         logger.info("[配置加载] 使用默认配置")
 
@@ -3957,11 +3972,11 @@ class LiveTraderManager:
         返回:
             BinanceLiveTrader 实例，失败返回 None
         """
-        from autofish_core import ConfigLoader
+        from autofish_core import Autofish_ConfigLoader
 
         try:
-            # 使用 ConfigLoader 从 case_id 加载配置
-            config = ConfigLoader.load_from_case_id(case_id)
+            # 使用 Autofish_ConfigLoader 从 case_id 加载配置
+            config = Autofish_ConfigLoader.load_from_case_id(case_id)
 
             trader = await self.create_trader_from_config(
                 symbol=config["symbol"],
@@ -3988,15 +4003,20 @@ class LiveTraderManager:
         返回:
             session_id
         """
+        logger.info(f"[TraderManager] 开始启动交易实例: symbol={trader.symbol}")
         async with self._lock:
             # 创建任务
             task = asyncio.create_task(trader.run())
+            logger.info(f"[TraderManager] 已创建运行任务，等待 session_id...")
 
             # 等待 session_id 生成（最多等待 5 秒）
-            for _ in range(50):
+            for i in range(50):
                 if trader.session_id:
+                    logger.info(f"[TraderManager] 获取到 session_id: {trader.session_id}")
                     break
                 await asyncio.sleep(0.1)
+                if i % 10 == 9:
+                    logger.info(f"[TraderManager] 等待 session_id... ({i+1}/50)")
 
             if not trader.session_id:
                 # 检查任务是否有异常
@@ -4036,7 +4056,7 @@ class LiveTraderManager:
             # 停止 trader
             if trader:
                 trader.running = False
-                await trader._graceful_exit("用户停止")
+                logger.info(f"[TraderManager] 已设置停止标志: session_id={session_id}")
 
             # 取消任务
             if task and not task.done():
@@ -4267,5 +4287,4 @@ __all__ = [
     "notify_orders_recovered", # 订单恢复通知
     "notify_exit",             # 退出通知
     "notify_startup",          # 启动通知
-    "get_next_message_number", # 消息计数器
 ]

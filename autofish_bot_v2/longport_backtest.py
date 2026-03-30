@@ -32,7 +32,7 @@ from autofish_core import (
     Autofish_ChainState,
     Autofish_WeightCalculator,
     Autofish_OrderCalculator,
-    Autofish_AmplitudeConfig,
+    Autofish_ConfigLoader,
     Autofish_AmplitudeAnalyzer,
 )
 
@@ -542,24 +542,12 @@ async def main():
     args = parser.parse_args()
     
     decay_factor = Decimal(str(args.decay_factor))
-    
-    amplitude_config = Autofish_AmplitudeConfig.load_latest(args.symbol, decay_factor=decay_factor)
-    
-    if amplitude_config:
-        config = {
-            "symbol": amplitude_config.get_symbol(),
-            "leverage": amplitude_config.get_leverage(),
-            "grid_spacing": amplitude_config.get_grid_spacing(),
-            "exit_profit": amplitude_config.get_exit_profit(),
-            "stop_loss": amplitude_config.get_stop_loss(),
-            "total_amount_quote": amplitude_config.get_total_amount_quote(),
-            "max_entries": amplitude_config.get_max_entries(),
-            "decay_factor": amplitude_config.get_decay_factor(),
-            "weights": amplitude_config.get_weights(),
-            "valid_amplitudes": amplitude_config.get_valid_amplitudes(),
-            "total_expected_return": amplitude_config.get_total_expected_return(),
-        }
-        config_file = amplitude_config.config_path
+
+    amplitude_params = Autofish_ConfigLoader.load_amplitude_params(args.symbol, decay_factor=float(decay_factor))
+
+    if amplitude_params:
+        config = amplitude_params.to_dict()
+        config_file = f"out/autofish/amplitudes/longport/{args.symbol}.json"
     else:
         config = Autofish_OrderCalculator.get_default_config("longport")
         config["symbol"] = args.symbol
@@ -569,9 +557,9 @@ async def main():
             "total_amount_quote": Decimal(str(args.total_amount)),
         })
         config_file = "无（使用内置默认配置）"
-    
+
     currency = Autofish_AmplitudeAnalyzer.get_currency_from_symbol(args.symbol)
-    logger.info(f"[配置加载] {'使用振幅分析配置' if amplitude_config else '使用默认配置'}: {args.symbol}")
+    logger.info(f"[配置加载] {'使用振幅分析配置' if amplitude_params else '使用默认配置'}: {args.symbol}")
     logger.info(f"  配置文件: {config_file}")
     logger.info(f"  交易标的: {config.get('symbol')}")
     logger.info(f"  资金投入: {config['total_amount_quote']} {currency}")

@@ -42,7 +42,7 @@ from database.live_trading_db import (
     DbStateRepository
 )
 from binance_live import LiveTraderManager
-from autofish_core import ConfigLoader
+from autofish_core import Autofish_ConfigLoader
 
 # 配置日志
 def setup_logging():
@@ -358,15 +358,27 @@ def create_flask_app():
     db = LiveTradingDB()
     trader_manager = LiveTraderManager()
 
-    # 用于在 Flask 同步环境中运行异步任务
+    # 创建后台事件循环线程（使用可变对象存储）
+    bg_state = {'loop': None, 'thread': None}
+
+    def _run_background_loop():
+        """运行后台事件循环"""
+        asyncio.set_event_loop(bg_state['loop'])
+        bg_state['loop'].run_forever()
+
+    def _start_background_loop():
+        """启动后台事件循环"""
+        if bg_state['loop'] is None:
+            bg_state['loop'] = asyncio.new_event_loop()
+            bg_state['thread'] = threading.Thread(target=_run_background_loop, daemon=True)
+            bg_state['thread'].start()
+        return bg_state['loop']
+
     def run_async(coro):
-        """在后台线程中运行异步协程"""
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        try:
-            return loop.run_until_complete(coro)
-        finally:
-            loop.close()
+        """在后台事件循环中运行异步协程"""
+        loop = _start_background_loop()
+        future = asyncio.run_coroutine_threadsafe(coro, loop)
+        return future.result()  # 等待结果
 
     @app.route('/')
     def index():
@@ -437,10 +449,17 @@ def create_flask_app():
     def delete_live_case(case_id):
         """删除实盘配置"""
         try:
-            # 检查是否有运行中的会话
+            # 检查是否有真正在内存中运行的会话
             sessions = db.list_sessions(filters={'case_id': case_id, 'status': 'running'})
             if sessions:
-                return jsonify({'success': False, 'error': 'Has running sessions'}), 400
+                for session in sessions:
+                    trader = trader_manager.get_trader(session['id'])
+                    if trader is not None:
+                        return jsonify({'success': False, 'error': 'Has running sessions'}), 400
+                # 自动清理僵尸会话
+                for session in sessions:
+                    db.end_session(session['id'], status='stopped')
+                    logger.info(f"自动清理僵尸会话: session_id={session['id']}, case_id={case_id}")
 
             success = db.delete_case(case_id)
             if success:
@@ -457,10 +476,21 @@ def create_flask_app():
             if not case:
                 return jsonify({'success': False, 'error': 'Case not found'}), 404
 
-            # 检查是否有运行中的会话
+            # 检查是否有真正在内存中运行的会话
+            # 只检查数据库状态为 running 的会话
             sessions = db.list_sessions(filters={'case_id': case_id, 'status': 'running'})
             if sessions:
-                return jsonify({'success': False, 'error': 'Cannot update while running'}), 400
+                # 进一步检查是否真的在内存中运行
+                for session in sessions:
+                    trader = trader_manager.get_trader(session['id'])
+                    if trader is not None:
+                        # 确实有在内存中运行的会话
+                        return jsonify({'success': False, 'error': 'Cannot update while running'}), 400
+                # 所有 running 状态的会话都不在内存中，说明是僵尸记录
+                # 自动将这些会话状态更新为 stopped
+                for session in sessions:
+                    db.end_session(session['id'], status='stopped')
+                    logger.info(f"自动清理僵尸会话: session_id={session['id']}, case_id={case_id}")
 
             data = request.get_json()
 
@@ -502,10 +532,17 @@ def create_flask_app():
             if not case:
                 return jsonify({'success': False, 'error': 'Case not found'}), 404
 
-            # 检查是否有运行中的会话
+            # 检查是否有真正在内存中运行的会话
             sessions = db.list_sessions(filters={'case_id': case_id, 'status': 'running'})
             if sessions:
-                return jsonify({'success': False, 'error': 'Cannot reset while running'}), 400
+                for session in sessions:
+                    trader = trader_manager.get_trader(session['id'])
+                    if trader is not None:
+                        return jsonify({'success': False, 'error': 'Cannot reset while running'}), 400
+                # 自动清理僵尸会话
+                for session in sessions:
+                    db.end_session(session['id'], status='stopped')
+                    logger.info(f"自动清理僵尸会话: session_id={session['id']}, case_id={case_id}")
 
             # 删除所有关联的会话数据
             deleted_count = db.delete_sessions_by_case(case_id)
@@ -659,7 +696,7 @@ def create_flask_app():
     def get_all_defaults():
         """获取所有策略默认参数（只有默认值）"""
         try:
-            defaults = ConfigLoader.load_strategy_defaults()
+            defaults = Autofish_ConfigLoader.load_strategy_defaults()
             return jsonify({'success': True, 'data': defaults})
         except Exception as e:
             logger.error(f"获取策略默认参数失败: {e}")
@@ -674,7 +711,7 @@ def create_flask_app():
         """
         try:
             strategy_name = request.args.get('strategy')
-            defaults = ConfigLoader.get_entry_strategy_defaults(strategy_name)
+            defaults = Autofish_ConfigLoader.get_entry_strategy_defaults(strategy_name)
             return jsonify({'success': True, 'data': defaults})
         except Exception as e:
             logger.error(f"获取入场策略默认参数失败: {e}")
@@ -689,7 +726,7 @@ def create_flask_app():
         """
         try:
             algorithm_name = request.args.get('algorithm')
-            defaults = ConfigLoader.get_market_strategy_defaults(algorithm_name)
+            defaults = Autofish_ConfigLoader.get_market_strategy_defaults(algorithm_name)
             return jsonify({'success': True, 'data': defaults})
         except Exception as e:
             logger.error(f"获取行情策略默认参数失败: {e}")
@@ -704,7 +741,7 @@ def create_flask_app():
         """
         try:
             strategy_name = request.args.get('strategy')
-            defaults = ConfigLoader.get_capital_strategy_defaults(strategy_name)
+            defaults = Autofish_ConfigLoader.get_capital_strategy_defaults(strategy_name)
             return jsonify({'success': True, 'data': defaults})
         except Exception as e:
             logger.error(f"获取资金策略默认参数失败: {e}")
@@ -714,7 +751,7 @@ def create_flask_app():
     def get_timeout_defaults():
         """获取超时参数默认值"""
         try:
-            defaults = ConfigLoader.get_timeout_defaults()
+            defaults = Autofish_ConfigLoader.get_timeout_defaults()
             return jsonify({'success': True, 'data': defaults})
         except Exception as e:
             logger.error(f"获取超时参数默认值失败: {e}")
@@ -730,7 +767,7 @@ def create_flask_app():
         """
         try:
             strategy_name = request.args.get('strategy')
-            definition = ConfigLoader.get_entry_strategy_definition(strategy_name)
+            definition = Autofish_ConfigLoader.get_entry_strategy_definition(strategy_name)
             return jsonify({'success': True, 'data': definition})
         except Exception as e:
             logger.error(f"获取入场策略定义失败: {e}")
@@ -741,7 +778,7 @@ def create_flask_app():
         """获取行情策略参数定义（含元信息）"""
         try:
             algorithm_name = request.args.get('algorithm')
-            definition = ConfigLoader.get_market_strategy_definition(algorithm_name)
+            definition = Autofish_ConfigLoader.get_market_strategy_definition(algorithm_name)
             return jsonify({'success': True, 'data': definition})
         except Exception as e:
             logger.error(f"获取行情策略定义失败: {e}")
@@ -752,7 +789,7 @@ def create_flask_app():
         """获取资金策略参数定义（含元信息）"""
         try:
             strategy_name = request.args.get('strategy')
-            definition = ConfigLoader.get_capital_strategy_definition(strategy_name)
+            definition = Autofish_ConfigLoader.get_capital_strategy_definition(strategy_name)
             return jsonify({'success': True, 'data': definition})
         except Exception as e:
             logger.error(f"获取资金策略定义失败: {e}")
@@ -762,7 +799,7 @@ def create_flask_app():
     def get_timeout_definition():
         """获取超时参数定义（含元信息）"""
         try:
-            definition = ConfigLoader.get_timeout_definition()
+            definition = Autofish_ConfigLoader.get_timeout_definition()
             return jsonify({'success': True, 'data': definition})
         except Exception as e:
             logger.error(f"获取超时参数定义失败: {e}")
@@ -772,7 +809,7 @@ def create_flask_app():
     def get_amplitude_definition():
         """获取振幅参数定义（含元信息）"""
         try:
-            definition = ConfigLoader.get_amplitude_definition()
+            definition = Autofish_ConfigLoader.get_amplitude_definition()
             return jsonify({'success': True, 'data': definition})
         except Exception as e:
             logger.error(f"获取振幅参数定义失败: {e}")
@@ -784,7 +821,7 @@ def create_flask_app():
     def list_amplitudes():
         """列出所有可用的振幅配置文件"""
         try:
-            amplitudes = ConfigLoader.list_available_amplitudes()
+            amplitudes = Autofish_ConfigLoader.list_available_amplitudes()
             return jsonify({'success': True, 'data': amplitudes})
         except Exception as e:
             logger.error(f"获取振幅配置列表失败: {e}")
@@ -801,11 +838,70 @@ def create_flask_app():
             decay_factor = request.args.get('decay_factor')
             if decay_factor:
                 decay_factor = float(decay_factor)
-            config = ConfigLoader.load_amplitude_config(symbol, exchange, decay_factor)
+            config = Autofish_ConfigLoader.load_amplitude_config(symbol, exchange, decay_factor)
             return jsonify({'success': True, 'data': config})
         except Exception as e:
             logger.error(f"获取振幅配置失败: {e}")
             return jsonify({'success': False, 'error': str(e)}), 500
+
+    @app.route('/api/symbol-info/<symbol>', methods=['GET'])
+    def get_symbol_info(symbol):
+        """获取标的信息（精度、最小金额等）
+
+        用于前端实时校验资金配置
+        """
+        try:
+            from binance_live import BinanceClient
+
+            async def fetch_symbol_info():
+                # 使用测试网的 API（不需要密钥获取公开信息）
+                client = BinanceClient('', '', testnet=True)
+                try:
+                    exchange_info = await client.get_exchange_info(symbol)
+                    info = {'symbol': symbol}
+
+                    for s in exchange_info.get('symbols', []):
+                        if s.get('symbol') == symbol:
+                            for f in s.get('filters', []):
+                                if f.get('filterType') == 'PRICE_FILTER':
+                                    info['tick_size'] = float(f.get('tickSize', '0.01'))
+                                elif f.get('filterType') == 'LOT_SIZE':
+                                    info['step_size'] = float(f.get('stepSize', '0.001'))
+                                elif f.get('filterType') == 'MIN_NOTIONAL':
+                                    info['min_notional'] = float(f.get('notional', '100'))
+                                elif f.get('filterType') == 'NOTIONAL':
+                                    # 新版 API 使用 NOTIONAL
+                                    info['min_notional'] = float(f.get('minNotional', '100'))
+
+                            # 价格和数量精度
+                            info['price_precision'] = s.get('pricePrecision', 2)
+                            info['qty_precision'] = s.get('quantityPrecision', 3)
+                            break
+
+                    # 如果没有找到 min_notional，使用默认值
+                    if 'min_notional' not in info:
+                        info['min_notional'] = 100
+
+                    return info
+                finally:
+                    await client.close()
+
+            info = run_async(fetch_symbol_info())
+            return jsonify({'success': True, 'data': info})
+        except Exception as e:
+            logger.error(f"获取标的信息失败: {e}")
+            # 返回默认值，不影响前端使用
+            return jsonify({
+                'success': True,
+                'data': {
+                    'symbol': symbol,
+                    'min_notional': 100,
+                    'tick_size': 0.01,
+                    'step_size': 0.001,
+                    'price_precision': 2,
+                    'qty_precision': 3
+                }
+            })
 
     # ==================== 实盘交易管理 API（使用 LiveTraderManager） ====================
 
@@ -919,13 +1015,50 @@ def create_flask_app():
             if not session:
                 return jsonify({'success': False, 'error': 'Session not found'}), 404
 
-            if session.get('status') == 'running':
-                return jsonify({'success': False, 'error': 'Cannot reset running session'}), 400
+            # 检查 trader 是否真正在内存中运行
+            trader = trader_manager.get_trader(session_id)
+            if trader is not None:
+                return jsonify({'success': False, 'error': 'Cannot reset running session. Please stop it first.'}), 400
 
             # 删除会话相关数据
             db.delete_session_data(session_id)
 
             return jsonify({'success': True, 'message': f'Session {session_id} reset'})
+        except Exception as e:
+            return jsonify({'success': False, 'error': str(e)}), 500
+
+    @app.route('/api/live-sessions/<int:session_id>/stats', methods=['GET'])
+    def get_session_data_stats(session_id):
+        """获取会话关联数据统计"""
+        try:
+            session = db.get_session(session_id)
+            if not session:
+                return jsonify({'success': False, 'error': 'Session not found'}), 404
+
+            stats = db.get_session_data_stats(session_id)
+            return jsonify({'success': True, 'data': stats})
+        except Exception as e:
+            return jsonify({'success': False, 'error': str(e)}), 500
+
+    @app.route('/api/live-sessions/<int:session_id>', methods=['DELETE'])
+    def delete_live_session(session_id):
+        """删除实盘会话及其所有关联数据"""
+        try:
+            session = db.get_session(session_id)
+            if not session:
+                return jsonify({'success': False, 'error': 'Session not found'}), 404
+
+            # 检查 trader 是否真正在内存中运行
+            trader = trader_manager.get_trader(session_id)
+            if trader is not None:
+                return jsonify({'success': False, 'error': 'Cannot delete running session. Please stop it first.'}), 400
+
+            # 删除会话及其关联数据
+            success = db.delete_session(session_id)
+            if success:
+                return jsonify({'success': True, 'message': f'Session {session_id} deleted'})
+            else:
+                return jsonify({'success': False, 'error': 'Failed to delete session'}), 500
         except Exception as e:
             return jsonify({'success': False, 'error': str(e)}), 500
 

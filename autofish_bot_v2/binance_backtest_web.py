@@ -35,12 +35,13 @@ import threading
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, Any, List
+from textwrap import dedent
 import asyncio
 
 from database.test_results_db import TestResultsDB, TestCase, TestResult, TradeDetail
 from binance_kline_fetcher import KlineFetcher
 from binance_backtest import BacktestManager
-from autofish_core import ConfigLoader
+from autofish_core import Autofish_ConfigLoader
 
 # 配置日志
 def setup_logging():
@@ -550,14 +551,33 @@ def create_flask_app():
     backtest_manager = BacktestManager()
 
     # 用于在 Flask 同步环境中运行异步任务
+    # 保持一个全局事件循环用于后台任务
+    _background_loop = None
+
+    def get_background_loop():
+        """获取或创建后台事件循环"""
+        nonlocal _background_loop
+        if _background_loop is None or _background_loop.is_closed():
+            _background_loop = asyncio.new_event_loop()
+            # 在后台线程中运行事件循环
+            import threading
+            def run_loop():
+                asyncio.set_event_loop(_background_loop)
+                _background_loop.run_forever()
+            thread = threading.Thread(target=run_loop, daemon=True)
+            thread.start()
+        return _background_loop
+
     def run_async(coro):
-        """在后台线程中运行异步协程"""
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        try:
-            return loop.run_until_complete(coro)
-        finally:
-            loop.close()
+        """在后台事件循环中运行异步协程并等待结果"""
+        loop = get_background_loop()
+        future = asyncio.run_coroutine_threadsafe(coro, loop)
+        return future.result(timeout=300)  # 5分钟超时
+
+    def schedule_async(coro):
+        """在后台事件循环中调度异步协程（不等待结果）"""
+        loop = get_background_loop()
+        asyncio.run_coroutine_threadsafe(coro, loop)
 
     @app.route('/')
     def index():
@@ -855,52 +875,56 @@ def create_flask_app():
                 md_path = export_dir / f"test_history_{timestamp}.md"
                 total_tests = len(rows)
                 success_count = sum(1 for r in rows if r['net_profit'] > 0)
-                
-                md_content = f"""# 测试历史汇总报告
 
-> 生成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+                md_content = dedent(f"""\
+                    # 测试历史汇总报告
 
-## 概览统计
+                    > 生成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
 
-| 指标 | 值 |
-|------|-----|
-| 总测试次数 | {total_tests} |
-| 成功次数 | {success_count} |
-| 失败次数 | {total_tests - success_count} |
-| 成功率 | {round(success_count/total_tests*100, 1) if total_tests > 0 else 0}% |
-| 平均胜率 | {round(sum(r['win_rate'] for r in rows)/total_tests, 1) if total_tests > 0 else 0}% |
-| 平均收益率 | {round(sum(r['roi'] for r in rows)/total_tests, 2) if total_tests > 0 else 0}% |
+                    ## 概览统计
 
-## 按标的统计
+                    | 指标 | 值 |
+                    |------|-----|
+                    | 总测试次数 | {total_tests} |
+                    | 成功次数 | {success_count} |
+                    | 失败次数 | {total_tests - success_count} |
+                    | 成功率 | {round(success_count/total_tests*100, 1) if total_tests > 0 else 0}% |
+                    | 平均胜率 | {round(sum(r['win_rate'] for r in rows)/total_tests, 1) if total_tests > 0 else 0}% |
+                    | 平均收益率 | {round(sum(r['roi'] for r in rows)/total_tests, 2) if total_tests > 0 else 0}% |
 
-| 标的 | 测试次数 | 平均胜率 | 平均收益率 |
-|------|----------|----------|------------|
-"""
+                    ## 按标的统计
+
+                    | 标的 | 测试次数 | 平均胜率 | 平均收益率 |
+                    |------|----------|----------|------------|
+                    """).strip()
                 for row in by_symbol:
                     md_content += f"| {row['symbol']} | {row['count']} | {row['avg_win_rate']:.1f}% | {row['avg_roi']:.2f}% |\n"
-                
-                md_content += """
-## 按类型统计
 
-| 类型 | 测试次数 | 平均胜率 | 平均收益率 |
-|------|----------|----------|------------|
-"""
+                md_content += dedent(f"""\
+
+                    ## 按类型统计
+
+                    | 类型 | 测试次数 | 平均胜率 | 平均收益率 |
+                    |------|----------|----------|------------|
+                    """).strip()
                 for row in by_type:
                     md_content += f"| {row['test_type']} | {row['count']} | {row['avg_win_rate']:.1f}% | {row['avg_roi']:.2f}% |\n"
-                
-                md_content += f"""
-## 最近测试记录
 
-| 执行ID | 标的 | 类型 | 胜率 | 收益率 | 执行时间 |
-|--------|------|------|------|--------|----------|
-"""
+                md_content += dedent(f"""\
+
+                    ## 最近测试记录
+
+                    | 执行ID | 标的 | 类型 | 胜率 | 收益率 | 执行时间 |
+                    |--------|------|------|------|--------|----------|
+                    """).strip()
                 for r in rows[:20]:
                     md_content += f"| {r['execution_id'][:30]}... | {r['symbol']} | {r['test_type']} | {r['win_rate']:.1f}% | {r['roi']:.2f}% | {r['executed_at']} |\n"
-                
-                md_content += f"""
----
-*报告由测试管理系统自动生成*
-"""
+
+                md_content += dedent(f"""\
+
+                    ---
+                    *报告由测试管理系统自动生成*
+                    """).strip()
                 with open(md_path, 'w', encoding='utf-8') as f:
                     f.write(md_content)
                 print(f"MD 导出: {md_path}")
@@ -927,7 +951,7 @@ def create_flask_app():
     def get_entry_defaults():
         """获取入场策略默认参数值"""
         try:
-            defaults = ConfigLoader.get_entry_strategy_defaults()
+            defaults = Autofish_ConfigLoader.get_entry_strategy_defaults()
             return jsonify({'success': True, 'data': defaults})
         except Exception as e:
             logger.error(f"获取入场策略默认值失败: {e}")
@@ -937,7 +961,7 @@ def create_flask_app():
     def get_market_defaults():
         """获取行情策略默认参数值"""
         try:
-            defaults = ConfigLoader.get_market_strategy_defaults()
+            defaults = Autofish_ConfigLoader.get_market_strategy_defaults()
             return jsonify({'success': True, 'data': defaults})
         except Exception as e:
             logger.error(f"获取行情策略默认值失败: {e}")
@@ -947,7 +971,7 @@ def create_flask_app():
     def get_capital_defaults():
         """获取资金策略默认参数值"""
         try:
-            defaults = ConfigLoader.get_capital_strategy_defaults()
+            defaults = Autofish_ConfigLoader.get_capital_strategy_defaults()
             return jsonify({'success': True, 'data': defaults})
         except Exception as e:
             logger.error(f"获取资金策略默认值失败: {e}")
@@ -957,7 +981,7 @@ def create_flask_app():
     def get_timeout_defaults():
         """获取超时参数默认值"""
         try:
-            defaults = ConfigLoader.get_timeout_defaults()
+            defaults = Autofish_ConfigLoader.get_timeout_defaults()
             return jsonify({'success': True, 'data': defaults})
         except Exception as e:
             logger.error(f"获取超时参数默认值失败: {e}")
@@ -967,7 +991,7 @@ def create_flask_app():
     def get_amplitude_defaults():
         """获取振幅参数默认值"""
         try:
-            defaults = ConfigLoader.get_amplitude_defaults()
+            defaults = Autofish_ConfigLoader.get_amplitude_defaults()
             return jsonify({'success': True, 'data': defaults})
         except Exception as e:
             logger.error(f"获取振幅参数默认值失败: {e}")
@@ -980,7 +1004,7 @@ def create_flask_app():
         """获取入场策略参数定义（含元信息：default, type, min, max）"""
         try:
             strategy_name = request.args.get('strategy')
-            definition = ConfigLoader.get_entry_strategy_definition(strategy_name)
+            definition = Autofish_ConfigLoader.get_entry_strategy_definition(strategy_name)
             return jsonify({'success': True, 'data': definition})
         except Exception as e:
             logger.error(f"获取入场策略定义失败: {e}")
@@ -991,7 +1015,7 @@ def create_flask_app():
         """获取行情策略参数定义（含元信息）"""
         try:
             algorithm_name = request.args.get('algorithm')
-            definition = ConfigLoader.get_market_strategy_definition(algorithm_name)
+            definition = Autofish_ConfigLoader.get_market_strategy_definition(algorithm_name)
             return jsonify({'success': True, 'data': definition})
         except Exception as e:
             logger.error(f"获取行情策略定义失败: {e}")
@@ -1002,7 +1026,7 @@ def create_flask_app():
         """获取资金策略参数定义（含元信息）"""
         try:
             strategy_name = request.args.get('strategy')
-            definition = ConfigLoader.get_capital_strategy_definition(strategy_name)
+            definition = Autofish_ConfigLoader.get_capital_strategy_definition(strategy_name)
             return jsonify({'success': True, 'data': definition})
         except Exception as e:
             logger.error(f"获取资金策略定义失败: {e}")
@@ -1012,7 +1036,7 @@ def create_flask_app():
     def get_timeout_definition():
         """获取超时参数定义（含元信息）"""
         try:
-            definition = ConfigLoader.get_timeout_definition()
+            definition = Autofish_ConfigLoader.get_timeout_definition()
             return jsonify({'success': True, 'data': definition})
         except Exception as e:
             logger.error(f"获取超时参数定义失败: {e}")
@@ -1022,10 +1046,39 @@ def create_flask_app():
     def get_amplitude_definition():
         """获取振幅参数定义（含元信息）"""
         try:
-            definition = ConfigLoader.get_amplitude_definition()
+            definition = Autofish_ConfigLoader.get_amplitude_definition()
             return jsonify({'success': True, 'data': definition})
         except Exception as e:
             logger.error(f"获取振幅参数定义失败: {e}")
+            return jsonify({'success': False, 'error': str(e)}), 500
+
+    # ==================== 振幅配置 API ====================
+
+    @app.route('/api/amplitudes', methods=['GET'])
+    def list_amplitudes():
+        """列出所有可用的振幅配置文件"""
+        try:
+            amplitudes = Autofish_ConfigLoader.list_available_amplitudes()
+            return jsonify({'success': True, 'data': amplitudes})
+        except Exception as e:
+            logger.error(f"获取振幅配置列表失败: {e}")
+            return jsonify({'success': False, 'error': str(e)}), 500
+
+    @app.route('/api/amplitudes/<exchange>/<symbol>', methods=['GET'])
+    def get_amplitude_config(exchange, symbol):
+        """获取指定标的的振幅配置
+
+        Query params:
+            decay_factor: 衰减因子，不指定则返回所有预设
+        """
+        try:
+            decay_factor = request.args.get('decay_factor')
+            if decay_factor:
+                decay_factor = float(decay_factor)
+            config = Autofish_ConfigLoader.load_amplitude_config(symbol, exchange, decay_factor)
+            return jsonify({'success': True, 'data': config})
+        except Exception as e:
+            logger.error(f"获取振幅配置失败: {e}")
             return jsonify({'success': False, 'error': str(e)}), 500
 
     # ==================== 新增测试用例 API ====================
@@ -1208,14 +1261,13 @@ def create_flask_app():
                 return jsonify({'success': False, 'error': f'状态 {case["status"]} 不允许执行'})
 
             # 使用 BacktestManager 创建引擎并启动
-            async def start_backtest_async():
-                engine = await backtest_manager.create_engine_from_case(id)
-                if not engine:
-                    return None
-                temp_id = await backtest_manager.start_backtest(engine)
-                return temp_id
+            # 先同步创建引擎
+            engine = run_async(backtest_manager.create_engine_from_case(id))
+            if not engine:
+                return jsonify({'success': False, 'error': '创建回测引擎失败'})
 
-            temp_id = run_async(start_backtest_async())
+            # 同步启动回测（获取temp_id），回测在后台运行
+            temp_id = run_async(backtest_manager.start_backtest(engine))
 
             if temp_id:
                 db.update_case_status(id, 'running')
@@ -1226,7 +1278,7 @@ def create_flask_app():
                     'progress_url': f'/api/backtests/{temp_id}'
                 })
             else:
-                return jsonify({'success': False, 'error': '创建回测引擎失败'})
+                return jsonify({'success': False, 'error': '启动回测失败'})
 
         except Exception as e:
             logger.error(f"执行测试用例失败: {e}")
@@ -1473,42 +1525,45 @@ def create_flask_app():
             
             if format_type == 'md' or format_type == 'all':
                 md_path = export_dir / f"test_history_{timestamp}.md"
-                
-                md_content = f"""# 测试历史汇总报告
 
-> 生成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+                md_content = dedent(f"""\
+                    # 测试历史汇总报告
 
-## 概览统计
+                    > 生成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
 
-| 指标 | 值 |
-|------|-----|
-| 总测试次数 | {summary['total_tests']} |
-| 成功率 | {summary['success_rate']:.1f}% |
-| 平均胜率 | {summary['avg_win_rate']:.1f}% |
-| 平均收益率 | {summary['avg_roi']:.2f}% |
-| 平均超额收益 | {summary['avg_excess_return']:.2f}% |
+                    ## 概览统计
 
-## 按标的统计
+                    | 指标 | 值 |
+                    |------|-----|
+                    | 总测试次数 | {summary['total_tests']} |
+                    | 成功率 | {summary['success_rate']:.1f}% |
+                    | 平均胜率 | {summary['avg_win_rate']:.1f}% |
+                    | 平均收益率 | {summary['avg_roi']:.2f}% |
+                    | 平均超额收益 | {summary['avg_excess_return']:.2f}% |
 
-| 标的 | 测试次数 | 平均胜率 | 平均收益率 |
-|------|----------|----------|------------|
-"""
+                    ## 按标的统计
+
+                    | 标的 | 测试次数 | 平均胜率 | 平均收益率 |
+                    |------|----------|----------|------------|
+                    """).strip()
                 for row in by_symbol:
                     md_content += f"| {row['symbol']} | {row['count']} | {row['avg_win_rate']:.1f}% | {row['avg_roi']:.2f}% |\n"
-                
-                md_content += """
-## 按算法统计
 
-| 算法 | 测试次数 | 平均胜率 | 平均收益率 |
-|------|----------|----------|------------|
-"""
+                md_content += dedent(f"""\
+
+                    ## 按算法统计
+
+                    | 算法 | 测试次数 | 平均胜率 | 平均收益率 |
+                    |------|----------|----------|------------|
+                    """).strip()
                 for row in by_algorithm:
                     md_content += f"| {row['market_algorithm']} | {row['count']} | {row['avg_win_rate']:.1f}% | {row['avg_roi']:.2f}% |\n"
-                
-                md_content += f"""
----
-*报告由测试管理系统自动生成*
-"""
+
+                md_content += dedent(f"""\
+
+                    ---
+                    *报告由测试管理系统自动生成*
+                    """).strip()
                 with open(md_path, 'w', encoding='utf-8') as f:
                     f.write(md_content)
                 

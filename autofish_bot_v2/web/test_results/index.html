@@ -403,7 +403,7 @@
                                 <div class="row mb-3">
                                     <div class="col-md-4">
                                         <label class="form-label">标的 *</label>
-                                        <input type="text" class="form-control" id="formSymbol" placeholder="如: BTCUSDT" required>
+                                        <input type="text" class="form-control" id="formSymbol" placeholder="如: BTCUSDT" required oninput="onSymbolInputChange()" onchange="onSymbolInputChange()">
                                     </div>
                                     <div class="col-md-4">
                                         <label class="form-label">K线周期</label>
@@ -434,6 +434,19 @@
                             </div>
                             
                             <div class="tab-pane fade" id="amplitude-tab-pane" role="tabpanel" aria-labelledby="amplitude-tab" tabindex="0">
+                                <div class="row mb-3">
+                                    <div class="col-md-12">
+                                        <label class="form-label">振幅预设（选择标的后自动加载）</label>
+                                        <div class="input-group">
+                                            <select class="form-select" id="formAmplitudePreset" onchange="onAmplitudePresetChange()">
+                                                <option value="">-- 请先输入标的 --</option>
+                                            </select>
+                                            <button class="btn btn-outline-info" type="button" onclick="loadAmplitudePresets()">刷新预设</button>
+                                        </div>
+                                        <small class="text-muted">选择标的后，自动从振幅配置文件加载预设参数</small>
+                                    </div>
+                                </div>
+                                <hr>
                                 <div class="row mb-3">
                                     <div class="col-md-3">
                                         <label class="form-label">衰减因子</label>
@@ -1000,6 +1013,111 @@
             amplitude: {}
         };
 
+        // 缓存当前加载的振幅预设
+        let currentAmplitudePresets = {};
+
+        // 检测交易所类型
+        function detectExchange(symbol) {
+            if (symbol.includes('.HK') || symbol.includes('.US')) {
+                return 'longport';
+            }
+            return 'binance';
+        }
+
+        // 加载振幅预设
+        async function loadAmplitudePresets() {
+            const symbol = document.getElementById('formSymbol').value.trim().toUpperCase();
+            if (!symbol) {
+                alert('请先输入标的');
+                return;
+            }
+
+            const exchange = detectExchange(symbol);
+            const presetSelect = document.getElementById('formAmplitudePreset');
+
+            try {
+                presetSelect.innerHTML = '<option value="">加载中...</option>';
+
+                const response = await fetch(`${API_BASE}/api/amplitudes/${exchange}/${symbol}`);
+                const data = await response.json();
+
+                if (data.success && data.data) {
+                    currentAmplitudePresets = data.data;
+                    const presetKeys = Object.keys(data.data);
+
+                    if (presetKeys.length === 0) {
+                        presetSelect.innerHTML = '<option value="">暂无预设</option>';
+                        return;
+                    }
+
+                    presetSelect.innerHTML = presetKeys
+                        .map(key => `<option value="${key}">${key}</option>`)
+                        .join('');
+
+                    // 自动选择第一个预设并填充参数
+                    if (presetKeys.length > 0) {
+                        onAmplitudePresetChange();
+                    }
+                } else {
+                    presetSelect.innerHTML = '<option value="">暂无预设</option>';
+                    currentAmplitudePresets = {};
+                }
+            } catch (e) {
+                console.error('加载振幅预设失败:', e);
+                presetSelect.innerHTML = '<option value="">加载失败</option>';
+            }
+        }
+
+        // 振幅预设变化时填充参数
+        function onAmplitudePresetChange() {
+            const presetKey = document.getElementById('formAmplitudePreset').value;
+            if (!presetKey || !currentAmplitudePresets[presetKey]) {
+                return;
+            }
+
+            const preset = currentAmplitudePresets[presetKey];
+
+            // 填充振幅参数
+            if (preset.decay_factor !== undefined) {
+                document.getElementById('formDecayFactor').value = preset.decay_factor;
+            }
+            if (preset.stop_loss !== undefined) {
+                document.getElementById('formStopLoss').value = preset.stop_loss;
+            }
+            if (preset.leverage !== undefined) {
+                document.getElementById('formLeverage').value = preset.leverage;
+            }
+            if (preset.max_entries !== undefined) {
+                document.getElementById('formMaxEntries').value = preset.max_entries;
+            }
+            if (preset.grid_spacing !== undefined) {
+                document.getElementById('formGridSpacing').value = preset.grid_spacing;
+            }
+            if (preset.exit_profit !== undefined) {
+                document.getElementById('formExitProfit').value = preset.exit_profit;
+            }
+            if (preset.weights) {
+                document.getElementById('formWeights').value = JSON.stringify(preset.weights);
+            }
+
+            // total_amount_quote 可能在 preset 中（旧格式），也可能不在（新格式放在 capital 中）
+            if (preset.total_amount_quote !== undefined) {
+                document.getElementById('formTotalAmount').value = preset.total_amount_quote;
+            }
+        }
+
+        // 标的输入变化时加载预设
+        function onSymbolInputChange() {
+            const symbol = document.getElementById('formSymbol').value.trim();
+            if (symbol.length >= 3) {
+                // 延迟加载，避免输入过程中频繁请求
+                clearTimeout(window.symbolInputTimeout);
+                window.symbolInputTimeout = setTimeout(() => {
+                    loadAmplitudePresets();
+                }, 500);
+            }
+        }
+
         // 加载策略参数定义
         async function loadStrategyDefinitions() {
             try {
@@ -1387,6 +1505,22 @@
                         }
                     }
                     
+                    // 构建 CLI 可用的完整配置
+                    const cliConfig = {
+                        symbol: c.symbol,
+                        interval: c.interval || '1m',
+                        date_start: c.date_start,
+                        date_end: c.date_end,
+                        test_type: c.test_type || 'market_aware',
+                        amplitude: fullAmplitude,
+                        market: fullMarket,
+                        entry: fullEntry,
+                        timeout: {
+                            a1_timeout_minutes: getParamWithDefault((data.timeout || {}).a1_timeout_minutes, DEFAULT_PARAMS.timeout.a1_timeout_minutes)
+                        },
+                        capital: normalizeCapitalFormat(data.capital)
+                    };
+
                     document.getElementById('detailContent').innerHTML = `
                         <div class="row">
                             <div class="col-md-6">
@@ -1403,16 +1537,8 @@
                                 </table>
                             </div>
                             <div class="col-md-6">
-                                <h6>配置参数 (含默认值)</h6>
-                                <pre class="bg-light p-2" style="max-height: 400px; overflow-y: auto;">${JSON.stringify({
-                                    amplitude: fullAmplitude,
-                                    market: fullMarket,
-                                    entry: fullEntry,
-                                    timeout: {
-                                        a1_timeout_minutes: getParamWithDefault((data.timeout || {}).a1_timeout_minutes, DEFAULT_PARAMS.timeout.a1_timeout_minutes)
-                                    },
-                                    capital: normalizeCapitalFormat(data.capital)
-                                }, null, 2)}</pre>
+                                <h6>CLI 配置 JSON <button class="btn btn-sm btn-outline-primary" onclick="copyBacktestConfig()">复制</button></h6>
+                                <pre class="bg-light p-2" style="max-height: 400px; overflow-y: auto;">${JSON.stringify(cliConfig, null, 2)}</pre>
                             </div>
                         </div>
                     `;
@@ -1422,7 +1548,26 @@
                 console.error('加载用例详情失败:', error);
             }
         }
-        
+
+        // 复制回测配置到剪贴板
+        function copyBacktestConfig() {
+            const preElement = document.querySelector('#detailContent pre');
+            if (preElement) {
+                navigator.clipboard.writeText(preElement.textContent).then(() => {
+                    alert('配置已复制到剪贴板，可直接用于: python binance_backtest.py --config xxx.json');
+                }).catch(err => {
+                    console.error('复制失败:', err);
+                    // fallback: 手动选择
+                    const range = document.createRange();
+                    range.selectNode(preElement);
+                    window.getSelection().removeAllRanges();
+                    window.getSelection().addRange(range);
+                    document.execCommand('copy');
+                    alert('配置已复制');
+                });
+            }
+        }
+
         function showCreateCaseForm() {
             document.getElementById('caseFormTitle').textContent = '新建测试用例';
             document.getElementById('editCaseId').value = '';
@@ -2046,13 +2191,17 @@
                     if (data.success && data.data) {
                         const status = data.data.status;
                         const klineCount = data.data.kline_count || 0;
+                        const totalKlines = data.data.total_klines || 0;
+                        const progressPct = data.data.progress_pct || 0;
                         const currentResults = data.data.current_results || {};
 
                         if (status === 'running') {
                             updateProgressModal('running',
-                                `正在回测... 已处理 ${klineCount} 根K线，` +
+                                `回测进度: ${progressPct}% (${klineCount.toLocaleString()}/${totalKlines.toLocaleString()} 根K线)\n` +
                                 `已完成 ${currentResults.total_trades || 0} 笔交易`,
-                                tempId);
+                                tempId,
+                                progressPct
+                            );
                         } else if (status === 'completed') {
                             clearInterval(progressInterval);
                             updateProgressModal('completed',
@@ -2060,10 +2209,26 @@
                                 `净利润 ${(currentResults.total_profit || 0) - (currentResults.total_loss || 0)} USDT`);
                             loadCases();
                             loadResults();
+                            // 2秒后自动关闭弹窗
+                            setTimeout(() => {
+                                const modalEl = document.getElementById('progressModal');
+                                if (modalEl) {
+                                    const modal = bootstrap.Modal.getInstance(modalEl);
+                                    if (modal) modal.hide();
+                                }
+                            }, 2000);
                         } else if (status === 'error' || status === 'cancelled') {
                             clearInterval(progressInterval);
                             updateProgressModal(status, data.data.error || '回测已取消');
                             loadCases();
+                            // 3秒后自动关闭弹窗
+                            setTimeout(() => {
+                                const modalEl = document.getElementById('progressModal');
+                                if (modalEl) {
+                                    const modal = bootstrap.Modal.getInstance(modalEl);
+                                    if (modal) modal.hide();
+                                }
+                            }, 3000);
                         }
                     }
                 } catch (error) {
@@ -2110,8 +2275,8 @@
                                     </div>
                                     <div id="progressMessage">正在启动回测...</div>
                                 </div>
-                                <div class="progress" style="height: 5px;">
-                                    <div class="progress-bar progress-bar-striped progress-bar-animated" id="progressBar" style="width: 100%"></div>
+                                <div class="progress" style="height: 20px;">
+                                    <div class="progress-bar progress-bar-striped progress-bar-animated" id="progressBar" style="width: 0%">0%</div>
                                 </div>
                             </div>
                             <div class="modal-footer" id="progressFooter">
@@ -2135,7 +2300,7 @@
         }
 
         // 更新进度模态框
-        function updateProgressModal(status, message, tempId) {
+        function updateProgressModal(status, message, tempId, progressPct) {
             const spinner = document.getElementById('progressSpinner');
             const msgEl = document.getElementById('progressMessage');
             const progressBar = document.getElementById('progressBar');
@@ -2150,11 +2315,17 @@
             if (status === 'running') {
                 spinner.className = 'spinner-border text-primary me-3';
                 progressBar.className = 'progress-bar progress-bar-striped progress-bar-animated bg-primary';
+                // 更新进度条宽度
+                if (progressPct !== undefined) {
+                    progressBar.style.width = `${progressPct}%`;
+                    progressBar.textContent = `${progressPct}%`;
+                }
             } else if (status === 'completed') {
                 spinner.className = 'spinner-border text-success me-3';
                 spinner.innerHTML = '✓';
                 progressBar.className = 'progress-bar bg-success';
                 progressBar.style.width = '100%';
+                progressBar.textContent = '100%';
                 if (stopBtn) stopBtn.style.display = 'none';
             } else if (status === 'error') {
                 spinner.className = 'spinner-border text-danger me-3';

@@ -28,7 +28,7 @@ from autofish_core import (
     Autofish_ChainState,
     Autofish_WeightCalculator,
     Autofish_OrderCalculator,
-    Autofish_AmplitudeConfig,
+    Autofish_ConfigLoader,
     EntryCapitalStrategyFactory,
 ) 
 from market_status_detector import (
@@ -158,9 +158,9 @@ class BacktestEngine:
         """
         from autofish_core import EntryPriceStrategyFactory
         
-        grid_spacing = self.config.get("grid_spacing", Decimal("0.01"))
-        exit_profit = self.config.get("exit_profit", Decimal("0.01"))
-        stop_loss = self.config.get("stop_loss", Decimal("0.08"))
+        grid_spacing = Decimal(str(self.config.get("grid_spacing", 0.01)))
+        exit_profit = Decimal(str(self.config.get("exit_profit", 0.01)))
+        stop_loss = Decimal(str(self.config.get("stop_loss", 0.08)))
         
         # 使用 EntryCapitalStrategy 统一计算入场资金
         if hasattr(self, 'capital_pool') and hasattr(self, 'capital_strategy'):
@@ -183,8 +183,7 @@ class BacktestEngine:
         order_calculator = Autofish_OrderCalculator(
             grid_spacing=grid_spacing,
             exit_profit=exit_profit,
-            stop_loss=stop_loss,
-            entry_strategy=strategy
+            stop_loss=stop_loss
         )
         
         # 确定 group_id
@@ -596,8 +595,11 @@ class BacktestEngine:
         
         print(f"\n⏳ 开始回测...")
         
-        for kline in klines:
+        for i, kline in enumerate(klines):
             self._on_kline(kline)
+            # 每1000根K线让出控制权，允许查询进度
+            if i > 0 and i % 1000 == 0:
+                await asyncio.sleep(0)
         
         self._print_summary()
     
@@ -1067,7 +1069,10 @@ class MarketAwareBacktestEngine(BacktestEngine):
             return
         
         self.daily_klines_cache = klines_1d
-        
+
+        # 保存总K线数用于进度计算
+        self.total_klines = len(klines_1m)
+
         self.start_time = datetime.fromtimestamp(klines_1m[0]["timestamp"] / 1000)
         self.end_time = datetime.fromtimestamp(klines_1m[-1]["timestamp"] / 1000)
         
@@ -1114,8 +1119,11 @@ class MarketAwareBacktestEngine(BacktestEngine):
         
         print(f"\n⏳ 开始回测...")
         
-        for kline in klines_1m:
+        for i, kline in enumerate(klines_1m):
             self._on_kline(kline)
+            # 每1000根K线让出控制权，允许查询进度
+            if i > 0 and i % 1000 == 0:
+                await asyncio.sleep(0.1)  # 100ms延迟，允许事件循环处理其他任务
         
         if self._current_trading_period:
             self._current_trading_period.end_time = self.end_time
@@ -1203,19 +1211,19 @@ async def main():
     args = parser.parse_args()
 
     # ==================== 配置加载 ====================
-    from autofish_core import ConfigLoader
+    from autofish_core import Autofish_ConfigLoader
 
     if args.case_id:
         # 从数据库加载
-        config = ConfigLoader.load_from_test_case_id(args.case_id)
+        config = Autofish_ConfigLoader.load_from_test_case_id(args.case_id)
         logger.info(f"[配置] 从 case_id={args.case_id} 加载配置")
     elif args.config:
         # 从配置文件加载
-        config = ConfigLoader.load_from_file(args.config, validate=True)
+        config = Autofish_ConfigLoader.load_from_file(args.config, validate=True)
         logger.info(f"[配置] 从文件 {args.config} 加载配置")
     else:
         # 使用默认配置
-        config = ConfigLoader.load_default_config()
+        config = Autofish_ConfigLoader.load_default_config()
         logger.info("[配置] 使用默认配置")
 
     # 提取参数
@@ -1289,21 +1297,9 @@ async def main():
         return Decimal(str(value))
 
     if not amplitude:
-        from autofish_core import Autofish_AmplitudeConfig
-        amplitude_config = Autofish_AmplitudeConfig.load_latest(symbol, decay_factor=decay_factor)
-        if amplitude_config:
-            amplitude = {
-                "leverage": amplitude_config.get_leverage(),
-                "grid_spacing": amplitude_config.get_grid_spacing(),
-                "exit_profit": amplitude_config.get_exit_profit(),
-                "stop_loss": amplitude_config.get_stop_loss(),
-                "total_amount_quote": amplitude_config.get_total_amount_quote(),
-                "max_entries": amplitude_config.get_max_entries(),
-                "decay_factor": amplitude_config.get_decay_factor(),
-                "weights": amplitude_config.get_weights(),
-                "valid_amplitudes": amplitude_config.get_valid_amplitudes(),
-                "total_expected_return": amplitude_config.get_total_expected_return(),
-            }
+        amplitude_params = Autofish_ConfigLoader.load_amplitude_params(symbol, decay_factor=float(decay_factor))
+        if amplitude_params:
+            amplitude = amplitude_params.to_dict()
     else:
         amplitude["grid_spacing"] = ensure_decimal(amplitude.get("grid_spacing"), "0.01")
         amplitude["exit_profit"] = ensure_decimal(amplitude.get("exit_profit"), "0.01")
@@ -1718,7 +1714,9 @@ class BacktestManager:
             if engine.case_id > 0:
                 self._update_case_status(engine.case_id, 'stopped')
         except Exception as e:
+            import traceback
             logger.error(f"[BacktestManager] 回测异常: temp_id={temp_id}, error={e}")
+            logger.error(traceback.format_exc())
             self._results[temp_id] = {'status': 'error', 'error': str(e)}
             if engine.case_id > 0:
                 self._update_case_status(engine.case_id, 'error')
@@ -1748,8 +1746,8 @@ class BacktestManager:
             # 如果没有 case_id，自动创建临时测试用例
             case_id = getattr(engine, 'case_id', 0)
             if case_id == 0:
-                start_dt = datetime.fromtimestamp(engine.start_time / 1000) if engine.start_time else datetime.now()
-                end_dt = datetime.fromtimestamp(engine.end_time / 1000) if engine.end_time else datetime.now()
+                start_dt = engine.start_time if isinstance(engine.start_time, datetime) else datetime.fromtimestamp(engine.start_time / 1000) if engine.start_time else datetime.now()
+                end_dt = engine.end_time if isinstance(engine.end_time, datetime) else datetime.fromtimestamp(engine.end_time / 1000) if engine.end_time else datetime.now()
                 date_range = f"{start_dt.strftime('%Y%m%d')}-{end_dt.strftime('%Y%m%d')}"
 
                 temp_case = TestCase(
@@ -1790,13 +1788,13 @@ class BacktestManager:
             price_change = ((last_price - first_price) / first_price * 100) if first_price > 0 else 0
             excess_return = roi - price_change
 
-            start_dt = datetime.fromtimestamp(engine.start_time / 1000) if engine.start_time else datetime.now()
-            end_dt = datetime.fromtimestamp(engine.end_time / 1000) if engine.end_time else datetime.now()
+            start_dt = engine.start_time if isinstance(engine.start_time, datetime) else datetime.fromtimestamp(engine.start_time / 1000) if engine.start_time else datetime.now()
+            end_dt = engine.end_time if isinstance(engine.end_time, datetime) else datetime.fromtimestamp(engine.end_time / 1000) if engine.end_time else datetime.now()
 
             result = TestResult(
                 case_id=case_id,
                 symbol=engine.symbol,
-                test_type='market_aware',
+                interval='1m',
                 start_time=start_dt.strftime('%Y-%m-%d %H:%M:%S'),
                 end_time=end_dt.strftime('%Y-%m-%d %H:%M:%S'),
                 total_trades=total_trades,
@@ -1806,18 +1804,23 @@ class BacktestManager:
                 total_profit=total_profit,
                 total_loss=total_loss,
                 net_profit=net_profit,
-                initial_capital=total_amount,
-                final_capital=total_amount + net_profit,
                 roi=roi,
                 price_change=price_change,
                 excess_return=excess_return,
-                avg_profit=total_profit / win_trades if win_trades > 0 else 0,
-                avg_loss=total_loss / loss_trades if loss_trades > 0 else 0,
-                amplitude=json.dumps(engine.config),
-                market=json.dumps(engine.market),
+                capital=json.dumps({
+                    'initial': total_amount,
+                    'final': total_amount + net_profit,
+                }),
+                extra_metrics=json.dumps({
+                    'amplitude': engine.config,
+                    'market': engine.market,
+                    'avg_profit': total_profit / win_trades if win_trades > 0 else 0,
+                    'avg_loss': total_loss / loss_trades if loss_trades > 0 else 0,
+                }),
             )
 
-            result_id = db.save_result(result)
+            # 使用 create_result 获取真正的 result_id
+            result_id = db.create_result(result)
 
             # 保存交易详情
             trades = results.get('trades', [])
@@ -1843,11 +1846,25 @@ class BacktestManager:
                         entry_total_capital=float(t.get('entry_total_capital', 0)),
                     ))
                 db.save_trade_details(result_id, trade_details)
+                logger.info(f"[BacktestManager] 保存交易详情: {len(trade_details)} 条")
+
+            # 保存资金统计 - 通过 capital_pool.get_statistics() 获取
+            if result_id and engine.capital_pool and hasattr(engine.capital_pool, 'get_statistics'):
+                capital_stats = engine.capital_pool.get_statistics()
+                if capital_stats:
+                    statistics_id = db.save_capital_statistics(result_id, capital_stats)
+                    logger.info(f"[BacktestManager] 保存资金统计: initial={capital_stats.get('initial_capital')}, final={capital_stats.get('final_capital')}")
+                    # 保存资金历史
+                    if statistics_id and capital_stats.get('capital_history'):
+                        db.save_capital_history(result_id, statistics_id, capital_stats['capital_history'])
+                        logger.info(f"[BacktestManager] 保存资金历史: {len(capital_stats.get('capital_history', []))} 条")
 
             return result_id
 
         except Exception as e:
+            import traceback
             logger.error(f"[BacktestManager] 保存结果失败: {e}")
+            logger.error(traceback.format_exc())
             return 0
 
     async def stop_backtest(self, result_id: int) -> bool:
@@ -1968,19 +1985,33 @@ class BacktestManager:
 
         if task and engine:
             status = 'running' if not task.done() else 'completed'
+            kline_count = getattr(engine, 'kline_count', 0)
+            total_klines = getattr(engine, 'total_klines', 0)
+
             info = {
                 'result_id': result_id,
                 'case_id': getattr(engine, 'case_id', 0),
                 'symbol': getattr(engine, 'symbol', ''),
                 'status': status,
-                'kline_count': getattr(engine, 'kline_count', 0),
+                'kline_count': kline_count,
+                'total_klines': total_klines,
                 'interval': getattr(engine, 'interval', '1m'),
             }
 
+            # 计算进度百分比
+            if total_klines > 0:
+                info['progress_pct'] = round(kline_count / total_klines * 100, 1)
+            else:
+                info['progress_pct'] = 0
+
             # 日期范围
             if hasattr(engine, 'start_time') and engine.start_time:
-                start_dt = datetime.fromtimestamp(engine.start_time / 1000)
-                end_dt = datetime.fromtimestamp(engine.end_time / 1000)
+                if isinstance(engine.start_time, datetime):
+                    start_dt = engine.start_time
+                    end_dt = engine.end_time
+                else:
+                    start_dt = datetime.fromtimestamp(engine.start_time / 1000)
+                    end_dt = datetime.fromtimestamp(engine.end_time / 1000)
                 info['date_range'] = f"{start_dt.strftime('%Y-%m-%d')} ~ {end_dt.strftime('%Y-%m-%d')}"
 
             # 当前配置

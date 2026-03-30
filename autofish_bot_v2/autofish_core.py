@@ -756,8 +756,7 @@ class Autofish_OrderCalculator:
         grid_spacing: Decimal = Decimal("0.01"),
         exit_profit: Decimal = Decimal("0.01"),
         stop_loss: Decimal = Decimal("0.08"),
-        leverage: Decimal = Decimal("10"),
-        entry_strategy: Optional[EntryPriceStrategy] = None
+        leverage: Decimal = Decimal("10")
         ):
         """
         参数:
@@ -765,13 +764,11 @@ class Autofish_OrderCalculator:
             exit_profit: 止盈比例 (小数，如 0.01 表示 1%)
             stop_loss: 止损比例 (小数，如 0.08 表示 8%)
             leverage: 杠杆倍数
-            entry_strategy: 入场价格策略
         """
         self.grid_spacing = grid_spacing
         self.exit_profit = exit_profit
         self.stop_loss = stop_loss
         self.leverage = leverage
-        self.entry_strategy = entry_strategy or FixedGridStrategy()
     
     def calculate_atr(self, klines: List[Dict], period: int = 14) -> Decimal:
         """计算 ATR (Average True Range)
@@ -868,36 +865,27 @@ class Autofish_OrderCalculator:
         klines: List[Dict] = None
         ) -> Autofish_Order:
         """创建订单
-        
+
         参数:
             level: 层级
             base_price: 基准价格
             total_amount: 总资金金额
             weights: 权重列表（从配置文件读取）
             max_entries: 最大层级数（用于归一化）
-            klines: K 线数据（用于策略计算）
-            
+            klines: K 线数据（未使用，保留兼容性）
+
         返回:
             Autofish_Order 实例
         """
-        # 使用策略计算入场价格（仅 A1 使用策略）
-        if level == 1:
-            entry_price = self.entry_strategy.calculate_entry_price(
-                current_price=base_price,
-                level=level,
-                grid_spacing=self.grid_spacing,
-                klines=klines
-            )
-        else:
-            # 其他层级使用固定网格间距
-            entry_price = base_price * (Decimal("1") - self.grid_spacing * level)
-        
+        # 所有层级使用固定网格间距
+        entry_price = base_price * (Decimal("1") - self.grid_spacing * level)
+
         take_profit_price = entry_price * (Decimal("1") + self.exit_profit)
         stop_loss_price = entry_price * (Decimal("1") - self.stop_loss)
-        
+
         # 归一化权重
         normalized_weights = normalize_weights(weights, max_entries) if weights else None
-        
+
         # 使用归一化后的权重计算金额
         if normalized_weights and level <= len(normalized_weights):
             stake_amount = total_amount * normalized_weights[level - 1]
@@ -905,7 +893,7 @@ class Autofish_OrderCalculator:
             # 默认平均分配
             stake_amount = total_amount / Decimal(str(max_entries))
         quantity = stake_amount / entry_price
-        
+
         order = Autofish_Order(
             level=level,
             entry_price=entry_price,
@@ -916,12 +904,11 @@ class Autofish_OrderCalculator:
             state="pending",
             created_at=datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
         )
-        
+
         logger.info(f"[创建订单] A{level}: entry={entry_price:.2f}, "
                    f"tp={take_profit_price:.2f}, sl={stop_loss_price:.2f}, "
-                   f"stake={stake_amount:.2f} USDT, qty={quantity:.6f} BTC, "
-                   f"strategy={self.entry_strategy.name}")
-        
+                   f"stake={stake_amount:.2f} USDT, qty={quantity:.6f} BTC")
+
         return order
     
     def calculate_profit(self, order: Autofish_Order, close_price: Decimal) -> Decimal:
@@ -1003,9 +990,9 @@ class Autofish_AmplitudeAnalyzer:
     LIQUIDATION_AMPLITUDE = 10
     VALID_AMPLITUDE_MIN = 1
     
-    def __init__(self, symbol: str = "BTCUSDT", interval: str = "1d", limit: int = 1000, 
+    def __init__(self, symbol: str = "BTCUSDT", interval: str = "1d", limit: int = 1000,
                  leverage: int = 10, source: str = "binance", output_dir: str = "out/autofish",
-                 log_dir: str = "logs", entry_strategy: dict = None):
+                 log_dir: str = "logs"):
         self.symbol = symbol
         self.interval = interval
         self.limit = limit
@@ -1013,14 +1000,13 @@ class Autofish_AmplitudeAnalyzer:
         self.source = source
         self.output_dir = output_dir
         self.log_dir = log_dir
-        self.entry_strategy = entry_strategy or DEFAULT_ENTRY_STRATEGY.copy()
         self.klines: List[dict] = []
         self.amplitudes: List[Decimal] = []
         self.amplitude_counts: Dict[int, int] = {amp: 0 for amp in self.AMPLITUDE_RANGES}
         self.probabilities: Dict[int, Decimal] = {}
         self.expected_returns: Dict[int, Decimal] = {}
         self.weights: Dict[str, Dict[int, Decimal]] = {}
-        
+
         self._setup_logger()
     
     def _setup_logger(self):
@@ -1046,10 +1032,13 @@ class Autofish_AmplitudeAnalyzer:
             self.logger.addHandler(console_handler)
     
     def get_config_filepath(self) -> str:
-        """获取配置文件路径"""
+        """获取配置文件路径
+
+        新目录结构: out/autofish/amplitudes/{exchange}/{symbol}.json
+        """
         source = "longport" if self.is_longport_symbol(self.symbol) else "binance"
-        return os.path.join(self.output_dir, f"{source}_{self.symbol}_amplitude_config.json")
-    
+        return os.path.join(self.output_dir, "amplitudes", source, f"{self.symbol}.json")
+
     def get_report_filepath(self) -> str:
         """获取报告文件路径"""
         source = "longport" if self.is_longport_symbol(self.symbol) else "binance"
@@ -1327,22 +1316,9 @@ class Autofish_AmplitudeAnalyzer:
         """保存配置到JSON文件"""
         if filepath is None:
             filepath = self.get_config_filepath()
-        
+
         os.makedirs(os.path.dirname(filepath), exist_ok=True)
-        
-        def build_entry_strategy_str() -> str:
-            """构建入场策略配置字符串"""
-            strategy = self.entry_strategy
-            name = strategy.get("name", "atr")
-            params = strategy.get("params", {})
-            
-            params_str = ", ".join([f'"{k}": {json.dumps(v)}' for k, v in params.items()])
-            
-            return (f'    "entry_price_strategy": {{\n'
-                    f'      "name": "{name}",\n'
-                    f'      "params": {{{params_str}}}\n'
-                    f'    }}')
-        
+
         def build_config_str(decay_factor: float, decay_key: str) -> str:
             weights_dict = self.weights.get(decay_key, {})
             max_entries = min(4, len(weights_dict))
@@ -1364,22 +1340,21 @@ class Autofish_AmplitudeAnalyzer:
                     f'    "grid_spacing":0.01,\n'
                     f'    "exit_profit":0.01,\n'
                     f'    "stop_loss":0.08,\n'
-                    f'    "total_expected_return":{round(float(total_ret), 4)},\n'
-                    f'{build_entry_strategy_str()}\n'
+                    f'    "total_expected_return":{round(float(total_ret), 4)}\n'
                     f'  }}')
-        
+
         config_d05_str = build_config_str(0.5, "d_0.5")
         config_d10_str = build_config_str(1.0, "d_1.0")
-        
+
         lines = []
         lines.append('{')
         lines.append(config_d05_str + ',')
         lines.append(config_d10_str)
         lines.append('}')
-        
+
         with open(filepath, 'w', encoding='utf-8') as f:
             f.write('\n'.join(lines))
-        
+
         self.logger.info(f"[保存配置] 成功保存到: {filepath}")
     
     def save_to_markdown(self, filepath: str = None):
@@ -1427,12 +1402,7 @@ class Autofish_AmplitudeAnalyzer:
             weight_list = [round(float(weights_dict.get(amp, Decimal("0"))), 4) for amp in sorted(weights_dict.keys())]
             valid_amps = sorted(weights_dict.keys())
             total_ret = sum(self.expected_returns.get(amp, Decimal("0")) for amp in valid_amps)
-            
-            strategy = self.entry_strategy
-            name = strategy.get("name", "atr")
-            params = strategy.get("params", {})
-            params_str = ", ".join([f'"{k}": {json.dumps(v)}' for k, v in params.items()])
-            
+
             return [
                 f'    "d_{decay_factor}":{{',
                 f'      "leverage":{int(self.leverage)},',
@@ -1443,8 +1413,7 @@ class Autofish_AmplitudeAnalyzer:
                 f'      "grid_spacing":0.01,',
                 f'      "exit_profit":0.01,',
                 f'      "stop_loss":0.08,',
-                f'      "total_expected_return":{round(float(total_ret), 4)},',
-                f'      "entry_price_strategy":{{"name":"{name}","params":{{{params_str}}}}}',
+                f'      "total_expected_return":{round(float(total_ret), 4)}',
                 f'    }}'
             ]
         
@@ -1534,37 +1503,7 @@ class Autofish_AmplitudeAnalyzer:
             lines.append(f"| leverage | {int(self.leverage)}x | 杠杆倍数 |")
             lines.append(f"| total_expected_return | {float(total_ret)*100:.2f}% | 总预期收益（所有正收益区间之和） |")
             lines.append(f"")
-        
-        lines.append(f"## 入场价格策略")
-        lines.append(f"")
-        lines.append(f"| 字段 | 值 | 说明 |")
-        lines.append(f"|------|-----|------|")
-        lines.append(f"| name | {self.entry_strategy.get('name', 'atr')} | 策略名称 |")
-        
-        params = self.entry_strategy.get('params', {})
-        if self.entry_strategy.get('name') == 'atr':
-            lines.append(f"| atr_period | {params.get('atr_period', 14)} | ATR 计算周期 |")
-            lines.append(f"| atr_multiplier | {params.get('atr_multiplier', 0.5)} | ATR 乘数 |")
-            lines.append(f"| min_spacing | {params.get('min_spacing', 0.005) * 100:.1f}% | 最小网格间距 |")
-            lines.append(f"| max_spacing | {params.get('max_spacing', 0.03) * 100:.1f}% | 最大网格间距 |")
-        elif self.entry_strategy.get('name') == 'bollinger':
-            lines.append(f"| period | {params.get('period', 20)} | 布林带周期 |")
-            lines.append(f"| std_multiplier | {params.get('std_multiplier', 2)} | 标准差乘数 |")
-            lines.append(f"| min_spacing | {params.get('min_spacing', 0.005) * 100:.1f}% | 最小网格间距 |")
-        elif self.entry_strategy.get('name') == 'support':
-            lines.append(f"| lookback | {params.get('lookback', 20)} | 回溯 K 线数量 |")
-            lines.append(f"| min_spacing | {params.get('min_spacing', 0.005) * 100:.1f}% | 最小网格间距 |")
-        
-        lines.append(f"")
-        lines.append(f"**策略说明**: 入场价格策略用于计算 A1 订单的入场价格。")
-        lines.append(f"")
-        lines.append(f"- **fixed**: 固定网格间距，入场价格 = 当前价格 × (1 - 网格间距)")
-        lines.append(f"- **atr**: 基于 ATR 动态计算，适应市场波动性")
-        lines.append(f"- **bollinger**: 布林带下轨入场，适用于震荡市场")
-        lines.append(f"- **support**: 支撑位入场，适用于趋势市场")
-        lines.append(f"- **composite**: 综合多种技术指标")
-        lines.append(f"")
-        
+
         lines.append(f"## 算法说明")
         lines.append(f"")
         lines.append(f"### 振幅计算")
@@ -1640,123 +1579,82 @@ class Autofish_AmplitudeAnalyzer:
         return self.to_dict()
 
 
-class Autofish_AmplitudeConfig:
-    """振幅配置加载器"""
-    
-    def __init__(self, config_path: str = None, symbol: str = None, output_dir: str = "out/autofish",
-                 decay_factor: Decimal = Decimal("0.5")):
-        if config_path is None:
-            if symbol is None:
-                symbol = "BTCUSDT"
-            source = "longport" if Autofish_AmplitudeAnalyzer.is_longport_symbol(symbol) else "binance"
-            config_path = os.path.join(output_dir, f"{source}_{symbol}_amplitude_config.json")
-        self.config_path = config_path
-        self.decay_factor = decay_factor
-        self.data: Dict[str, Any] = {}
-    
-    def _get_decay_key(self) -> str:
-        """获取衰减因子对应的键名"""
-        if self.decay_factor == Decimal("0.5"):
-            return "d_0.5"
-        elif self.decay_factor == Decimal("1.0"):
-            return "d_1.0"
-        else:
-            return f"d_{float(self.decay_factor)}"
-    
-    def _get_recommended_config(self) -> dict:
-        """获取推荐配置"""
-        decay_key = self._get_decay_key()
-        
-        if decay_key in self.data:
-            return self.data[decay_key]
-        
-        if "d_0.5" in self.data:
-            return self.data["d_0.5"]
-        
-        return {}
-    
-    def load(self) -> bool:
-        """加载配置"""
-        if not os.path.exists(self.config_path):
-            logger.warning(f"[配置加载] 文件不存在: {self.config_path}")
-            return False
-        
-        try:
-            with open(self.config_path, 'r', encoding='utf-8') as f:
-                self.data = json.load(f)
-            logger.info(f"[配置加载] 成功加载: {self.config_path}")
-            return True
-        except Exception as e:
-            logger.error(f"[配置加载] 失败: {e}")
-            return False
-    
-    def get_probabilities(self) -> Dict[int, Decimal]:
-        """获取概率分布"""
-        probs = {}
-        for amp_str, stats in self.data.get("amplitude_stats", {}).items():
-            amp = int(amp_str)
-            probs[amp] = Decimal(str(stats.get("probability", 0)))
-        return probs
-    
-    def get_expected_returns(self) -> Dict[int, Decimal]:
-        """获取预期收益"""
-        returns = {}
-        for amp_str, ret in self.data.get("expected_returns", {}).items():
-            amp = int(amp_str)
-            returns[amp] = Decimal(str(ret))
-        return returns
-    
-    def get_leverage(self) -> Decimal:
-        return Decimal(str(self.data.get("leverage", 10)))
-    
-    def get_symbol(self) -> str:
-        config = self._get_recommended_config()
-        return config.get("symbol", "BTCUSDT")
-    
-    def get_grid_spacing(self) -> Decimal:
-        config = self._get_recommended_config()
-        return Decimal(str(config.get("grid_spacing", 0.01)))
-    
-    def get_exit_profit(self) -> Decimal:
-        config = self._get_recommended_config()
-        return Decimal(str(config.get("exit_profit", 0.01)))
-    
-    def get_stop_loss(self) -> Decimal:
-        config = self._get_recommended_config()
-        return Decimal(str(config.get("stop_loss", 0.08)))
-    
-    def get_total_amount_quote(self) -> Decimal:
-        config = self._get_recommended_config()
-        return Decimal(str(config.get("total_amount_quote", 1200)))
-    
-    def get_max_entries(self) -> int:
-        config = self._get_recommended_config()
-        return config.get("max_entries", 4)
-    
-    def get_valid_amplitudes(self) -> List[int]:
-        config = self._get_recommended_config()
-        return config.get("valid_amplitudes", [1, 2, 3, 4])
-    
-    def get_decay_factor(self) -> Decimal:
-        return self.decay_factor
-    
-    def get_total_expected_return(self) -> Decimal:
-        config = self._get_recommended_config()
-        return Decimal(str(config.get("total_expected_return", 0)))
-    
-    def get_weights(self) -> list:
-        """获取权重列表"""
-        config = self._get_recommended_config()
-        return config.get("weights", [])
+class AmplitudeParams:
+    """振幅参数 Decimal 类型包装器
 
-    @classmethod
-    def load_latest(cls, symbol: str = "BTCUSDT", output_dir: str = "out/autofish", 
-                    decay_factor: Decimal = Decimal("0.5")) -> Optional['Autofish_AmplitudeConfig']:
-        """加载最新配置"""
-        config = cls(symbol=symbol, output_dir=output_dir, decay_factor=decay_factor)
-        if config.load():
-            return config
-        return None
+    提供类型安全的参数访问，用于 CLI 脚本。
+    所有数值返回 Decimal 类型，便于金融计算。
+
+    用法:
+        params = Autofish_ConfigLoader.load_amplitude_params("BTCUSDT")
+        leverage = params.leverage  # Decimal 类型
+        config_dict = params.to_dict()  # 转为 Dict
+    """
+
+    def __init__(self, data: Dict[str, Any], symbol: str = "BTCUSDT",
+                 decay_factor: Decimal = Decimal("0.5")):
+        self._data = data or {}
+        self._symbol = symbol
+        self._decay_factor = decay_factor
+
+    @property
+    def symbol(self) -> str:
+        return self._symbol
+
+    @property
+    def decay_factor(self) -> Decimal:
+        return self._decay_factor
+
+    @property
+    def leverage(self) -> Decimal:
+        return Decimal(str(self._data.get("leverage", 10)))
+
+    @property
+    def grid_spacing(self) -> Decimal:
+        return Decimal(str(self._data.get("grid_spacing", 0.01)))
+
+    @property
+    def exit_profit(self) -> Decimal:
+        return Decimal(str(self._data.get("exit_profit", 0.01)))
+
+    @property
+    def stop_loss(self) -> Decimal:
+        return Decimal(str(self._data.get("stop_loss", 0.08)))
+
+    @property
+    def total_amount_quote(self) -> Decimal:
+        return Decimal(str(self._data.get("total_amount_quote", 1200)))
+
+    @property
+    def max_entries(self) -> int:
+        return int(self._data.get("max_entries", 4))
+
+    @property
+    def valid_amplitudes(self) -> List[int]:
+        return self._data.get("valid_amplitudes", [1, 2, 3, 4])
+
+    @property
+    def weights(self) -> List[float]:
+        return self._data.get("weights", [])
+
+    @property
+    def total_expected_return(self) -> Decimal:
+        return Decimal(str(self._data.get("total_expected_return", 0)))
+
+    def to_dict(self) -> Dict[str, Any]:
+        """转换为 Dict 格式（用于传递给交易引擎）"""
+        return {
+            "symbol": self._symbol,
+            "decay_factor": float(self._decay_factor),
+            "leverage": float(self.leverage),
+            "grid_spacing": float(self.grid_spacing),
+            "exit_profit": float(self.exit_profit),
+            "stop_loss": float(self.stop_loss),
+            "total_amount_quote": float(self.total_amount_quote),
+            "max_entries": self.max_entries,
+            "valid_amplitudes": self.valid_amplitudes,
+            "weights": self.weights,
+        }
 
 
 class Autofish_ExternStrategy:
@@ -1949,35 +1847,27 @@ class Autofish_ExternStrategy:
 async def main():
     """主函数 - 振幅分析入口"""
     import argparse
-    
+
     parser = argparse.ArgumentParser(description="Autofish V2 振幅分析")
     parser.add_argument("--symbol", type=str, default="BTCUSDT", help="交易对 (默认: BTCUSDT)")
     parser.add_argument("--interval", type=str, default="1d", help="K线周期 (默认: 1d)")
     parser.add_argument("--limit", type=int, default=1000, help="K线数量 (默认: 1000)")
     parser.add_argument("--leverage", type=int, default=10, help="杠杆倍数 (默认: 10)")
     parser.add_argument("--source", type=str, default="binance", choices=["binance", "longport"], help="数据源: binance(加密货币) 或 longport(港股/美股/A股)")
-    parser.add_argument("--output", type=str, default=None, help="输出文件路径 (默认: {source}_{symbol}_amplitude_config.json)")
-    parser.add_argument("--entry-strategy", type=str, default="atr", 
-                        choices=["fixed", "atr", "bollinger", "support", "composite"],
-                        help="入场价格策略: fixed(固定网格), atr(ATR动态), bollinger(布林带), support(支撑位), composite(综合) (默认: atr)")
-    
+    parser.add_argument("--output", type=str, default=None, help="输出文件路径 (默认: out/autofish/amplitudes/{source}/{symbol}.json)")
+
     args = parser.parse_args()
-    
+
     if args.source == "longport" or Autofish_AmplitudeAnalyzer.is_longport_symbol(args.symbol):
         args.source = "longport"
         args.leverage = 1
-    
-    # 构建入场策略配置
-    entry_strategy = DEFAULT_ENTRY_STRATEGY.copy()
-    entry_strategy["name"] = args.entry_strategy
-    
+
     analyzer = Autofish_AmplitudeAnalyzer(
         symbol=args.symbol,
         interval=args.interval,
         limit=args.limit,
         leverage=args.leverage,
-        source=args.source,
-        entry_strategy=entry_strategy
+        source=args.source
     )
     
     result = await analyzer.analyze()
@@ -2604,10 +2494,10 @@ class CapitalPoolFactory:
 
 
 # ============================================================================
-# ConfigLoader - 配置加载器
+# Autofish_ConfigLoader - 配置加载器
 # ============================================================================
 
-class ConfigLoader:
+class Autofish_ConfigLoader:
     """配置加载器
 
     提供统一的配置加载接口，支持：
@@ -2619,9 +2509,9 @@ class ConfigLoader:
     - 振幅配置加载
     """
 
-    DEFAULT_CONFIG_PATH = "out/autofish/default_config.json"
-    STRATEGY_DEFAULTS_PATH = "out/autofish/strategy_defaults.json"
-    AMPLITUDE_DIR = "out/autofish"
+    DEFAULT_CONFIG_PATH = "out/autofish/defaults/default_config.json"
+    DEFAULTS_DIR = "out/autofish/defaults"
+    AMPLITUDE_DIR = "out/autofish/amplitudes"
 
     _default_config_cache: Optional[Dict] = None
     _strategy_defaults_cache: Optional[Dict] = None
@@ -2635,7 +2525,7 @@ class ConfigLoader:
             return cls._default_config_cache.copy()
 
         # 获取项目根目录
-        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        base_dir = os.path.dirname(os.path.abspath(__file__))
         config_path = os.path.join(base_dir, cls.DEFAULT_CONFIG_PATH)
 
         if not os.path.exists(config_path):
@@ -2689,7 +2579,7 @@ class ConfigLoader:
     @classmethod
     def _get_defaults_dir(cls) -> str:
         """获取 defaults 目录路径"""
-        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        base_dir = os.path.dirname(os.path.abspath(__file__))
         return os.path.join(base_dir, cls.DEFAULTS_DIR)
 
     @classmethod
@@ -2764,12 +2654,12 @@ class ConfigLoader:
     @classmethod
     def get_timeout_definition(cls) -> Dict:
         """获取超时参数定义（含元信息）"""
-        return cls.load_defaults_with_meta("timeout")
+        return cls.load_defaults_with_meta("timeout_strategy")
 
     @classmethod
     def get_amplitude_definition(cls) -> Dict:
         """获取振幅参数定义（含元信息）"""
-        return cls.load_defaults_with_meta("amplitude")
+        return cls.load_defaults_with_meta("amplitude_params")
 
     @classmethod
     def get_default_value(cls, definition: Dict, param_name: str) -> Any:
@@ -2864,26 +2754,16 @@ class ConfigLoader:
                     config["capital_pool_strategy"][name] = cls.extract_defaults_from_definition(params)
 
             # 加载超时参数
-            timeout_def = cls.load_defaults_with_meta("timeout")
+            timeout_def = cls.load_defaults_with_meta("timeout_strategy")
             if timeout_def:
                 config["timeout_first_entry"] = cls.extract_defaults_from_definition(timeout_def.get("params", {}))
 
             cls._strategy_defaults_cache = config
             return config.copy()
 
-        # 回退到旧的 strategy_defaults.json
-        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        config_path = os.path.join(base_dir, cls.STRATEGY_DEFAULTS_PATH)
-
-        if not os.path.exists(config_path):
-            logger.warning(f"策略默认配置文件不存在: {config_path}")
-            return {}
-
-        with open(config_path, 'r', encoding='utf-8') as f:
-            config = json.load(f)
-
-        cls._strategy_defaults_cache = config
-        return config.copy()
+        # 如果 defaults 目录不存在，返回空配置
+        logger.warning(f"defaults 目录不存在")
+        return {}
 
     @classmethod
     def get_entry_strategy_defaults(cls, strategy_name: str = None) -> Dict:
@@ -2957,9 +2837,10 @@ class ConfigLoader:
         Returns:
             振幅参数字典
         """
-        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        filename = f"{exchange}_{symbol}_amplitude_config.json"
-        config_path = os.path.join(base_dir, cls.AMPLITUDE_DIR, filename)
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        # 新目录结构: out/autofish/amplitudes/{exchange}/{symbol}.json
+        filename = f"{symbol}.json"
+        config_path = os.path.join(base_dir, cls.AMPLITUDE_DIR, exchange, filename)
 
         if not os.path.exists(config_path):
             logger.warning(f"振幅配置文件不存在: {config_path}")
@@ -2974,27 +2855,70 @@ class ConfigLoader:
         return config
 
     @classmethod
+    def _detect_exchange(cls, symbol: str) -> str:
+        """自动检测交易所
+
+        Args:
+            symbol: 标的符号
+
+        Returns:
+            交易所名称 (binance 或 longport)
+        """
+        return "longport" if Autofish_AmplitudeAnalyzer.is_longport_symbol(symbol) else "binance"
+
+    @classmethod
+    def load_amplitude_params(cls, symbol: str, exchange: str = None,
+                                decay_factor: float = 0.5) -> Optional['AmplitudeParams']:
+        """加载振幅参数（Decimal 类型返回）
+
+        用于 CLI 脚本，返回类型安全的 AmplitudeParams 对象。
+
+        Args:
+            symbol: 标的 (BTCUSDT, 700.HK)
+            exchange: 交易所 (binance, longport)，不指定则自动检测
+            decay_factor: 衰减因子
+
+        Returns:
+            AmplitudeParams 对象，文件不存在返回 None
+        """
+        if exchange is None:
+            exchange = cls._detect_exchange(symbol)
+
+        data = cls.load_amplitude_config(symbol, exchange, decay_factor)
+        if not data:
+            return None
+
+        return AmplitudeParams(data, symbol, Decimal(str(decay_factor)))
+
+    @classmethod
     def list_available_amplitudes(cls) -> List[Dict]:
         """列出所有可用的振幅配置文件
 
+        目录结构: out/autofish/amplitudes/{exchange}/{symbol}.json
+
         Returns:
-            [{'exchange': 'binance', 'symbol': 'BTCUSDT', 'filename': 'binance_BTCUSDT_amplitude_config.json'}, ...]
+            [{'exchange': 'binance', 'symbol': 'BTCUSDT', 'filename': 'BTCUSDT.json'}, ...]
         """
-        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        base_dir = os.path.dirname(os.path.abspath(__file__))
         amplitude_dir = os.path.join(base_dir, cls.AMPLITUDE_DIR)
 
         if not os.path.exists(amplitude_dir):
             return []
 
         files = []
-        for f in os.listdir(amplitude_dir):
-            if f.endswith("_amplitude_config.json"):
-                # 解析: binance_BTCUSDT_amplitude_config.json
-                parts = f.replace("_amplitude_config.json", "").split("_", 1)
-                if len(parts) == 2:
+        # 遍历交易所目录
+        for exchange in os.listdir(amplitude_dir):
+            exchange_path = os.path.join(amplitude_dir, exchange)
+            if not os.path.isdir(exchange_path):
+                continue
+
+            # 遍历标的配置文件
+            for f in os.listdir(exchange_path):
+                if f.endswith('.json'):
+                    symbol = f.replace('.json', '')
                     files.append({
-                        "exchange": parts[0],
-                        "symbol": parts[1],
+                        "exchange": exchange,
+                        "symbol": symbol,
                         "filename": f
                     })
         return files
