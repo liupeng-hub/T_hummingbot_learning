@@ -377,7 +377,15 @@ class StatusAlgorithm(ABC):
     def get_required_periods(self) -> int:
         """获取算法所需的最小 K 线数量"""
         pass
-    
+
+    @classmethod
+    def get_kline_interval(cls) -> str:
+        """获取算法所需的 K 线周期
+
+        返回: '1m', '1h', '1d' 等
+        """
+        return '1h'  # 默认 1 小时
+
     def get_indicators(self) -> Dict:
         """获取算法计算的指标值"""
         return {}
@@ -869,13 +877,23 @@ class DualThrustAlgorithm(StatusAlgorithm):
         ll = min(d['low'] for d in prev_days)
         hc = max(d['close'] for d in prev_days)
         lc = min(d['close'] for d in prev_days)
-        
+
+        # 确保转换为 float 类型，避免 Decimal 和 float 混合运算
+        hh = float(hh) if hasattr(hh, '__float__') else hh
+        ll = float(ll) if hasattr(ll, '__float__') else ll
+        hc = float(hc) if hasattr(hc, '__float__') else hc
+        lc = float(lc) if hasattr(lc, '__float__') else lc
+
         range1 = hh - lc
         range2 = hc - ll
         range_value = max(range1, range2)
-        
+
         today_open = daily_klines[-1]['open']
         current_price = klines[-1]['close']
+
+        # 确保 today_open 和 current_price 也是 float
+        today_open = float(today_open) if hasattr(today_open, '__float__') else today_open
+        current_price = float(current_price) if hasattr(current_price, '__float__') else current_price
         
         upper_band = today_open + k1 * range_value
         lower_band_ranging = today_open - k2 * range_value
@@ -960,27 +978,33 @@ class DualThrustAlgorithm(StatusAlgorithm):
         """将分钟K线聚合为日线"""
         if not klines:
             return []
-        
+
         daily_data = {}
         for k in klines:
             ts = k.get('timestamp', k.get('open_time', 0))
             dt = datetime.fromtimestamp(ts / 1000)
             date_key = dt.strftime('%Y-%m-%d')
-            
+
+            # 转换为 float，避免 Decimal 类型问题
+            open_price = float(k['open']) if hasattr(k['open'], '__float__') else k['open']
+            high_price = float(k['high']) if hasattr(k['high'], '__float__') else k['high']
+            low_price = float(k['low']) if hasattr(k['low'], '__float__') else k['low']
+            close_price = float(k['close']) if hasattr(k['close'], '__float__') else k['close']
+
             if date_key not in daily_data:
                 daily_data[date_key] = {
-                    'open': k['open'],
-                    'high': k['high'],
-                    'low': k['low'],
-                    'close': k['close'],
-                    'volume': k.get('volume', 0),
+                    'open': open_price,
+                    'high': high_price,
+                    'low': low_price,
+                    'close': close_price,
+                    'volume': float(k.get('volume', 0)),
                 }
             else:
-                daily_data[date_key]['high'] = max(daily_data[date_key]['high'], k['high'])
-                daily_data[date_key]['low'] = min(daily_data[date_key]['low'], k['low'])
-                daily_data[date_key]['close'] = k['close']
-                daily_data[date_key]['volume'] += k.get('volume', 0)
-        
+                daily_data[date_key]['high'] = max(daily_data[date_key]['high'], high_price)
+                daily_data[date_key]['low'] = min(daily_data[date_key]['low'], low_price)
+                daily_data[date_key]['close'] = close_price
+                daily_data[date_key]['volume'] += float(k.get('volume', 0))
+
         sorted_dates = sorted(daily_data.keys())
         return [daily_data[d] for d in sorted_dates]
     
@@ -990,6 +1014,11 @@ class DualThrustAlgorithm(StatusAlgorithm):
     def get_bands(self) -> Tuple[Optional[float], Optional[float]]:
         """获取当前的上下轨"""
         return self._upper_band, self._lower_band
+
+    @classmethod
+    def get_kline_interval(cls) -> str:
+        """Dual Thrust 使用日线"""
+        return '1d'
 
 
 class ImprovedStatusAlgorithm(StatusAlgorithm):
@@ -1210,9 +1239,14 @@ class ImprovedStatusAlgorithm(StatusAlgorithm):
     
     def get_required_periods(self) -> int:
         return self.config['lookback_period']
-    
+
     def get_indicators(self) -> Dict:
         return self._indicators
+
+    @classmethod
+    def get_kline_interval(cls) -> str:
+        """Improved 使用日线（60-90天回看）"""
+        return '1d'
 
 
 class RealTimeStatusAlgorithm(StatusAlgorithm):

@@ -124,6 +124,93 @@
         .action-btn-group .btn {
             margin-right: 5px;
         }
+        /* Market Timeline Styles */
+        .market-timeline {
+            position: relative;
+            padding: 10px 0;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+        .market-timeline-item {
+            display: flex;
+            align-items: flex-start;
+            margin-bottom: 15px;
+            position: relative;
+        }
+        .market-timeline-item::before {
+            content: '';
+            position: absolute;
+            left: 15px;
+            top: 30px;
+            bottom: -15px;
+            width: 2px;
+            background: #dee2e6;
+        }
+        .market-timeline-item:last-child::before {
+            display: none;
+        }
+        .timeline-marker {
+            width: 30px;
+            height: 30px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 14px;
+            margin-right: 15px;
+            flex-shrink: 0;
+        }
+        .marker-close {
+            background: #0d6efd;
+            color: #fff;
+        }
+        .marker-breakthrough {
+            background: #ffc107;
+            color: #000;
+        }
+        .marker-periodic {
+            background: #6c757d;
+            color: #fff;
+        }
+        .timeline-content {
+            flex: 1;
+        }
+        .timeline-title {
+            font-weight: 600;
+            margin-bottom: 5px;
+        }
+        .timeline-time {
+            color: #6c757d;
+            font-size: 12px;
+        }
+        .timeline-details {
+            font-size: 13px;
+            margin-top: 5px;
+        }
+        .band-card {
+            background: #f8f9fa;
+            padding: 10px;
+            border-radius: 6px;
+            margin-top: 10px;
+        }
+        .band-values {
+            display: flex;
+            gap: 15px;
+            font-size: 12px;
+        }
+        .band-upper { color: #198754; }
+        .band-lower { color: #dc3545; }
+        .band-range { color: #0d6efd; }
+        .market-status-badge {
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: 500;
+        }
+        .status-trending_up { background: #d4edda; color: #155724; }
+        .status-trending_down { background: #f8d7da; color: #721c24; }
+        .status-ranging { background: #fff3cd; color: #856404; }
+        .status-unknown { background: #e2e3e5; color: #383d41; }
     </style>
 </head>
 <body>
@@ -187,6 +274,19 @@
                     <div class="card-header">活跃会话</div>
                     <div class="card-body">
                         <div id="activeSessionsContent">
+                            <p class="text-muted">加载中...</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 可恢复会话 -->
+                <div class="card mt-3" id="recoverableCard" style="display: none;">
+                    <div class="card-header bg-warning text-dark">
+                        <span>⚠️ 可恢复会话</span>
+                        <small class="text-muted ms-2">(服务中断的会话)</small>
+                    </div>
+                    <div class="card-body">
+                        <div id="recoverableSessionsContent">
                             <p class="text-muted">加载中...</p>
                         </div>
                     </div>
@@ -870,6 +970,7 @@
             await Promise.all([
                 loadStats(),
                 loadActiveSessions(),
+                loadRecoverableSessions(),
                 loadCases(),
                 loadSessions()
             ]);
@@ -1034,6 +1135,245 @@
             } catch (e) {
                 console.error('加载活跃会话失败:', e);
                 document.getElementById('activeSessionsContent').innerHTML = '<p class="text-danger">加载失败</p>';
+            }
+        }
+
+        // 加载可恢复会话
+        async function loadRecoverableSessions() {
+            try {
+                const response = await fetch(`${API_BASE}/traders/recoverable`);
+                const data = await response.json();
+
+                if (data.success && data.data && data.data.length > 0) {
+                    document.getElementById('recoverableCard').style.display = 'block';
+
+                    let html = '';
+                    for (const session of data.data) {
+                        // 解析各配置字段（session 启动时从 case 复制的配置快照）
+                        const parseField = (field) => {
+                            if (!field || field === '{}') return {};
+                            try {
+                                return typeof field === 'string' ? JSON.parse(field) : field;
+                            } catch(e) { return {}; }
+                        };
+
+                        // session 有独立的配置字段：amplitude, market, entry, timeout, capital
+                        const amplitude = parseField(session.amplitude);
+                        const market = parseField(session.market);
+                        const entry = parseField(session.entry);
+                        const capital = parseField(session.capital);
+
+                        // 从各字段提取配置值
+                        const leverage = amplitude.leverage || '-';
+                        const maxEntries = amplitude.max_entries || '-';
+                        const stopLoss = amplitude.stop_loss;
+                        const algorithm = market.algorithm || '-';
+                        const entryStrategy = entry.strategy || '-';
+                        const initialCapital = session.initial_capital || capital.total_amount_quote || '-';
+
+                        html += `
+                            <div class="card mb-2" style="border-left: 3px solid #ffc107;">
+                                <div class="card-body py-2">
+                                    <div class="row">
+                                        <div class="col-md-2">
+                                            <strong>${session.symbol || '-'}</strong>
+                                            <small class="text-muted d-block">Session ${session.id}</small>
+                                            <small class="text-muted d-block">${session.testnet ? '测试网' : '主网'}</small>
+                                        </div>
+                                        <div class="col-md-3">
+                                            <small class="text-muted">关联配置</small>
+                                            <div>
+                                                <a href="#" onclick="showCaseDetail(${session.case_id}); return false;" class="text-primary">
+                                                    Case #${session.case_id}: ${session.case_name || '-'}
+                                                </a>
+                                            </div>
+                                            <small class="text-muted">开始时间</small>
+                                            <div>${session.start_time || '-'}</div>
+                                        </div>
+                                        <div class="col-md-3">
+                                            <small class="text-muted">资金信息</small>
+                                            <div>初始: ${initialCapital} USDT</div>
+                                            <small class="text-muted">交易统计</small>
+                                            <div>
+                                                次数: ${session.total_trades || 0} |
+                                                盈亏: <span class="${(session.net_profit || 0) >= 0 ? 'text-success' : 'text-danger'}">${session.net_profit || 0} USDT</span>
+                                            </div>
+                                        </div>
+                                        <div class="col-md-2">
+                                            <small class="text-muted">配置摘要</small>
+                                            <div style="font-size: 12px;">
+                                                杠杆: ${leverage}x | 层级: ${maxEntries}
+                                            </div>
+                                            <div style="font-size: 12px;">
+                                                止损: ${stopLoss ? (stopLoss * 100).toFixed(0) + '%' : '-'}
+                                            </div>
+                                            <div style="font-size: 12px;">
+                                                行情: ${algorithm} | 入场: ${entryStrategy}
+                                            </div>
+                                        </div>
+                                        <div class="col-md-2">
+                                            <div class="d-flex flex-column gap-1">
+                                                <button class="btn btn-sm btn-warning" onclick="recoverSession(${session.id})">恢复交易</button>
+                                                <button class="btn btn-sm btn-outline-secondary" onclick="showRecoverableDetail(${session.id})">会话详情</button>
+                                                <button class="btn btn-sm btn-outline-danger" onclick="deleteRecoverableSession(${session.id})">删除会话</button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        `;
+                    }
+
+                    html += '<small class="text-muted">⚠️ 这些会话在服务中断时正在运行，恢复后将从中断点继续交易。</small>';
+                    document.getElementById('recoverableSessionsContent').innerHTML = html;
+                } else {
+                    document.getElementById('recoverableCard').style.display = 'none';
+                }
+            } catch (e) {
+                console.error('加载可恢复会话失败:', e);
+                document.getElementById('recoverableCard').style.display = 'none';
+            }
+        }
+
+        // 显示可恢复会话详情
+        async function showRecoverableDetail(sessionId) {
+            try {
+                const response = await fetch(`${API_BASE}/live-sessions/${sessionId}`);
+                const data = await response.json();
+                if (data.success) {
+                    const session = data.data;
+
+                    // 解析各配置字段（session 启动时从 case 复制的配置快照）
+                    const parseField = (field) => {
+                        if (!field || field === '{}') return {};
+                        try {
+                            return typeof field === 'string' ? JSON.parse(field) : field;
+                        } catch(e) { return {}; }
+                    };
+
+                    // session 有独立的配置字段：amplitude, market, entry, timeout, capital
+                    const amplitude = parseField(session.amplitude);
+                    const market = parseField(session.market);
+                    const entry = parseField(session.entry);
+                    const timeout = parseField(session.timeout);
+                    const capital = parseField(session.capital);
+
+                    // 构建类似 caseData 的结构，用于 buildCliConfig
+                    const caseData = {
+                        symbol: session.symbol,
+                        testnet: session.testnet,
+                        amplitude: amplitude,
+                        market: market,
+                        entry: entry,
+                        timeout: timeout,
+                        capital: capital
+                    };
+
+                    // 构建 CLI 可用的层级配置
+                    const cliConfig = buildCliConfig(caseData);
+
+                    // 从各字段提取配置值
+                    const leverage = amplitude.leverage || '-';
+                    const maxEntries = amplitude.max_entries || '-';
+                    const stopLoss = amplitude.stop_loss;
+                    const exitProfit = amplitude.exit_profit;
+                    const algorithm = market.algorithm || '-';
+                    const entryStrategy = entry.strategy || '-';
+                    const initialCapital = session.initial_capital || capital.total_amount_quote || '-';
+
+                    let html = `
+                        <div class="row">
+                            <div class="col-md-6">
+                                <h6>会话信息</h6>
+                                <table class="table table-sm">
+                                    <tr><td>Session ID</td><td>${session.id}</td></tr>
+                                    <tr><td>交易对</td><td>${session.symbol}</td></tr>
+                                    <tr><td>状态</td><td>${getStatusBadge('stopped')}</td></tr>
+                                    <tr><td>开始时间</td><td>${session.start_time || '-'}</td></tr>
+                                    <tr><td>初始资金</td><td>${initialCapital} USDT</td></tr>
+                                    <tr><td>交易次数</td><td>${session.total_trades || 0}</td></tr>
+                                    <tr><td>净盈亏</td><td class="${(session.net_profit || 0) >= 0 ? 'text-success' : 'text-danger'}">${session.net_profit || 0} USDT</td></tr>
+                                </table>
+                            </div>
+                            <div class="col-md-6">
+                                <h6>配置摘要</h6>
+                                <table class="table table-sm">
+                                    <tr><td>杠杆</td><td>${leverage}x</td></tr>
+                                    <tr><td>最大层级</td><td>${maxEntries}</td></tr>
+                                    <tr><td>止损比例</td><td>${stopLoss ? (stopLoss * 100).toFixed(0) + '%' : '-'}</td></tr>
+                                    <tr><td>止盈比例</td><td>${exitProfit ? (exitProfit * 100).toFixed(1) + '%' : '-'}</td></tr>
+                                    <tr><td>行情算法</td><td>${algorithm}</td></tr>
+                                    <tr><td>入场策略</td><td>${entryStrategy}</td></tr>
+                                </table>
+                            </div>
+                        </div>
+                        <hr>
+                        <div class="row">
+                            <div class="col-12">
+                                <h6>CLI 配置 JSON <button class="btn btn-sm btn-outline-primary" onclick="copyRecoverableConfig(${sessionId})">复制</button></h6>
+                                <pre class="bg-light p-2" style="max-height: 300px; overflow-y: auto; font-size: 11px;">${JSON.stringify(cliConfig, null, 2)}</pre>
+                            </div>
+                        </div>
+                    `;
+
+                    document.getElementById('sessionModalContent').innerHTML = html;
+                    new bootstrap.Modal(document.getElementById('sessionModal')).show();
+                }
+            } catch (e) {
+                console.error('加载会话详情失败:', e);
+            }
+        }
+
+        function copyRecoverableConfig(sessionId) {
+            // 从模态框中获取配置
+            const pre = document.querySelector('#sessionModalContent pre');
+            if (pre) {
+                navigator.clipboard.writeText(pre.textContent);
+                alert('配置已复制到剪贴板');
+            }
+        }
+
+        // 恢复中断的会话
+        async function recoverSession(sessionId) {
+            if (!confirm(`确定要恢复会话 ${sessionId} 吗？\n\n这将从中断点继续交易，订单状态会与交易所同步。`)) return;
+
+            try {
+                const response = await fetch(`${API_BASE}/traders/recover/${sessionId}`, {
+                    method: 'POST'
+                });
+                const result = await response.json();
+
+                if (result.success) {
+                    alert(`会话已恢复! Session ID: ${result.data.session_id}`);
+                    loadActiveSessions();
+                } else {
+                    showError('恢复失败', result.error);
+                }
+            } catch (e) {
+                console.error('恢复会话失败:', e);
+                showError('恢复失败', e.message);
+            }
+        }
+
+        // 删除可恢复会话
+        async function deleteRecoverableSession(sessionId) {
+            if (!confirm(`确定要删除会话 ${sessionId} 吗？\n\n删除后将无法恢复此会话的交易状态。`)) return;
+
+            try {
+                const response = await fetch(`${API_BASE}/live-sessions/${sessionId}`, {
+                    method: 'DELETE'
+                });
+                const result = await response.json();
+
+                if (result.success) {
+                    alert('会话已删除');
+                    loadRecoverableSessions();
+                } else {
+                    showError('删除失败', result.error);
+                }
+            } catch (e) {
+                console.error('删除会话失败:', e);
+                showError('删除失败', e.message);
             }
         }
 
@@ -1789,6 +2129,23 @@
                     currentCaseDetail = data.data;
                     const caseData = data.data;
 
+                    // 解析 JSON 字符串字段
+                    if (typeof caseData.amplitude === 'string') {
+                        caseData.amplitude = JSON.parse(caseData.amplitude);
+                    }
+                    if (typeof caseData.capital === 'string') {
+                        caseData.capital = JSON.parse(caseData.capital);
+                    }
+                    if (typeof caseData.market === 'string') {
+                        caseData.market = JSON.parse(caseData.market);
+                    }
+                    if (typeof caseData.entry === 'string') {
+                        caseData.entry = JSON.parse(caseData.entry);
+                    }
+                    if (typeof caseData.timeout === 'string') {
+                        caseData.timeout = JSON.parse(caseData.timeout);
+                    }
+
                     // 构建 CLI 可用的完整配置
                     const cliConfig = buildCliConfig(caseData);
 
@@ -1825,6 +2182,9 @@
                                     <tr><td>最大层级</td><td>${caseData.amplitude?.max_entries || '-'}</td></tr>
                                     <tr><td>网格间距</td><td>${caseData.amplitude?.grid_spacing || '-'}</td></tr>
                                     <tr><td>止盈比例</td><td>${caseData.amplitude?.exit_profit || '-'}</td></tr>
+                                    ${caseData.amplitude?.weights ? `
+                                    <tr><td>权重</td><td><pre style="font-size: 11px; margin: 0; white-space: pre-wrap; word-break: break-all;">${caseData.amplitude.weights}</pre></td></tr>
+                                    ` : ''}
                                 </table>
                             </div>
                         </div>
@@ -1836,12 +2196,24 @@
                                     <tr><td>算法</td><td>${caseData.market?.algorithm || '-'}</td></tr>
                                     <tr><td>交易状态</td><td>${(caseData.market?.trading_statuses || []).join(', ') || '-'}</td></tr>
                                 </table>
+                                ${caseData.market?.dual_thrust ? `
+                                <details class="mt-1">
+                                    <summary class="text-muted" style="cursor: pointer; font-size: 12px;">Dual Thrust 参数</summary>
+                                    <pre style="font-size: 11px; margin: 5px 0; white-space: pre-wrap;">${JSON.stringify(caseData.market.dual_thrust, null, 2)}</pre>
+                                </details>
+                                ` : ''}
                             </div>
                             <div class="col-md-6">
                                 <h6>入场策略</h6>
                                 <table class="table table-sm">
                                     <tr><td>策略</td><td>${caseData.entry?.strategy || '-'}</td></tr>
                                 </table>
+                                ${caseData.entry?.atr ? `
+                                <details class="mt-1">
+                                    <summary class="text-muted" style="cursor: pointer; font-size: 12px;">ATR 参数</summary>
+                                    <pre style="font-size: 11px; margin: 5px 0; white-space: pre-wrap;">${JSON.stringify(caseData.entry.atr, null, 2)}</pre>
+                                </details>
+                                ` : ''}
                             </div>
                         </div>
                         <hr>
@@ -1861,6 +2233,14 @@
                                     <tr><td>提现阈值</td><td>${withdrawThreshold}</td></tr>
                                     <tr><td>保留金额</td><td>${withdrawRetain}</td></tr>
                                 </table>
+                                ${caseData.capital?.fuli || caseData.capital?.jijin || caseData.capital?.baoshou || caseData.capital?.wenjian ? `
+                                <details class="mt-1">
+                                    <summary class="text-muted" style="cursor: pointer; font-size: 12px;">策略参数</summary>
+                                    <pre style="font-size: 11px; margin: 5px 0; white-space: pre-wrap;">${JSON.stringify(
+                                        caseData.capital?.fuli || caseData.capital?.jijin || caseData.capital?.baoshou || caseData.capital?.wenjian, null, 2
+                                    )}</pre>
+                                </details>
+                                ` : ''}
                             </div>
                         </div>
                         <hr>
@@ -2176,6 +2556,99 @@
             }
         }
 
+        // 构建行情时间线 HTML
+        function buildMarketTimelineHtml(market) {
+            if (!market || (!market.results && !market.bands)) {
+                return '';
+            }
+
+            const caseInfo = market.case;
+            const results = market.results || [];
+            const bands = market.bands || [];
+
+            // 获取最新轨道
+            const latestBand = bands.length > 0 ? bands[0] : null;
+
+            // 状态徽章
+            function getMarketStatusBadge(status) {
+                const labels = {
+                    'trending_up': '上涨趋势',
+                    'trending_down': '下跌趋势',
+                    'ranging': '震荡',
+                    'unknown': '未知'
+                };
+                return `<span class="market-status-badge status-${status}">${labels[status] || status}</span>`;
+            }
+
+            // 事件类型图标
+            function getEventMarker(eventType) {
+                if (eventType === 'daily_close') {
+                    return '<span class="timeline-marker marker-close">📊</span>';
+                } else if (eventType === 'breakthrough') {
+                    return '<span class="timeline-marker marker-breakthrough">⚡</span>';
+                }
+                return '<span class="timeline-marker marker-periodic">●</span>';
+            }
+
+            // 事件类型标题
+            function getEventTitle(eventType, status) {
+                if (eventType === 'daily_close') {
+                    return '日线收盘 - 轨道更新';
+                } else if (eventType === 'breakthrough') {
+                    const statusLabels = {
+                        'trending_up': '突破上轨',
+                        'trending_down': '跌破下轨'
+                    };
+                    return statusLabels[status] || '状态突破';
+                }
+                return '行情检测';
+            }
+
+            let timelineItems = '';
+            if (results.length > 0) {
+                timelineItems = results.slice(0, 20).map(r => `
+                    <div class="market-timeline-item">
+                        ${getEventMarker(r.event_type || 'periodic')}
+                        <div class="timeline-content">
+                            <div class="timeline-title">
+                                ${getEventTitle(r.event_type || 'periodic', r.market_status)}
+                                ${getMarketStatusBadge(r.market_status)}
+                            </div>
+                            <div class="timeline-time">${r.check_time || '-'}</div>
+                            <div class="timeline-details">
+                                ${r.reason || ''}
+                            </div>
+                        </div>
+                    </div>
+                `).join('');
+            } else {
+                timelineItems = '<p class="text-muted">暂无行情检测记录</p>';
+            }
+
+            let bandInfo = '';
+            if (latestBand) {
+                bandInfo = `
+                    <div class="band-card">
+                        <strong>当前轨道</strong> (${latestBand.kline_date || '-'})
+                        <div class="band-values">
+                            <span class="band-upper">上轨: ${formatNumber(latestBand.upper_band)}</span>
+                            <span class="band-lower">下轨: ${formatNumber(latestBand.lower_band)}</span>
+                            <span class="band-range">Range: ${formatNumber(latestBand.range_value)}</span>
+                        </div>
+                    </div>
+                `;
+            }
+
+            return `
+                <hr>
+                <h6>📈 行情时间线 ${caseInfo ? `(${caseInfo.algorithm})` : ''}</h6>
+                ${bandInfo}
+                <div class="market-timeline">
+                    ${timelineItems}
+                </div>
+            `;
+        }
+
         // 确认删除会话（显示数据统计）
         async function confirmDeleteSession(sessionId) {
             try {
@@ -2260,6 +2733,113 @@
                     const tradesData = await tradesResp.json();
                     const trades = tradesData.data || [];
 
+                    // 获取统计指标
+                    const metricsResp = await fetch(`${API_BASE}/live-sessions/${sessionId}/metrics`);
+                    const metricsData = await metricsResp.json();
+                    const metrics = metricsData.success ? metricsData.data : null;
+
+                    // 获取行情数据
+                    const marketResp = await fetch(`${API_BASE}/live-sessions/${sessionId}/market`);
+                    const marketData = await marketResp.json();
+                    const market = marketData.success ? marketData.data : null;
+
+                    // 格式化时间（分钟转小时/分钟）
+                    function formatDuration(minutes) {
+                        if (!minutes || minutes === 0) return '-';
+                        const hours = Math.floor(minutes / 60);
+                        const mins = Math.round(minutes % 60);
+                        if (hours > 0) {
+                            return `${hours}小时${mins > 0 ? mins + '分钟' : ''}`;
+                        }
+                        return `${mins}分钟`;
+                    }
+
+                    let metricsHtml = '';
+                    if (metrics) {
+                        metricsHtml = `
+                            <hr>
+                            <h6>📊 统计指标</h6>
+                            <div class="row">
+                                <div class="col-md-3">
+                                    <table class="table table-sm table-bordered">
+                                        <thead class="table-light"><tr><th colspan="2">累计执行时间</th></tr></thead>
+                                        <tbody>
+                                            <tr><td>平均</td><td>${formatDuration(metrics.avg_execution_time)}</td></tr>
+                                            <tr><td>最短</td><td>${formatDuration(metrics.min_execution_time)}</td></tr>
+                                            <tr><td>最长</td><td>${formatDuration(metrics.max_execution_time)}</td></tr>
+                                        </tbody>
+                                    </table>
+                                    <small class="text-muted">从首次挂单到成交</small>
+                                </div>
+                                <div class="col-md-3">
+                                    <table class="table table-sm table-bordered">
+                                        <thead class="table-light"><tr><th colspan="2">单次执行时间</th></tr></thead>
+                                        <tbody>
+                                            <tr><td>平均</td><td>${formatDuration(metrics.avg_single_execution_time)}</td></tr>
+                                            <tr><td>最短</td><td>${formatDuration(metrics.min_single_execution_time)}</td></tr>
+                                            <tr><td>最长</td><td>${formatDuration(metrics.max_single_execution_time)}</td></tr>
+                                        </tbody>
+                                    </table>
+                                    <small class="text-muted">从最近挂单到成交</small>
+                                </div>
+                                <div class="col-md-3">
+                                    <table class="table table-sm table-bordered">
+                                        <thead class="table-light"><tr><th colspan="2">持仓时间统计</th></tr></thead>
+                                        <tbody>
+                                            <tr><td>平均持仓</td><td>${formatDuration(metrics.avg_holding_time)}</td></tr>
+                                            <tr><td>最短持仓</td><td>${formatDuration(metrics.min_holding_time)}</td></tr>
+                                            <tr><td>最长持仓</td><td>${formatDuration(metrics.max_holding_time)}</td></tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+                                <div class="col-md-3">
+                                    <table class="table table-sm table-bordered">
+                                        <thead class="table-light"><tr><th colspan="2">盈亏分布统计</th></tr></thead>
+                                        <tbody>
+                                            <tr><td>单笔最大盈利</td><td class="text-success">+${formatCurrency(metrics.max_profit_trade)}</td></tr>
+                                            <tr><td>单笔最大亏损</td><td class="text-danger">${formatCurrency(metrics.max_loss_trade)}</td></tr>
+                                            <tr><td>盈亏比</td><td>${metrics.profit_factor ? metrics.profit_factor.toFixed(2) : '-'}</td></tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                            <div class="row mt-2">
+                                <div class="col-md-4">
+                                    <table class="table table-sm table-bordered">
+                                        <thead class="table-light"><tr><th colspan="2">交易统计</th></tr></thead>
+                                        <tbody>
+                                            <tr><td>止盈触发</td><td>${metrics.tp_trigger_count || 0} 次</td></tr>
+                                            <tr><td>止损触发</td><td>${metrics.sl_trigger_count || 0} 次</td></tr>
+                                            <tr><td>补单次数</td><td>${metrics.supplement_count || 0} 次</td></tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+                                <div class="col-md-4">
+                                    <table class="table table-sm table-bordered">
+                                        <thead class="table-light"><tr><th colspan="2">超时统计</th></tr></thead>
+                                        <tbody>
+                                            <tr><td>超时重挂总数</td><td>${metrics.timeout_refresh_count || 0} 次</td></tr>
+                                            <tr><td>有超时的订单</td><td>${metrics.orders_with_timeout || 0} 笔</td></tr>
+                                            <tr><td>平均超时次数</td><td>${(metrics.avg_timeout_count || 0).toFixed(2)} 次</td></tr>
+                                            <tr><td>最大超时次数</td><td>${metrics.max_timeout_count || 0} 次</td></tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+                                <div class="col-md-4">
+                                    <table class="table table-sm table-bordered">
+                                        <thead class="table-light"><tr><th colspan="2">层级与时间</th></tr></thead>
+                                        <tbody>
+                                            <tr><td>完成轮次</td><td>${metrics.order_group_count || 0}</td></tr>
+                                            <tr><td>最大层级</td><td>${metrics.max_level_reached || 0}</td></tr>
+                                            <tr><td>运行时长</td><td>${formatDuration(metrics.total_runtime_minutes)}</td></tr>
+                                            <tr><td>暂停时长</td><td>${formatDuration(metrics.paused_time_minutes)}</td></tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        `;
+                    }
+
                     let html = `
                         <div class="row">
                             <div class="col-md-6">
@@ -2312,6 +2892,11 @@
                                 </tbody>
                             </table>
                         </div>
+
+                        <!-- 行情时间线 -->
+                        ${buildMarketTimelineHtml(market)}
+
+                        ${metricsHtml}
                     `;
 
                     document.getElementById('sessionModalContent').innerHTML = html;

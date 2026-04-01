@@ -120,6 +120,8 @@ class Autofish_Order:
     entry_capital: Optional[Decimal] = None
     entry_total_capital: Optional[Decimal] = None
     group_id: int = 0  # 默认 0，入场时设置
+    first_created_at: Optional[str] = None  # 首次挂单时间（用于累计执行时间计算）
+    timeout_count: int = 0  # 超时重挂次数
     
     def set_state(self, new_state: str, reason: str = ""):
         """设置订单状态"""
@@ -152,6 +154,7 @@ class Autofish_Order:
             "close_reason": self.close_reason,
             "profit": str(self.profit) if self.profit else None,
             "created_at": self.created_at,
+            "first_created_at": self.first_created_at,
             "filled_at": self.filled_at,
             "closed_at": self.closed_at,
             "tp_supplemented": self.tp_supplemented,
@@ -159,6 +162,7 @@ class Autofish_Order:
             "entry_capital": str(self.entry_capital) if self.entry_capital else None,
             "entry_total_capital": str(self.entry_total_capital) if self.entry_total_capital else None,
             "group_id": self.group_id,
+            "timeout_count": self.timeout_count,
         }
     
     @classmethod
@@ -186,6 +190,8 @@ class Autofish_Order:
             entry_capital=Decimal(data.get("entry_capital")) if data.get("entry_capital") else None,
             entry_total_capital=Decimal(data.get("entry_total_capital")) if data.get("entry_total_capital") else None,
             group_id=data.get("group_id", 0),
+            first_created_at=data.get("first_created_at"),
+            timeout_count=data.get("timeout_count", 0),
         )
 
 

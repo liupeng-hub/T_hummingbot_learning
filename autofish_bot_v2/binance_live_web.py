@@ -641,6 +641,57 @@ def create_flask_app():
         except Exception as e:
             return jsonify({'success': False, 'error': str(e)}), 500
 
+    @app.route('/api/live-sessions/<int:session_id>/market', methods=['GET'])
+    def get_session_market(session_id):
+        """获取会话行情数据
+
+        返回:
+        - results: 行情检测结果列表
+        - bands: Dual Thrust 轨道历史
+        - case: 行情配置
+        """
+        try:
+            # 获取 market_case
+            cursor = db._get_connection().cursor()
+            cursor.execute("""
+                SELECT * FROM live_market_cases WHERE session_id = ?
+            """, (session_id,))
+            case_row = cursor.fetchone()
+            case = dict(case_row) if case_row else None
+
+            results = []
+            bands = []
+
+            if case:
+                # 获取行情结果
+                cursor.execute("""
+                    SELECT * FROM live_market_results
+                    WHERE case_id = ?
+                    ORDER BY check_time DESC LIMIT 100
+                """, (case['id'],))
+                results = [dict(row) for row in cursor.fetchall()]
+
+            # 获取 Dual Thrust 轨道历史
+            cursor.execute("""
+                SELECT * FROM live_market_dual_thrust
+                WHERE session_id = ?
+                ORDER BY calc_time DESC LIMIT 30
+            """, (session_id,))
+            bands = [dict(row) for row in cursor.fetchall()]
+
+            cursor.close()
+
+            return jsonify({
+                'success': True,
+                'data': {
+                    'case': case,
+                    'results': results,
+                    'bands': bands
+                }
+            })
+        except Exception as e:
+            return jsonify({'success': False, 'error': str(e)}), 500
+
     @app.route('/api/live-sessions/<int:session_id>/capital', methods=['GET'])
     def get_session_capital(session_id):
         """获取会话资金历史"""
@@ -1007,6 +1058,64 @@ def create_flask_app():
             logger.error(f"恢复交易器失败: {e}")
             return jsonify({'success': False, 'error': str(e)}), 500
 
+    @app.route('/api/traders/recoverable', methods=['GET'])
+    def get_recoverable_sessions():
+        """获取可恢复的 session 列表
+
+        条件：
+        - 数据库 status = 'running'
+        - 内存中没有对应的 trader
+        """
+        try:
+            # 获取数据库中 status='running' 的 session
+            sessions = db.get_recoverable_sessions()
+
+            # 过滤掉内存中已存在的
+            running_ids = set(trader_manager.get_running_sessions())
+            recoverable = [s for s in sessions if s['id'] not in running_ids]
+
+            return jsonify({'success': True, 'data': recoverable})
+        except Exception as e:
+            logger.error(f"获取可恢复会话失败: {e}")
+            return jsonify({'success': False, 'error': str(e)}), 500
+
+    @app.route('/api/traders/recover/<int:session_id>', methods=['POST'])
+    def recover_trader(session_id):
+        """恢复指定 session
+
+        流程：
+        1. 验证 session 存在且可恢复
+        2. 创建 trader 并绑定到现有 session_id
+        3. 从数据库加载状态快照
+        4. 启动 trader（会自动执行 _restore_orders）
+        """
+        try:
+            # 检查是否已在内存中
+            if trader_manager.get_trader(session_id) is not None:
+                return jsonify({'success': False, 'error': 'Session already running'}), 400
+
+            # 创建恢复模式的 trader
+            trader = run_async(trader_manager.recover_trader(session_id))
+            if not trader:
+                return jsonify({'success': False, 'error': 'Failed to create trader for recovery'}), 500
+
+            # 启动 trader
+            recovered_session_id = run_async(trader_manager.start_trader(trader))
+
+            if recovered_session_id:
+                return jsonify({
+                    'success': True,
+                    'data': {
+                        'session_id': recovered_session_id,
+                        'recovered': True
+                    }
+                })
+            else:
+                return jsonify({'success': False, 'error': 'Failed to start recovered trader'}), 500
+        except Exception as e:
+            logger.error(f"恢复交易器失败: {e}")
+            return jsonify({'success': False, 'error': str(e)}), 500
+
     @app.route('/api/live-sessions/<int:session_id>/reset', methods=['POST'])
     def reset_live_session(session_id):
         """重置实盘会话（清除状态数据）"""
@@ -1062,6 +1171,41 @@ def create_flask_app():
         except Exception as e:
             return jsonify({'success': False, 'error': str(e)}), 500
 
+    @app.route('/api/live-sessions/<int:session_id>/metrics', methods=['GET'])
+    def get_session_metrics(session_id):
+        """获取会话统计指标
+
+        返回会话的详细统计指标，包括：
+        - 执行时间统计（平均、最小、最大）
+        - 持仓时间统计
+        - 盈亏分布统计
+        - 订单层级统计
+        - 超时和补单统计
+        """
+        try:
+            session = db.get_session(session_id)
+            if not session:
+                return jsonify({'success': False, 'error': 'Session not found'}), 404
+
+            metrics = db.get_session_metrics(session_id)
+
+            if not metrics:
+                # 如果数据库中没有，尝试从内存中的 trader 获取
+                trader = trader_manager.get_trader(session_id)
+                if trader:
+                    metrics = trader._get_metrics_summary()
+                    # 保存到数据库
+                    db.save_session_metrics(session_id, metrics)
+                else:
+                    metrics = None
+
+            return jsonify({
+                'success': True,
+                'data': metrics
+            })
+        except Exception as e:
+            return jsonify({'success': False, 'error': str(e)}), 500
+
     # ==================== 静态文件 ====================
 
     @app.route('/static/<path:filename>')
@@ -1070,6 +1214,32 @@ def create_flask_app():
         return send_from_directory(str(static_dir), filename)
 
     return app
+
+
+def _check_interrupted_sessions():
+    """检查并标记中断的 session
+
+    服务启动时检查数据库中 status='running' 但内存中不存在的 session，
+    将其状态更新为 'interrupted'。
+    """
+    try:
+        sessions = db.get_recoverable_sessions()
+        running_ids = set(trader_manager.get_running_sessions())
+
+        interrupted_count = 0
+        for session in sessions:
+            if session['id'] not in running_ids:
+                # 标记为中断状态
+                db.end_session(session['id'], status='interrupted')
+                logger.info(f"[启动检查] Session {session['id']} 已标记为 interrupted (symbol={session.get('symbol', 'N/A')})")
+                interrupted_count += 1
+
+        if interrupted_count > 0:
+            print(f"   ⚠️  发现 {interrupted_count} 个中断的会话，可通过 /api/traders/recoverable 查看")
+        else:
+            print(f"   ✅ 无中断会话")
+    except Exception as e:
+        logger.error(f"[启动检查] 检查中断会话失败: {e}")
 
 
 def run_server(host='0.0.0.0', port=5003, debug=False):
@@ -1118,7 +1288,12 @@ def run_server(host='0.0.0.0', port=5003, debug=False):
     print(f"     - POST   /api/traders/pause/:session_id - 暂停交易器")
     print(f"     - POST   /api/traders/resume/:session_id - 恢复交易器")
     print(f"     - POST   /api/traders/stop/:session_id  - 停止交易器")
+    print(f"     - GET    /api/traders/recoverable      - 获取可恢复会话列表")
+    print(f"     - POST   /api/traders/recover/:session_id - 恢复中断的会话")
     print()
+
+    # 服务启动时检查中断的 session
+    _check_interrupted_sessions()
 
     app.run(host=host, port=port, debug=debug)
 

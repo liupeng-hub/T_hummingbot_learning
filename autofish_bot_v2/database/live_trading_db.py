@@ -351,6 +351,7 @@ class LiveTradingDB:
                 tp_order_id INTEGER DEFAULT 0,
                 sl_order_id INTEGER DEFAULT 0,
                 created_at TEXT,
+                first_created_at TEXT,
                 filled_at TEXT,
                 closed_at TEXT,
                 close_reason TEXT,
@@ -363,6 +364,12 @@ class LiveTradingDB:
                 FOREIGN KEY (session_id) REFERENCES live_sessions(id) ON DELETE CASCADE
             )
         """)
+
+        # 迁移：为旧表添加 first_created_at 字段
+        try:
+            cursor.execute("ALTER TABLE live_orders ADD COLUMN first_created_at TEXT")
+        except:
+            pass  # 字段已存在
 
         # 4. live_trades（交易记录表）
         cursor.execute("""
@@ -486,6 +493,26 @@ class LiveTradingDB:
             )
         """)
 
+        # 10. live_market_dual_thrust（Dual Thrust 轨道历史表）
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS live_market_dual_thrust (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id INTEGER NOT NULL,
+                calc_time TEXT NOT NULL,
+                kline_date TEXT NOT NULL,
+                upper_band REAL NOT NULL,
+                lower_band REAL NOT NULL,
+                range_value REAL NOT NULL,
+                today_open REAL NOT NULL,
+                hh REAL DEFAULT 0,
+                ll REAL DEFAULT 0,
+                hc REAL DEFAULT 0,
+                lc REAL DEFAULT 0,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (session_id) REFERENCES live_sessions(id) ON DELETE CASCADE
+            )
+        """)
+
         # live_notifications - 通知记录表
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS live_notifications (
@@ -499,6 +526,62 @@ class LiveTradingDB:
                 send_status TEXT DEFAULT 'pending',
                 send_error TEXT,
                 sent_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (session_id) REFERENCES live_sessions(id) ON DELETE CASCADE
+            )
+        """)
+
+        # 11. live_session_metrics（会话统计指标表）
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS live_session_metrics (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id INTEGER NOT NULL UNIQUE,
+
+                -- 累计执行时间统计（分钟）- 从首次挂单到成交
+                avg_execution_time REAL DEFAULT 0,
+                min_execution_time REAL DEFAULT 0,
+                max_execution_time REAL DEFAULT 0,
+                total_execution_time REAL DEFAULT 0,
+                execution_count INTEGER DEFAULT 0,
+
+                -- 单次执行时间统计（分钟）- 从最近挂单到成交
+                avg_single_execution_time REAL DEFAULT 0,
+                min_single_execution_time REAL DEFAULT 0,
+                max_single_execution_time REAL DEFAULT 0,
+                total_single_execution_time REAL DEFAULT 0,
+                single_execution_count INTEGER DEFAULT 0,
+
+                -- 持仓时间统计（分钟）
+                avg_holding_time REAL DEFAULT 0,
+                min_holding_time REAL DEFAULT 0,
+                max_holding_time REAL DEFAULT 0,
+                total_holding_time REAL DEFAULT 0,
+                holding_count INTEGER DEFAULT 0,
+
+                -- 盈亏分布统计
+                max_profit_trade REAL DEFAULT 0,
+                max_loss_trade REAL DEFAULT 0,
+                profit_factor REAL DEFAULT 0,
+
+                -- 订单层级统计
+                order_group_count INTEGER DEFAULT 0,
+                max_level_reached INTEGER DEFAULT 0,
+                tp_trigger_count INTEGER DEFAULT 0,
+                sl_trigger_count INTEGER DEFAULT 0,
+
+                -- 超时统计
+                timeout_refresh_count INTEGER DEFAULT 0,
+                supplement_count INTEGER DEFAULT 0,
+                orders_with_timeout INTEGER DEFAULT 0,
+                avg_timeout_count REAL DEFAULT 0,
+                max_timeout_count INTEGER DEFAULT 0,
+
+                -- 时间统计
+                total_runtime_minutes REAL DEFAULT 0,
+                paused_time_minutes REAL DEFAULT 0,
+
+                calculated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+
                 FOREIGN KEY (session_id) REFERENCES live_sessions(id) ON DELETE CASCADE
             )
         """)
@@ -519,6 +602,9 @@ class LiveTradingDB:
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_live_market_results_time ON live_market_results(check_time)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_live_snapshots_session ON live_state_snapshots(session_id)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_live_notifications_session ON live_notifications(session_id)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_live_session_metrics_session ON live_session_metrics(session_id)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_live_dual_thrust_session ON live_market_dual_thrust(session_id)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_live_dual_thrust_date ON live_market_dual_thrust(kline_date)")
 
         conn.commit()
         conn.close()
@@ -563,6 +649,32 @@ class LiveTradingDB:
 
             conn.commit()
 
+            # 检查 live_session_metrics 表是否有新字段
+            cursor.execute("PRAGMA table_info(live_session_metrics)")
+            metrics_columns = [row[1] for row in cursor.fetchall()]
+
+            if 'avg_single_execution_time' not in metrics_columns:
+                cursor.execute("ALTER TABLE live_session_metrics ADD COLUMN avg_single_execution_time REAL DEFAULT 0")
+                print("迁移: live_session_metrics 添加 avg_single_execution_time 字段")
+
+            if 'min_single_execution_time' not in metrics_columns:
+                cursor.execute("ALTER TABLE live_session_metrics ADD COLUMN min_single_execution_time REAL DEFAULT 0")
+                print("迁移: live_session_metrics 添加 min_single_execution_time 字段")
+
+            if 'max_single_execution_time' not in metrics_columns:
+                cursor.execute("ALTER TABLE live_session_metrics ADD COLUMN max_single_execution_time REAL DEFAULT 0")
+                print("迁移: live_session_metrics 添加 max_single_execution_time 字段")
+
+            if 'total_single_execution_time' not in metrics_columns:
+                cursor.execute("ALTER TABLE live_session_metrics ADD COLUMN total_single_execution_time REAL DEFAULT 0")
+                print("迁移: live_session_metrics 添加 total_single_execution_time 字段")
+
+            if 'single_execution_count' not in metrics_columns:
+                cursor.execute("ALTER TABLE live_session_metrics ADD COLUMN single_execution_count INTEGER DEFAULT 0")
+                print("迁移: live_session_metrics 添加 single_execution_count 字段")
+
+            conn.commit()
+
             # 检查 capital_history 表名
             cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='capital_history'")
             if cursor.fetchone():
@@ -578,6 +690,38 @@ class LiveTradingDB:
                     cursor.execute("ALTER TABLE live_capital_history ADD COLUMN profit REAL DEFAULT 0")
                     print("迁移: capital_history 重命名为 live_capital_history 并添加新字段")
                     conn.commit()
+
+            # 检查 live_session_metrics 表是否有超时统计字段
+            cursor.execute("PRAGMA table_info(live_session_metrics)")
+            metrics_columns = [row[1] for row in cursor.fetchall()]
+
+            if 'orders_with_timeout' not in metrics_columns:
+                cursor.execute("ALTER TABLE live_session_metrics ADD COLUMN orders_with_timeout INTEGER DEFAULT 0")
+                print("迁移: live_session_metrics 添加 orders_with_timeout 字段")
+
+            if 'avg_timeout_count' not in metrics_columns:
+                cursor.execute("ALTER TABLE live_session_metrics ADD COLUMN avg_timeout_count REAL DEFAULT 0")
+                print("迁移: live_session_metrics 添加 avg_timeout_count 字段")
+
+            if 'max_timeout_count' not in metrics_columns:
+                cursor.execute("ALTER TABLE live_session_metrics ADD COLUMN max_timeout_count INTEGER DEFAULT 0")
+                print("迁移: live_session_metrics 添加 max_timeout_count 字段")
+
+            conn.commit()
+
+            # 检查 live_market_results 表是否有新字段
+            cursor.execute("PRAGMA table_info(live_market_results)")
+            results_columns = [row[1] for row in cursor.fetchall()]
+
+            if 'event_type' not in results_columns:
+                cursor.execute("ALTER TABLE live_market_results ADD COLUMN event_type TEXT DEFAULT 'periodic'")
+                print("迁移: live_market_results 添加 event_type 字段")
+
+            if 'indicators' not in results_columns:
+                cursor.execute("ALTER TABLE live_market_results ADD COLUMN indicators TEXT DEFAULT '{}'")
+                print("迁移: live_market_results 添加 indicators 字段")
+
+            conn.commit()
 
         except Exception as e:
             print(f"数据库迁移失败: {e}")
@@ -880,6 +1024,30 @@ class LiveTradingDB:
         finally:
             conn.close()
 
+    def get_recoverable_sessions(self) -> List[Dict]:
+        """获取可恢复的 session 列表
+
+        条件：
+        - 数据库 status = 'running'
+        - 有关联的 case 配置
+
+        返回:
+            可恢复的 session 列表，包含 case_name 和 symbol
+        """
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute("""
+                SELECT s.*, c.symbol, c.name as case_name, c.testnet, c.capital
+                FROM live_sessions s
+                JOIN live_cases c ON s.case_id = c.id
+                WHERE s.status = 'running'
+                ORDER BY s.start_time DESC
+            """)
+            return [dict(row) for row in cursor.fetchall()]
+        finally:
+            conn.close()
+
     def update_session(self, session_id: int, updates: Dict) -> bool:
         """更新会话"""
         conn = self._get_connection()
@@ -953,6 +1121,7 @@ class LiveTradingDB:
         cursor.execute("DELETE FROM live_trades WHERE session_id = ?", (session_id,))
         cursor.execute("DELETE FROM live_orders WHERE session_id = ?", (session_id,))
         cursor.execute("DELETE FROM live_notifications WHERE session_id = ?", (session_id,))
+        cursor.execute("DELETE FROM live_session_metrics WHERE session_id = ?", (session_id,))
 
     def get_session_data_stats(self, session_id: int) -> Dict[str, int]:
         """获取会话关联数据统计"""
@@ -1058,11 +1227,11 @@ class LiveTradingDB:
                     entry_price, quantity, stake_amount,
                     take_profit_price, stop_loss_price,
                     tp_order_id, sl_order_id,
-                    created_at, filled_at, closed_at,
+                    created_at, first_created_at, filled_at, closed_at,
                     close_reason, close_price, profit,
                     entry_capital, entry_total_capital,
                     tp_supplemented, sl_supplemented
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 session_id,
                 order.order_id or 0,
@@ -1077,6 +1246,7 @@ class LiveTradingDB:
                 order.tp_order_id or 0,
                 order.sl_order_id or 0,
                 order.created_at or datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                order.first_created_at or order.created_at or datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
                 order.filled_at or "",
                 order.closed_at or "",
                 order.close_reason or "",
@@ -1104,6 +1274,8 @@ class LiveTradingDB:
                     state = ?,
                     tp_order_id = ?,
                     sl_order_id = ?,
+                    created_at = ?,
+                    first_created_at = ?,
                     filled_at = ?,
                     closed_at = ?,
                     close_reason = ?,
@@ -1119,6 +1291,8 @@ class LiveTradingDB:
                 order.state,
                 order.tp_order_id or 0,
                 order.sl_order_id or 0,
+                order.created_at or "",
+                order.first_created_at or order.created_at or "",
                 order.filled_at or "",
                 order.closed_at or "",
                 order.close_reason or "",
@@ -1132,6 +1306,53 @@ class LiveTradingDB:
             ))
             conn.commit()
             return cursor.rowcount > 0
+        finally:
+            conn.close()
+
+    def delete_order(self, session_id: int, order_id: int) -> bool:
+        """删除订单记录
+
+        参数:
+            session_id: 会话 ID
+            order_id: 订单 ID（Binance 返回的 orderId）
+
+        返回:
+            是否删除成功
+        """
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute("""
+                DELETE FROM live_orders
+                WHERE session_id = ? AND order_id = ?
+            """, (session_id, order_id))
+            conn.commit()
+            return cursor.rowcount > 0
+        finally:
+            conn.close()
+
+    def delete_orders_by_ids(self, session_id: int, order_ids: List[int]) -> int:
+        """批量删除订单记录
+
+        参数:
+            session_id: 会话 ID
+            order_ids: 订单 ID 列表
+
+        返回:
+            删除的记录数
+        """
+        if not order_ids:
+            return 0
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        try:
+            placeholders = ','.join('?' * len(order_ids))
+            cursor.execute(f"""
+                DELETE FROM live_orders
+                WHERE session_id = ? AND order_id IN ({placeholders})
+            """, [session_id] + order_ids)
+            conn.commit()
+            return cursor.rowcount
         finally:
             conn.close()
 
@@ -1395,8 +1616,9 @@ class LiveTradingDB:
             cursor.execute("""
                 INSERT INTO live_market_results
                 (case_id, check_time, market_status, confidence, reason,
-                 open_price, close_price, high_price, low_price, volume, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 open_price, close_price, high_price, low_price, volume,
+                 event_type, indicators, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 case_id,
                 result.get('check_time', now),
@@ -1408,6 +1630,8 @@ class LiveTradingDB:
                 result.get('high_price', 0),
                 result.get('low_price', 0),
                 result.get('volume', 0),
+                result.get('event_type', 'periodic'),
+                json.dumps(result.get('indicators', {}), default=json_default),
                 now
             ))
             conn.commit()
@@ -1457,6 +1681,81 @@ class LiveTradingDB:
                 stats['total_checks'] += count
 
             return stats
+        finally:
+            conn.close()
+
+    # ==================== Dual Thrust 轨道 CRUD ====================
+
+    def save_dual_thrust_bands(self, session_id: int, bands: Dict) -> int:
+        """保存 Dual Thrust 轨道历史
+
+        参数:
+            session_id: 会话 ID
+            bands: 轨道数据 {
+                calc_time, kline_date, upper_band, lower_band,
+                range_value, today_open, hh, ll, hc, lc
+            }
+
+        返回:
+            记录 ID
+        """
+        conn = self._get_connection()
+        cursor = conn.cursor()
+
+        try:
+            now = datetime.now().isoformat()
+            cursor.execute("""
+                INSERT INTO live_market_dual_thrust
+                (session_id, calc_time, kline_date, upper_band, lower_band,
+                 range_value, today_open, hh, ll, hc, lc, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                session_id,
+                bands.get('calc_time', now),
+                bands.get('kline_date', ''),
+                bands.get('upper_band', 0),
+                bands.get('lower_band', 0),
+                bands.get('range_value', 0),
+                bands.get('today_open', 0),
+                bands.get('hh', 0),
+                bands.get('ll', 0),
+                bands.get('hc', 0),
+                bands.get('lc', 0),
+                now
+            ))
+            conn.commit()
+            return cursor.lastrowid
+        finally:
+            conn.close()
+
+    def get_dual_thrust_bands(self, session_id: int, limit: int = 100) -> List[Dict]:
+        """获取 Dual Thrust 轨道历史"""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+
+        try:
+            cursor.execute("""
+                SELECT * FROM live_market_dual_thrust
+                WHERE session_id = ?
+                ORDER BY calc_time DESC LIMIT ?
+            """, (session_id, limit))
+            return [dict(row) for row in cursor.fetchall()]
+        finally:
+            conn.close()
+
+    def get_latest_dual_thrust_bands(self, session_id: int) -> Optional[Dict]:
+        """获取最新的 Dual Thrust 轨道"""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+
+        try:
+            cursor.execute("""
+                SELECT * FROM live_market_dual_thrust
+                WHERE session_id = ?
+                ORDER BY calc_time DESC LIMIT 1
+            """, (session_id,))
+            row = cursor.fetchone()
+            return dict(row) if row else None
         finally:
             conn.close()
 
@@ -1548,13 +1847,37 @@ class LiveTradingDB:
                 return float(obj)
             raise TypeError(f"Object of type {type(obj).__name__} is not JSON serializable")
 
+        # 从 live_cases 复制配置字段（配置快照）
+        amplitude = "{}"
+        market = "{}"
+        entry = "{}"
+        timeout = "{}"
+        capital_json = "{}"
+
+        if case_id and case_id > 0:
+            case = self.get_case(case_id)
+            if case:
+                amplitude = case.get('amplitude', '{}')
+                market = case.get('market', '{}')
+                entry = case.get('entry', '{}')
+                timeout = case.get('timeout', '{}')
+                capital_json = case.get('capital', '{}')
+
+        # 如果 config 参数有更多信息，也合并进去
+        if config:
+            capital_json = json.dumps(config, default=json_default)
+
         session = LiveSession(
-            case_id=case_id if case_id else 0,  # case_id=0 表示无关联配置（需要确保外键约束已处理）
+            case_id=case_id if case_id else 0,
             symbol=symbol,
             start_time=datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
             status="running",
             initial_capital=initial_capital,
-            capital=json.dumps(config, default=json_default)
+            amplitude=amplitude,
+            market=market,
+            entry=entry,
+            timeout=timeout,
+            capital=capital_json
         )
         return self.create_session(session)
 
@@ -1758,6 +2081,175 @@ class LiveTradingDB:
             rows = cursor.fetchall()
             columns = ['id', 'session_id', 'msg_num', 'msg_type', 'title', 'content', 'payload', 'send_status', 'send_error', 'sent_at']
             return [dict(zip(columns, row)) for row in rows]
+        finally:
+            conn.close()
+
+    # ==================== 会话统计指标 CRUD ====================
+
+    def get_session_metrics(self, session_id: int) -> Optional[Dict]:
+        """获取会话统计指标
+
+        Args:
+            session_id: 会话 ID
+
+        Returns:
+            统计指标字典，如果不存在返回 None
+        """
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute("""
+                SELECT * FROM live_session_metrics WHERE session_id = ?
+            """, (session_id,))
+            row = cursor.fetchone()
+            return dict(row) if row else None
+        finally:
+            conn.close()
+
+    def save_session_metrics(self, session_id: int, metrics: Dict) -> bool:
+        """保存会话统计指标（插入或更新）
+
+        Args:
+            session_id: 会话 ID
+            metrics: 统计指标字典
+
+        Returns:
+            是否保存成功
+        """
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute("""
+                INSERT OR REPLACE INTO live_session_metrics (
+                    session_id,
+                    avg_execution_time, min_execution_time, max_execution_time,
+                    total_execution_time, execution_count,
+                    avg_single_execution_time, min_single_execution_time, max_single_execution_time,
+                    total_single_execution_time, single_execution_count,
+                    avg_holding_time, min_holding_time, max_holding_time,
+                    total_holding_time, holding_count,
+                    max_profit_trade, max_loss_trade, profit_factor,
+                    order_group_count, max_level_reached,
+                    tp_trigger_count, sl_trigger_count,
+                    timeout_refresh_count, supplement_count,
+                    orders_with_timeout, avg_timeout_count, max_timeout_count,
+                    total_runtime_minutes, paused_time_minutes,
+                    updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                session_id,
+                metrics.get('avg_execution_time', 0),
+                metrics.get('min_execution_time', 0),
+                metrics.get('max_execution_time', 0),
+                metrics.get('total_execution_time', 0),
+                metrics.get('execution_count', 0),
+                metrics.get('avg_single_execution_time', 0),
+                metrics.get('min_single_execution_time', 0),
+                metrics.get('max_single_execution_time', 0),
+                metrics.get('total_single_execution_time', 0),
+                metrics.get('single_execution_count', 0),
+                metrics.get('avg_holding_time', 0),
+                metrics.get('min_holding_time', 0),
+                metrics.get('max_holding_time', 0),
+                metrics.get('total_holding_time', 0),
+                metrics.get('holding_count', 0),
+                metrics.get('max_profit_trade', 0),
+                metrics.get('max_loss_trade', 0),
+                metrics.get('profit_factor', 0),
+                metrics.get('order_group_count', 0),
+                metrics.get('max_level_reached', 0),
+                metrics.get('tp_trigger_count', 0),
+                metrics.get('sl_trigger_count', 0),
+                metrics.get('timeout_refresh_count', 0),
+                metrics.get('supplement_count', 0),
+                metrics.get('orders_with_timeout', 0),
+                metrics.get('avg_timeout_count', 0),
+                metrics.get('max_timeout_count', 0),
+                metrics.get('total_runtime_minutes', 0),
+                metrics.get('paused_time_minutes', 0),
+                datetime.now().isoformat()
+            ))
+            conn.commit()
+            return True
+        except Exception as e:
+            print(f"保存会话统计指标失败: {e}")
+            return False
+        finally:
+            conn.close()
+
+    def update_session_metrics(self, session_id: int, updates: Dict) -> bool:
+        """更新会话统计指标（部分更新）
+
+        Args:
+            session_id: 会话 ID
+            updates: 要更新的指标字典
+
+        Returns:
+            是否更新成功
+        """
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        try:
+            # 检查是否存在记录
+            cursor.execute("SELECT id FROM live_session_metrics WHERE session_id = ?", (session_id,))
+            if not cursor.fetchone():
+                # 不存在，先创建空记录
+                self.save_session_metrics(session_id, {})
+
+            allowed_fields = [
+                'avg_execution_time', 'min_execution_time', 'max_execution_time',
+                'total_execution_time', 'execution_count',
+                'avg_single_execution_time', 'min_single_execution_time', 'max_single_execution_time',
+                'total_single_execution_time', 'single_execution_count',
+                'avg_holding_time', 'min_holding_time', 'max_holding_time',
+                'total_holding_time', 'holding_count',
+                'max_profit_trade', 'max_loss_trade', 'profit_factor',
+                'order_group_count', 'max_level_reached',
+                'tp_trigger_count', 'sl_trigger_count',
+                'timeout_refresh_count', 'supplement_count',
+                'orders_with_timeout', 'avg_timeout_count', 'max_timeout_count',
+                'total_runtime_minutes', 'paused_time_minutes'
+            ]
+
+            set_clauses = []
+            params = []
+            for field in allowed_fields:
+                if field in updates:
+                    set_clauses.append(f"{field} = ?")
+                    params.append(updates[field])
+
+            if not set_clauses:
+                return True
+
+            set_clauses.append("updated_at = ?")
+            params.append(datetime.now().isoformat())
+            params.append(session_id)
+
+            sql = f"UPDATE live_session_metrics SET {', '.join(set_clauses)} WHERE session_id = ?"
+            cursor.execute(sql, params)
+            conn.commit()
+            return cursor.rowcount > 0
+        except Exception as e:
+            print(f"更新会话统计指标失败: {e}")
+            return False
+        finally:
+            conn.close()
+
+    def delete_session_metrics(self, session_id: int) -> bool:
+        """删除会话统计指标
+
+        Args:
+            session_id: 会话 ID
+
+        Returns:
+            是否删除成功
+        """
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute("DELETE FROM live_session_metrics WHERE session_id = ?", (session_id,))
+            conn.commit()
+            return cursor.rowcount > 0
         finally:
             conn.close()
 

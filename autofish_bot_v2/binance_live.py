@@ -411,7 +411,8 @@ def send_wechat_notification(title: str, content: str, session_id: int, db, msg_
 
     try:
         logger.info(f"[通知] 发送请求到微信 webhook...")
-        response = requests.post(wechat_webhook, json=payload, timeout=30)
+        # 微信 webhook 不需要代理，直接连接
+        response = requests.post(wechat_webhook, json=payload, timeout=30, proxies={'http': None, 'https': None})
         logger.info(f"[通知] 微信响应: status_code={response.status_code}")
         if response.status_code == 200:
             result = response.json()
@@ -967,7 +968,8 @@ class BinanceClient:
     
     async def place_algo_order(self, symbol: str, side: str, order_type: str,
                                quantity: Decimal, trigger_price: Decimal,
-                               reduce_only: bool = True) -> Dict[str, Any]:
+                               reduce_only: bool = True,
+                               position_side: str = None) -> Dict[str, Any]:
         params = {
             "symbol": symbol,
             "side": side,
@@ -976,7 +978,11 @@ class BinanceClient:
             "quantity": str(quantity),
             "triggerPrice": str(trigger_price),
         }
-        
+
+        # 双向持仓模式下需要指定 positionSide
+        if position_side:
+            params["positionSide"] = position_side
+
         return await self._request("POST", "/fapi/v1/algoOrder", params, signed=True)
     
     async def cancel_order(self, symbol: str, order_id: int) -> Dict[str, Any]:
@@ -1299,6 +1305,17 @@ class AlgoHandler:
                     'final_capital': float(self.trader.capital_pool.trading_capital)
                 })
 
+            # === 记录统计指标 ===
+            # 计算持仓时长
+            if order.filled_at and order.closed_at:
+                filled_time = datetime.strptime(order.filled_at, '%Y-%m-%d %H:%M:%S')
+                closed_time = datetime.strptime(order.closed_at, '%Y-%m-%d %H:%M:%S')
+                holding_seconds = int((closed_time - filled_time).total_seconds())
+                self.trader._record_holding_time(holding_seconds)
+
+            self.trader._record_profit(float(profit), 'take_profit')
+            self.trader._save_metrics()
+
             if order.sl_order_id:
                 try:
                     symbol = self.trader.config.get("symbol", "BTCUSDT")
@@ -1382,6 +1399,17 @@ class AlgoHandler:
                     'total_loss': float(self.trader.results['total_loss']),
                     'final_capital': float(self.trader.capital_pool.trading_capital)
                 })
+
+            # === 记录统计指标 ===
+            # 计算持仓时长
+            if order.filled_at and order.closed_at:
+                filled_time = datetime.strptime(order.filled_at, '%Y-%m-%d %H:%M:%S')
+                closed_time = datetime.strptime(order.closed_at, '%Y-%m-%d %H:%M:%S')
+                holding_seconds = int((closed_time - filled_time).total_seconds())
+                self.trader._record_holding_time(holding_seconds)
+
+            self.trader._record_profit(float(profit), 'stop_loss')
+            self.trader._save_metrics()
 
             if order.tp_order_id:
                 try:
@@ -1689,7 +1717,7 @@ class BinanceLiveTrader:
         >>> await trader.run()
     """
 
-    def __init__(self, symbol: str, amplitude: Dict, market: Dict, entry: Dict, timeout: Dict, capital: Dict, testnet: bool = True):
+    def __init__(self, symbol: str, amplitude: Dict, market: Dict, entry: Dict, timeout: Dict, capital: Dict, testnet: bool = True, recover_session_id: int = None):
         """初始化实盘交易器
 
         Args:
@@ -1700,6 +1728,7 @@ class BinanceLiveTrader:
             timeout: 超时参数（a1_timeout_minutes）
             capital: 资金池配置（total_amount_quote, strategy, entry_mode, 及策略特定参数）
             testnet: 是否使用测试网
+            recover_session_id: 恢复模式时使用的现有 session_id
 
         注意：参数由调用方保证完整性，内部不做默认值处理
         """
@@ -1817,8 +1846,28 @@ class BinanceLiveTrader:
         # === 数据库存储 ===
         self.db = LiveTradingDB()
         self.session_id: Optional[int] = None
+        self.recover_session_id: Optional[int] = recover_session_id  # 恢复模式
         self.state_repository: Optional[DbStateRepository] = None
         self.market_case_id: Optional[int] = None
+        self._current_bands: Optional[Dict] = None  # 当前轨道数据缓存
+
+        # === 统计指标 ===
+        self._metrics = {
+            'execution_times': [],           # 累计执行时间列表（分钟）- 从首次挂单到成交
+            'single_execution_times': [],    # 单次执行时间列表（分钟）- 最近一次挂单到成交
+            'holding_times': [],             # 持仓时间列表（分钟）
+            'profits': [],                   # 盈亏列表
+            'order_timeout_counts': [],      # 每个成交订单的超时重挂次数
+            'tp_trigger_count': 0,           # 止盈触发次数
+            'sl_trigger_count': 0,           # 止损触发次数
+            'timeout_refresh_count': 0,      # A1 超时重挂次数
+            'supplement_count': 0,           # 止盈止损单补充次数
+            'start_time': None,              # 运行开始时间
+            'pause_start_time': None,        # 暂停开始时间
+            'total_paused_minutes': 0,       # 总暂停时长
+            'max_level_reached': 0,          # 最大层级达到
+            'order_group_count': 0,          # 订单组数（轮次）
+        }
     
     async def _init_precision(self) -> None:
         symbol = self.config.get("symbol", "BTCUSDT")
@@ -1884,8 +1933,14 @@ class BinanceLiveTrader:
                     text = await response.text()
                     logger.warning(f"[K线获取] 失败: {response.status} - {text}")
                     return []
+        except asyncio.TimeoutError:
+            logger.warning(f"[K线获取] 超时: 请求 {symbol} K线超时")
+            return []
+        except aiohttp.ClientError as e:
+            logger.warning(f"[K线获取] 网络错误: {type(e).__name__} - {e}")
+            return []
         except Exception as e:
-            logger.warning(f"[K线获取] 异常: {e}")
+            logger.warning(f"[K线获取] 异常: {type(e).__name__} - {e}")
             return []
     
     async def _init_market_detector(self) -> None:
@@ -2243,6 +2298,174 @@ class BinanceLiveTrader:
                 self.state_repository.save(state)
             except Exception as e:
                 logger.error(f"[状态保存] 保存失败: {e}")
+
+    # ==================== 统计指标记录方法 ====================
+
+    def _record_execution_time(self, order: Any) -> None:
+        """记录订单执行时间（挂单到成交）
+
+        同时记录：
+        - 累计执行时间：从首次挂单到成交（first_created_at → filled_at）
+        - 单次执行时间：从最近挂单到成交（created_at → filled_at）
+        - 超时重挂次数：订单经历过多少次超时重挂
+
+        Args:
+            order: 订单对象（需有 created_at、first_created_at、filled_at、timeout_count）
+        """
+        if not order.filled_at:
+            return
+
+        try:
+            filled = datetime.strptime(order.filled_at, '%Y-%m-%d %H:%M:%S')
+
+            # 1. 累计执行时间（从首次挂单开始）
+            first_created = order.first_created_at or order.created_at
+            if first_created:
+                first_created_dt = datetime.strptime(first_created, '%Y-%m-%d %H:%M:%S')
+                cumulative_time = (filled - first_created_dt).total_seconds() / 60
+                self._metrics['execution_times'].append(cumulative_time)
+
+            # 2. 单次执行时间（从最近挂单开始）
+            if order.created_at:
+                created_dt = datetime.strptime(order.created_at, '%Y-%m-%d %H:%M:%S')
+                single_time = (filled - created_dt).total_seconds() / 60
+                self._metrics['single_execution_times'].append(single_time)
+
+            # 3. 记录超时重挂次数
+            timeout_count = getattr(order, 'timeout_count', 0) or 0
+            self._metrics['order_timeout_counts'].append(timeout_count)
+
+            # 日志记录
+            timeout_str = f", 超时{timeout_count}次" if timeout_count > 0 else ""
+            if first_created and order.created_at and first_created != order.created_at:
+                logger.debug(f"[指标记录] 累计执行: {cumulative_time:.2f}分钟, 单次执行: {single_time:.2f}分钟{timeout_str}")
+            else:
+                single = self._metrics['single_execution_times'][-1] if self._metrics['single_execution_times'] else 0
+                logger.debug(f"[指标记录] 执行时间: {single:.2f}分钟{timeout_str}")
+
+        except Exception as e:
+            logger.warning(f"[指标记录] 执行时间计算失败: {e}")
+
+    def _record_holding_time(self, holding_seconds: int) -> None:
+        """记录持仓时间
+
+        Args:
+            holding_seconds: 持仓时长（秒）
+        """
+        holding_time = holding_seconds / 60  # 分钟
+        self._metrics['holding_times'].append(holding_time)
+        logger.debug(f"[指标记录] 持仓时间: {holding_time:.2f} 分钟")
+
+    def _record_profit(self, profit: float, reason: str) -> None:
+        """记录盈亏和触发类型
+
+        Args:
+            profit: 盈亏金额
+            reason: 平仓原因（take_profit, stop_loss 等）
+        """
+        self._metrics['profits'].append(profit)
+
+        # 更新触发计数
+        if reason == 'take_profit':
+            self._metrics['tp_trigger_count'] += 1
+        elif reason == 'stop_loss':
+            self._metrics['sl_trigger_count'] += 1
+
+        logger.debug(f"[指标记录] 盈亏: {profit:.4f}, 原因: {reason}")
+
+    def _record_timeout_refresh(self) -> None:
+        """记录 A1 超时重挂"""
+        self._metrics['timeout_refresh_count'] += 1
+
+    def _record_supplement(self) -> None:
+        """记录止盈止损单补充"""
+        self._metrics['supplement_count'] += 1
+
+    def _record_level_reached(self, level: int) -> None:
+        """记录达到的最大层级"""
+        if level > self._metrics['max_level_reached']:
+            self._metrics['max_level_reached'] = level
+
+    def _get_metrics_summary(self) -> Dict:
+        """获取统计指标摘要
+
+        Returns:
+            统计指标字典，用于保存到数据库
+        """
+        exec_times = self._metrics['execution_times']          # 累计执行时间
+        single_exec_times = self._metrics['single_execution_times']  # 单次执行时间
+        hold_times = self._metrics['holding_times']
+        profits = self._metrics['profits']
+        timeout_counts = self._metrics['order_timeout_counts']  # 订单超时次数
+
+        # 计算盈亏比
+        total_profit = sum(p for p in profits if p > 0)
+        total_loss = sum(p for p in profits if p < 0)
+        profit_factor = 0
+        if total_loss != 0 and total_profit != 0:
+            profit_factor = abs(total_profit / total_loss)
+
+        # 计算运行时长
+        total_runtime_minutes = 0
+        if self._metrics['start_time']:
+            total_runtime_minutes = (datetime.now() - self._metrics['start_time']).total_seconds() / 60
+
+        # 计算超时次数统计
+        orders_with_timeout = sum(1 for c in timeout_counts if c > 0)  # 有超时的订单数
+        avg_timeout_count = sum(timeout_counts) / len(timeout_counts) if timeout_counts else 0
+        max_timeout_count = max(timeout_counts) if timeout_counts else 0
+
+        return {
+            # 累计执行时间统计（从首次挂单到成交）
+            'avg_execution_time': sum(exec_times) / len(exec_times) if exec_times else 0,
+            'min_execution_time': min(exec_times) if exec_times else 0,
+            'max_execution_time': max(exec_times) if exec_times else 0,
+            'total_execution_time': sum(exec_times),
+            'execution_count': len(exec_times),
+
+            # 单次执行时间统计（从最近挂单到成交）
+            'avg_single_execution_time': sum(single_exec_times) / len(single_exec_times) if single_exec_times else 0,
+            'min_single_execution_time': min(single_exec_times) if single_exec_times else 0,
+            'max_single_execution_time': max(single_exec_times) if single_exec_times else 0,
+            'total_single_execution_time': sum(single_exec_times),
+            'single_execution_count': len(single_exec_times),
+
+            # 持仓时间统计
+            'avg_holding_time': sum(hold_times) / len(hold_times) if hold_times else 0,
+            'min_holding_time': min(hold_times) if hold_times else 0,
+            'max_holding_time': max(hold_times) if hold_times else 0,
+            'total_holding_time': sum(hold_times),
+            'holding_count': len(hold_times),
+
+            # 盈亏分布统计
+            'max_profit_trade': max(profits) if profits else 0,
+            'max_loss_trade': min(profits) if profits else 0,
+            'profit_factor': profit_factor,
+
+            # 订单层级统计
+            'order_group_count': self.chain_state.group_id if self.chain_state else 0,
+            'max_level_reached': self._metrics['max_level_reached'],
+            'tp_trigger_count': self._metrics['tp_trigger_count'],
+            'sl_trigger_count': self._metrics['sl_trigger_count'],
+
+            # 超时统计
+            'timeout_refresh_count': self._metrics['timeout_refresh_count'],
+            'supplement_count': self._metrics['supplement_count'],
+            'orders_with_timeout': orders_with_timeout,  # 有超时的订单数
+            'avg_timeout_count': avg_timeout_count,       # 平均超时次数
+            'max_timeout_count': max_timeout_count,       # 最大超时次数
+
+            # 时间统计
+            'total_runtime_minutes': total_runtime_minutes,
+            'paused_time_minutes': self._metrics['total_paused_minutes'],
+        }
+
+    def _save_metrics(self) -> None:
+        """保存统计指标到数据库"""
+        if self.session_id:
+            metrics = self._get_metrics_summary()
+            self.db.save_session_metrics(self.session_id, metrics)
+            logger.debug(f"[指标保存] 已保存统计指标到数据库: session_id={self.session_id}")
     
     def _load_state(self) -> Optional[Dict[str, Any]]:
         return self.state_repository.load()
@@ -2486,7 +2709,20 @@ class BinanceLiveTrader:
             order.order_id = result["orderId"]
             order.quantity = quantity
             order.stake_amount = quantity * price
-            
+
+            # === 设置创建时间 ===
+            now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            order.created_at = now_str
+
+            # === 设置首次创建时间（累计执行时间） ===
+            if is_timeout_refresh and old_order and old_order.first_created_at:
+                # 超时重挂：保留首次创建时间
+                order.first_created_at = old_order.first_created_at
+                logger.debug(f"[超时重挂] 保留首次创建时间: {order.first_created_at}")
+            else:
+                # 新订单：首次创建时间 = 当前时间
+                order.first_created_at = now_str
+
             weight_pct = self.calculator.get_weight_percentage(order.level)
             
             if not is_supplement and not is_timeout_refresh:
@@ -2579,7 +2815,8 @@ class BinanceLiveTrader:
                 side="SELL",
                 order_type="TAKE_PROFIT_MARKET",
                 quantity=float(quantity),
-                trigger_price=float(tp_trigger_price)
+                trigger_price=float(tp_trigger_price),
+                position_side="LONG"
             )
             if "algoId" in tp_result:
                 order.tp_order_id = tp_result["algoId"]
@@ -2598,7 +2835,8 @@ class BinanceLiveTrader:
                 side="SELL",
                 order_type="STOP_MARKET",
                 quantity=float(quantity),
-                trigger_price=float(sl_trigger_price)
+                trigger_price=float(sl_trigger_price),
+                position_side="LONG"
             )
             if "algoId" in sl_result:
                 order.sl_order_id = sl_result["algoId"]
@@ -2609,7 +2847,10 @@ class BinanceLiveTrader:
     async def _cancel_all_orders(self) -> List[Any]:
         cancelled_orders = []
         symbol = self.config.get("symbol", "BTCUSDT")
-        
+
+        if not self.chain_state:
+            return cancelled_orders
+
         for order in self.chain_state.orders:
             if order.state == "pending" and order.order_id:
                 try:
@@ -3140,33 +3381,39 @@ class BinanceLiveTrader:
             side="SELL",
             order_type="TAKE_PROFIT_MARKET",
             quantity=float(quantity),
-            trigger_price=float(trigger_price)
+            trigger_price=float(trigger_price),
+            position_side="LONG"
         )
         if "algoId" in tp_result:
             order.tp_order_id = tp_result["algoId"]
             order.tp_supplemented = True
             logger.info(f"[止盈下单] 成功: algoId={order.tp_order_id}")
             print(f"[{datetime.now().strftime('%H:%M:%S')}] 🎯 止盈条件单已下（补）: 触发价={trigger_price:.{self.price_precision}f}, ID={order.tp_order_id}")
+            # 记录补单
+            self._record_supplement()
             self._save_state()
     
     async def _place_sl_order(self, order: Any) -> None:
         symbol = self.config.get("symbol", "BTCUSDT")
-        
+
         quantity = self._adjust_quantity(order.quantity, order.stop_loss_price)
         trigger_price = self._adjust_price(order.stop_loss_price)
-        
+
         sl_result = await self.client.place_algo_order(
             symbol=symbol,
             side="SELL",
             order_type="STOP_MARKET",
             quantity=float(quantity),
-            trigger_price=float(trigger_price)
+            trigger_price=float(trigger_price),
+            position_side="LONG"
         )
         if "algoId" in sl_result:
             order.sl_order_id = sl_result["algoId"]
             order.sl_supplemented = True
             logger.info(f"[止损下单] 成功: algoId={order.sl_order_id}")
             print(f"[{datetime.now().strftime('%H:%M:%S')}] 🛑 止损条件单已下（补）: 触发价={trigger_price:.{self.price_precision}f}, ID={order.sl_order_id}")
+            # 记录补单
+            self._record_supplement()
             self._save_state()
     
     async def _market_close_order(self, order: Any, reason: str) -> None:
@@ -3324,23 +3571,42 @@ class BinanceLiveTrader:
                 pass
         
         self.chain_state.orders.remove(timeout_first_entry)
-        
+
+        # 删除数据库中的订单记录
+        if self.session_id:
+            order_ids_to_delete = []
+            if timeout_first_entry.order_id:
+                order_ids_to_delete.append(timeout_first_entry.order_id)
+            # 注意：止盈止损单的 algoId 不存储在 live_orders 表中
+            # 它们存储在 order 记录的 tp_order_id/sl_order_id 字段中
+            if order_ids_to_delete:
+                self.db.delete_orders_by_ids(self.session_id, order_ids_to_delete)
+                logger.info(f"[超时清理] 已删除数据库订单记录: order_ids={order_ids_to_delete}")
+
         klines = await self._get_recent_klines()
         new_first_entry = await self._create_order(1, current_price, klines)
+
+        # === 传递超时次数（累加） ===
+        new_first_entry.timeout_count = timeout_first_entry.timeout_count + 1
+        new_first_entry.first_created_at = timeout_first_entry.first_created_at
+
         self.chain_state.orders.append(new_first_entry)
         self.chain_state.base_price = current_price
-        
-        logger.info(f"[新 A1] 入场价={new_first_entry.entry_price:.2f}")
+
+        logger.info(f"[新 A1] 入场价={new_first_entry.entry_price:.2f}, 超时次数={new_first_entry.timeout_count}")
         
         await self._place_entry_order(
-            new_first_entry, 
+            new_first_entry,
             is_supplement=False,
             is_timeout_refresh=True,
             old_order=timeout_first_entry,
             timeout_minutes=self.a1_timeout_minutes,
             current_price=current_price
         )
-        
+
+        # 记录超时重挂
+        self._record_timeout_refresh()
+
         self._save_state()
     
     async def run(self) -> None:
@@ -3402,20 +3668,42 @@ class BinanceLiveTrader:
                 return
             logger.info(f"[数据库] 自动创建配置: case_id={self.case_id}")
 
-        self.session_id = self.db.create_session_legacy(
-            symbol=self.config.get('symbol', 'BTCUSDT'),
-            initial_capital=float(self.initial_capital),
-            config=self.config,
-            case_id=self.case_id
-        )
-        if not self.session_id:
-            logger.error("[数据库] 创建会话失败")
-            return
-        logger.info(f"[数据库] 创建会话: session_id={self.session_id}, case_id={self.case_id}")
-        print(f"[启动] session_id={self.session_id}, case_id={self.case_id}")
+        # === 创建/恢复数据库会话 ===
+        if self.recover_session_id:
+            # 恢复模式：使用现有 session_id
+            self.session_id = self.recover_session_id
+            logger.info(f"[恢复模式] 绑定到现有 session_id={self.session_id}")
+            print(f"[恢复] session_id={self.session_id} (恢复模式)")
+        else:
+            # 正常模式：创建新会话
+            self.session_id = self.db.create_session_legacy(
+                symbol=self.config.get('symbol', 'BTCUSDT'),
+                initial_capital=float(self.initial_capital),
+                config=self.config,
+                case_id=self.case_id
+            )
+            if not self.session_id:
+                logger.error("[数据库] 创建会话失败")
+                return
+            logger.info(f"[数据库] 创建会话: session_id={self.session_id}, case_id={self.case_id}")
+            print(f"[启动] session_id={self.session_id}, case_id={self.case_id}")
 
         # === 初始化状态仓库 ===
         self.state_repository = DbStateRepository(self.db, self.session_id)
+
+        # === 创建 market_case（如果启用行情感知）===
+        if self.market_aware:
+            self.market_case_id = self.db.create_market_case(
+                session_id=self.session_id,
+                symbol=self.symbol,
+                algorithm=self.market_algorithm,
+                algorithm_config=self.market_algorithm_params,
+                check_interval=0  # 事件驱动模式，不再需要 check_interval
+            )
+            logger.info(f"[数据库] 创建 market_case: case_id={self.market_case_id}")
+
+        # === 初始化统计指标 ===
+        self._metrics['start_time'] = datetime.now()
 
         try:
             while self.running:
@@ -3440,19 +3728,30 @@ class BinanceLiveTrader:
                             self._startup_notified = True
                         except Exception as e:
                             logger.error(f"[通知] 启动通知发送失败: {e}")
-                        
+
+                        # 初始化行情轨道（从历史日线计算）
                         if self.market_aware and self.market_detector:
-                            market_result = await self._check_market_status(current_price)
-                            if market_result:
-                                self.current_market_status = market_result.status
-                                print(f"  初始行情: {market_result.status.value}, 原因: {market_result.reason}")
+                            try:
+                                await self._initialize_market_bands()
+                                print(f"  初始行情: {self.current_market_status.value}")
+                            except Exception as e:
+                                logger.error(f"[行情] 初始化轨道失败: {e}")
                     
                     if not await self._check_fund_sufficiency():
                         await self.client.close()
                         return
                     
                     listen_key = await self.client.create_listen_key()
-                    ws_url = f"{self.client.ws_url}/{listen_key}"
+
+                    # 构建组合流 URL（K线 + 用户数据）
+                    if self.market_aware:
+                        kline_interval = self.market_detector.algorithm.get_kline_interval() if self.market_detector else '1d'
+                        symbol_lower = self.symbol.lower()
+                        streams = f"{symbol_lower}@kline_{kline_interval}/{listen_key}"
+                        ws_url = f"{self.client.ws_url}/stream?streams={streams}"
+                        logger.info(f"[WebSocket] 订阅组合流: {streams}")
+                    else:
+                        ws_url = f"{self.client.ws_url}/{listen_key}"
                     
                     session = await self.client._get_session()
                     
@@ -3492,14 +3791,7 @@ class BinanceLiveTrader:
                                 except asyncio.TimeoutError:
                                     current_price = await self._get_current_price()
                                     await self._check_and_handle_first_entry_timeout(current_price)
-                                    
-                                    if self.market_aware and self.market_detector:
-                                        market_result = await self._check_market_status(current_price)
-                                        if market_result and market_result.status != self.current_market_status:
-                                            old_status = self.current_market_status
-                                            self.current_market_status = market_result.status
-                                            await self._handle_market_status_change(old_status, market_result.status, current_price)
-                                    
+
                                     continue
                         finally:
                             keepalive_task.cancel()
@@ -3614,12 +3906,17 @@ class BinanceLiveTrader:
     
     async def _handle_ws_message(self, data: Dict[str, Any]) -> None:
         """处理 WebSocket 消息
-        
+
+        支持组合流格式：
+        - K线事件: {"stream": "btcusdt@kline_1d", "data": {...}}
+        - 用户数据: {"stream": "<listenKey>", "data": {...}} 或原格式
+
         根据事件类型分发处理：
+        - kline: K线更新事件
         - ORDER_TRADE_UPDATE: 普通订单状态变化
         - ALGO_UPDATE: ALGO 条件单（止盈止损）状态变化
         - listenKeyExpired: listen key 过期
-        
+
         参数:
             data: WebSocket 消息数据
         """
@@ -3627,17 +3924,29 @@ class BinanceLiveTrader:
         if not isinstance(data, dict):
             logger.warning(f"[WebSocket] 收到非字典消息: {type(data)}, 内容: {data}")
             return
-        
+
+        # 检查是否是组合流格式
+        stream = data.get('stream', '')
+        if stream and 'data' in data:
+            # 组合流格式
+            if 'kline' in stream:
+                # K线事件
+                await self._handle_kline_event(data['data'])
+                return
+            else:
+                # 用户数据事件，提取实际数据
+                data = data['data']
+
         event_type = data.get("e")
-        
+
         # 打印收到的消息类型和内容（调试用）
         logger.debug(f"[WebSocket] 收到消息: event_type={event_type}, data={data}")
-        
+
         # 如果没有事件类型，可能是其他消息，忽略
         if not event_type:
             logger.debug(f"[WebSocket] 收到无事件类型消息: {data}")
             return
-        
+
         if event_type == "ORDER_TRADE_UPDATE":
             order_data = data.get("o", {})
             logger.info(f"[WebSocket] ORDER_TRADE_UPDATE: {order_data}")
@@ -3645,39 +3954,300 @@ class BinanceLiveTrader:
                 logger.warning(f"[WebSocket] ORDER_TRADE_UPDATE order_data 不是字典: {type(order_data)}, 内容: {order_data}")
                 return
             await self._handle_order_update(order_data)
-        
+
         elif event_type == "ALGO_UPDATE":
             logger.info(f"[WebSocket] ALGO_UPDATE: {data}")
             await self.algo_handler.handle_algo_update(data)
-        
+
+        elif event_type == "kline":
+            # K线事件（可能是直接推送或组合流格式）
+            await self._handle_kline_event(data)
+
         elif event_type == "listenKeyExpired":
             logger.warning("[WebSocket] listen key 过期")
             self.ws_connected = False
-        
+
         else:
             logger.info(f"[WebSocket] 未处理的事件类型: {event_type}, data={data}")
-    
+
+    async def _handle_kline_event(self, kline_data: Dict[str, Any]) -> None:
+        """处理 K线事件
+
+        Binance K线事件格式:
+        {
+            "e": "kline",
+            "k": {
+                "t": 1672531200000,  // K线开始时间
+                "T": 1672617599999,  // K线结束时间
+                "s": "BTCUSDT",      // 交易对
+                "i": "1d",           // 周期
+                "o": "16800.0",      // 开盘价
+                "c": "16950.0",      // 收盘价（实时更新）
+                "h": "17000.0",      // 最高价
+                "l": "16750.0",      // 最低价
+                "v": "1000.0",       // 成交量
+                "x": false           // 是否已收盘
+            }
+        }
+
+        参数:
+            kline_data: K线事件数据
+        """
+        if not self.market_aware:
+            return
+
+        kline = kline_data.get('k', {})
+        if not kline:
+            return
+
+        symbol = kline.get('s', '')
+        is_closed = kline.get('x', False)
+
+        # 检查 symbol 是否匹配
+        if symbol.upper() != self.symbol.upper():
+            return
+
+        try:
+            if is_closed:
+                # 日线收盘，重新计算轨道
+                await self._on_daily_kline_closed(kline)
+            else:
+                # 盘中更新，检查突破
+                await self._on_kline_update(kline)
+        except Exception as e:
+            logger.error(f"[K线事件] 处理失败: {e}")
+
+    async def _initialize_market_bands(self) -> None:
+        """初始化行情轨道（启动时从历史日线计算）"""
+        from binance_kline_fetcher import KlineFetcher
+        from datetime import timedelta
+
+        logger.info("[行情] 初始化轨道...")
+
+        # 1. 从缓存获取历史日线
+        fetcher = KlineFetcher()
+        n_days = self.market_algorithm_params.get('n_days', 4)
+
+        # 计算时间范围：过去 n_days + 1 天
+        end_time = int(datetime.now().timestamp() * 1000)
+        start_time = int((datetime.now() - timedelta(days=n_days + 2)).timestamp() * 1000)
+
+        klines = await fetcher.fetch_kline(
+            symbol=self.symbol,
+            interval='1d',
+            start_time=start_time,
+            end_time=end_time
+        )
+
+        if len(klines) < n_days + 1:
+            logger.warning(f"[行情] 日线数据不足: {len(klines)} < {n_days + 1}")
+            self.current_market_status = MarketStatus.RANGING
+            return
+
+        # 只取最近 n_days + 1 根 K线
+        klines = klines[-(n_days + 1):]
+
+        # 2. 计算 Dual Thrust 轨道
+        result = self.market_detector.algorithm.calculate(klines, {})
+
+        # 3. 缓存轨道数据
+        self._current_bands = {
+            'upper': result.indicators.get('upper_band'),
+            'lower': result.indicators.get('lower_band'),
+            'range': result.indicators.get('range'),
+            'today_open': result.indicators.get('today_open'),
+            'hh': result.indicators.get('hh'),
+            'll': result.indicators.get('ll'),
+            'hc': result.indicators.get('hc'),
+            'lc': result.indicators.get('lc'),
+        }
+
+        # 4. 设置当前状态
+        self.current_market_status = result.status
+
+        logger.info(f"[行情] 初始化完成: Upper={self._current_bands.get('upper', 0):.2f}, "
+                    f"Lower={self._current_bands.get('lower', 0):.2f}, 状态={result.status.value}")
+
+    async def _on_daily_kline_closed(self, kline: Dict) -> None:
+        """日线收盘时重新计算轨道
+
+        参数:
+            kline: 收盘的 K线数据
+        """
+        from binance_kline_fetcher import KlineFetcher
+        from datetime import timedelta
+
+        logger.info(f"[行情] 日线收盘，重新计算轨道")
+
+        # 1. 从缓存获取历史日线
+        fetcher = KlineFetcher()
+        n_days = self.market_algorithm_params.get('n_days', 4)
+
+        # 计算时间范围：过去 n_days + 1 天
+        end_time = int(datetime.now().timestamp() * 1000)
+        start_time = int((datetime.now() - timedelta(days=n_days + 2)).timestamp() * 1000)
+
+        klines = await fetcher.fetch_kline(
+            symbol=self.symbol,
+            interval='1d',
+            start_time=start_time,
+            end_time=end_time
+        )
+
+        if len(klines) < n_days + 1:
+            logger.warning(f"[行情] 日线数据不足: {len(klines)} < {n_days + 1}")
+            return
+
+        # 只取最近 n_days + 1 根 K线
+        klines = klines[-(n_days + 1):]
+
+        # 2. 计算 Dual Thrust 轨道
+        result = self.market_detector.algorithm.calculate(klines, {})
+
+        # 3. 缓存轨道数据
+        self._current_bands = {
+            'upper': result.indicators.get('upper_band'),
+            'lower': result.indicators.get('lower_band'),
+            'range': result.indicators.get('range'),
+            'today_open': result.indicators.get('today_open'),
+            'hh': result.indicators.get('hh'),
+            'll': result.indicators.get('ll'),
+            'hc': result.indicators.get('hc'),
+            'lc': result.indicators.get('lc'),
+        }
+
+        # 4. 更新当前状态
+        old_status = self.current_market_status
+        self.current_market_status = result.status
+
+        # 5. 保存到数据库
+        if self.session_id:
+            kline_date = datetime.fromtimestamp(kline.get('t', 0) / 1000).strftime('%Y-%m-%d')
+            self.db.save_dual_thrust_bands(
+                session_id=self.session_id,
+                bands={
+                    'calc_time': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                    'kline_date': kline_date,
+                    'upper_band': self._current_bands.get('upper', 0),
+                    'lower_band': self._current_bands.get('lower', 0),
+                    'range_value': self._current_bands.get('range', 0),
+                    'today_open': self._current_bands.get('today_open', 0),
+                    'hh': self._current_bands.get('hh', 0),
+                    'll': self._current_bands.get('ll', 0),
+                    'hc': self._current_bands.get('hc', 0),
+                    'lc': self._current_bands.get('lc', 0),
+                }
+            )
+
+            # 保存行情结果
+            if self.market_case_id:
+                self.db.save_market_result(
+                    case_id=self.market_case_id,
+                    result={
+                        'check_time': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                        'market_status': result.status.value,
+                        'confidence': result.confidence,
+                        'reason': result.reason,
+                        'event_type': 'daily_close',
+                        'indicators': result.indicators,
+                        'open_price': float(kline.get('o', 0)),
+                        'close_price': float(kline.get('c', 0)),
+                        'high_price': float(kline.get('h', 0)),
+                        'low_price': float(kline.get('l', 0)),
+                        'volume': float(kline.get('v', 0)),
+                    }
+                )
+
+        # 6. 状态变化时触发回调
+        if result.status != old_status:
+            current_price = Decimal(str(kline.get('c', 0)))
+            await self._handle_market_status_change(old_status, result.status, current_price)
+
+        logger.info(f"[行情] 新轨道: Upper={self._current_bands.get('upper', 0):.2f}, "
+                    f"Lower={self._current_bands.get('lower', 0):.2f}, 状态={result.status.value}")
+
+    async def _on_kline_update(self, kline: Dict) -> None:
+        """盘中 K线更新，检查突破
+
+        参数:
+            kline: K线数据
+        """
+        if not self._current_bands:
+            # 首次需要先计算轨道（可能在启动时还未收到收盘事件）
+            await self._on_daily_kline_closed(kline)
+            return
+
+        current_price = Decimal(str(kline.get('c', 0)))
+        upper = self._current_bands.get('upper')
+        lower = self._current_bands.get('lower')
+
+        if not upper or not lower:
+            return
+
+        # 判断突破
+        old_status = self.current_market_status
+
+        if current_price > Decimal(str(upper)):
+            new_status = MarketStatus.TRENDING_UP
+        elif current_price < Decimal(str(lower)):
+            new_status = MarketStatus.TRENDING_DOWN
+        else:
+            new_status = MarketStatus.RANGING
+
+        # 状态变化时触发回调
+        if new_status != old_status:
+            self.current_market_status = new_status
+            await self._handle_market_status_change(old_status, new_status, current_price)
+
+            # 保存到数据库
+            if self.market_case_id:
+                self.db.save_market_result(
+                    case_id=self.market_case_id,
+                    result={
+                        'check_time': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                        'market_status': new_status.value,
+                        'confidence': 1.0,
+                        'reason': f"价格突破轨道: {current_price:.2f} vs [{lower:.2f}, {upper:.2f}]",
+                        'event_type': 'breakthrough',
+                        'indicators': {
+                            'upper_band': upper,
+                            'lower_band': lower,
+                            'current_price': float(current_price),
+                        },
+                        'close_price': float(current_price),
+                    }
+                )
+
+            logger.info(f"[行情] 突破检测: 价格={current_price:.2f}, "
+                        f"轨道=[{lower:.2f}, {upper:.2f}], 新状态={new_status.value}")
+
     async def _handle_order_update(self, order_data: Dict[str, Any]) -> None:
         """处理订单状态更新
-        
+
         根据 Binance 订单状态执行相应处理：
         - FILLED: 订单成交，下止盈止损单，发通知，下下一级订单
         - CANCELED/EXPIRED: 订单取消，删除本地订单
-        
+
         参数:
             order_data: Binance 订单数据
         """
         order_id = order_data.get("orderId")
         order_status = order_data.get("orderStatus")
-        
-        logger.debug(f"[订单更新] orderId={order_id}, status={order_status}")
-        
+
+        # 前置检查：无效的订单数据
+        if not order_id:
+            logger.warning(f"[订单更新] 收到无效订单数据（无orderId）: {order_data}")
+            return
+
+        if not self.chain_state:
+            return
+
         order = None
         for o in self.chain_state.orders:
             if o.order_id == order_id:
                 order = o
                 break
-        
+
         if not order:
             logger.warning(f"[订单更新] 未找到本地订单: orderId={order_id}, status={order_status}, 当前订单列表: {[o.order_id for o in self.chain_state.orders]}")
             return
@@ -3732,6 +4302,10 @@ class BinanceLiveTrader:
         if self.session_id:
             self.db.update_order(self.session_id, order)
 
+        # === 记录统计指标 ===
+        self._record_execution_time(order)
+        self._record_level_reached(order.level)
+
         self._save_state()
     
     async def _handle_order_filled(self, order: Any, order_data: Dict[str, Any]) -> None:
@@ -3744,11 +4318,12 @@ class BinanceLiveTrader:
     
     async def _handle_order_cancelled(self, order: Any, order_data: Dict[str, Any]) -> None:
         logger.info(f"[订单取消] A{order.level}")
-        
+
         await self._cancel_algo_orders_for_order(order)
-        
-        self.chain_state.orders.remove(order)
-        
+
+        if self.chain_state and order in self.chain_state.orders:
+            self.chain_state.orders.remove(order)
+
         self._save_state()
     
     def _log_order_closed(self, order: Any, reason: str) -> None:
@@ -3806,32 +4381,35 @@ class BinanceLiveTrader:
     
     async def _place_next_level_order(self, order: Any) -> None:
         """下下一级入场单
-        
+
         当前订单成交后，创建下一级入场单。
-        
+
         参数:
             order: 当前已成交的订单
-        
+
         副作用:
             - 创建新订单并添加到 chain_state.orders
             - 下入场单
             - 保存状态
         """
+        if not self.chain_state:
+            return
+
         next_level = order.level + 1
         max_level = self.config.get("max_entries", 4)
-        
+
         if next_level > max_level:
             return
-        
+
         has_next = any(o.level == next_level for o in self.chain_state.orders)
         if has_next:
             return
-        
+
         current_price = await self._get_current_price()
         klines = await self._get_recent_klines()
         new_order = await self._create_order(next_level, current_price, klines)
         self.chain_state.orders.append(new_order)
-        
+
         await self._place_entry_order(new_order)
 
 async def main():
@@ -3993,6 +4571,52 @@ class LiveTraderManager:
         except Exception as e:
             logger.error(f"[TraderManager] 创建交易实例失败: {e}")
             return None
+
+    async def recover_trader(self, session_id: int) -> Optional[BinanceLiveTrader]:
+        """恢复指定 session 的交易实例
+
+        参数:
+            session_id: 要恢复的会话 ID
+
+        返回:
+            BinanceLiveTrader 实例，失败返回 None
+        """
+        from database.live_trading_db import LiveTradingDB
+
+        db = LiveTradingDB()
+
+        # 获取 session 信息
+        session = db.get_session(session_id)
+        if not session:
+            logger.error(f"[恢复] Session 不存在: {session_id}")
+            return None
+
+        if session['status'] != 'running':
+            logger.error(f"[恢复] Session 状态不是 running: {session['status']}")
+            return None
+
+        # 检查是否已在内存中运行
+        if self.get_trader(session_id) is not None:
+            logger.warning(f"[恢复] Session 已在运行: {session_id}")
+            return None
+
+        # 获取关联的 case_id
+        case_id = session.get('case_id')
+        if not case_id:
+            logger.error(f"[恢复] Session 无 case_id: {session_id}")
+            return None
+
+        # 从 case_id 创建 trader
+        trader = await self.create_trader_from_case(case_id)
+        if not trader:
+            logger.error(f"[恢复] 无法从 case_id={case_id} 创建 trader")
+            return None
+
+        # 设置恢复模式
+        trader.recover_session_id = session_id
+        logger.info(f"[恢复] 已创建恢复实例: session_id={session_id}, case_id={case_id}")
+
+        return trader
 
     async def start_trader(self, trader: BinanceLiveTrader) -> int:
         """启动交易实例（后台运行）
