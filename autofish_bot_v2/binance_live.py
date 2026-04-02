@@ -1336,7 +1336,7 @@ class AlgoHandler:
 
             await self._cancel_next_level_and_restart(order)
 
-            self._adjust_order_levels()
+            # self._adjust_order_levels()  # 注释：移除层级调整，保持原始层级
 
             self.trader._save_state()
     
@@ -1437,7 +1437,7 @@ class AlgoHandler:
 
             await self._cancel_next_level(order)
 
-            self._adjust_order_levels()
+            # self._adjust_order_levels()  # 注释：移除层级调整，保持原始层级
 
             self.trader._save_state()
     
@@ -2283,7 +2283,11 @@ class BinanceLiveTrader:
     def _save_state(self) -> None:
         if self.chain_state:
             try:
-                state = self.chain_state.to_dict()
+                # 不再保存 orders 到快照，orders 由 live_orders 表管理
+                state = {
+                    'base_price': str(self.chain_state.base_price),
+                    'group_id': self.chain_state.group_id,
+                }
 
                 # === 添加资金池状态 ===
                 state['capital_pool'] = {
@@ -2303,9 +2307,6 @@ class BinanceLiveTrader:
                     'total_profit': float(self.results['total_profit']),
                     'total_loss': float(self.results['total_loss']),
                 }
-
-                # === 添加 group_id ===
-                state['group_id'] = self.chain_state.group_id
 
                 self.state_repository.save(state)
             except Exception as e:
@@ -3125,11 +3126,9 @@ class BinanceLiveTrader:
         symbol = self.config.get("symbol", "BTCUSDT")
         state_data = self._load_state()
         need_new_order = True
-        
-        if state_data:
-            from autofish_core import Autofish_ChainState
-            saved_state = Autofish_ChainState.from_dict(state_data)
 
+        # === 从快照加载其他状态（capital_pool, results, group_id）===
+        if state_data:
             # === 恢复资金池状态 ===
             if 'capital_pool' in state_data:
                 cp_data = state_data['capital_pool']
@@ -3155,210 +3154,239 @@ class BinanceLiveTrader:
                 self.results['total_profit'] = Decimal(str(r_data.get('total_profit', 0)))
                 self.results['total_loss'] = Decimal(str(r_data.get('total_loss', 0)))
 
-            if saved_state and saved_state.orders:
-                logger.info(f"[状态恢复] 发现本地保存的状态: {len(saved_state.orders)} 个订单")
-                print(f"\n🔄 发现本地保存的状态: {len(saved_state.orders)} 个订单")
+        # === 从数据库加载订单（单一数据源）===
+        from autofish_core import Autofish_Order, Autofish_ChainState
+        db_orders = self.db.get_orders(self.session_id) if self.session_id else []
+        orders = []
 
-                self.chain_state = saved_state
-                self.chain_state.base_price = current_price
+        if db_orders:
+            for row in db_orders:
+                # 只恢复未关闭的订单
+                if row['state'] in ('closed', 'cancelled'):
+                    continue
 
-                # === 恢复 group_id ===
-                if 'group_id' in state_data:
-                    self.chain_state.group_id = state_data['group_id']
-                    logger.info(f"[group_id恢复] group_id={self.chain_state.group_id}")
-                
-                algo_orders = await self.client.get_open_algo_orders(symbol)
-                algo_ids = {o.get("algoId") for o in algo_orders if o.get("algoId")}
-                logger.info(f"[状态恢复] Binance 上有 {len(algo_ids)} 个 Algo 条件单")
-                
-                positions = await self.client.get_positions(symbol)
-                has_position = any(
-                    Decimal(p.get('positionAmt', '0')) != Decimal('0')
-                    for p in positions
+                order = Autofish_Order(
+                    level=row['level'],
+                    entry_price=Decimal(str(row['entry_price'])),
+                    quantity=Decimal(str(row['quantity'])),
+                    stake_amount=Decimal(str(row['stake_amount'])),
+                    take_profit_price=Decimal(str(row['take_profit_price'])),
+                    stop_loss_price=Decimal(str(row['stop_loss_price'])),
+                    state=row['state'],
+                    order_id=row['order_id'] if row['order_id'] else None,
+                    tp_order_id=row['tp_order_id'] if row['tp_order_id'] else None,
+                    sl_order_id=row['sl_order_id'] if row['sl_order_id'] else None,
+                    group_id=row['group_id'] if row['group_id'] else 0,
+                    created_at=row['created_at'],
+                    filled_at=row['filled_at'],
                 )
-                logger.info(f"[状态恢复] 当前仓位状态: {'有仓位' if has_position else '无仓位'}")
-                
-                algo_history = await self.client.get_all_algo_orders(symbol, limit=100)
-                algo_status_map = {algo.get('algoId'): algo for algo in algo_history if algo.get('algoId')}
-                logger.info(f"[状态恢复] 获取到 {len(algo_status_map)} 个历史 Algo 条件单")
-                
-                orders_to_remove = []
-                algo_ids_to_cancel = []
-                orders_need_process = []
-                
-                for order in self.chain_state.orders:
-                    logger.info(f"[订单恢复] A{order.level}: state={order.state}")
-                    logger.info(f"  主订单: order_id={order.order_id}, entry_price={order.entry_price}")
-                    
-                    if order.state == "closed":
-                        orders_to_remove.append(order)
-                        logger.info(f"[订单清理] A{order.level} 已平仓，删除本地记录")
-                        print(f"   🗑️ A{order.level} 已平仓，删除本地记录")
-                        continue
-                    
-                    if order.state == "cancelled":
-                        orders_to_remove.append(order)
-                        logger.info(f"[订单清理] A{order.level} 已取消，删除本地记录")
-                        print(f"   🗑️ A{order.level} 已取消，删除本地记录")
-                        continue
-                    
-                    if order.state == "pending" and order.order_id:
-                        try:
-                            binance_order = await self.client.get_order_status(symbol, order.order_id)
-                            binance_status = binance_order.get("status")
-                            binance_avg_price = binance_order.get("avgPrice", "0")
-                            binance_qty = binance_order.get("executedQty", "0")
-                            binance_side = binance_order.get("side", "")
-                            binance_type = binance_order.get("type", "")
-                            
-                            logger.info(f"  Binance 订单查询: orderId={order.order_id}, status={binance_status}, "
-                                       f"side={binance_side}, type={binance_type}, avgPrice={binance_avg_price}, "
-                                       f"executedQty={binance_qty}")
-                            print(f"   📋 Binance: orderId={order.order_id}, status={binance_status}, "
-                                  f"avgPrice={binance_avg_price}, qty={binance_qty}")
-                            
-                            if binance_status == "FILLED":
-                                filled_price = Decimal(str(binance_order.get("avgPrice", order.entry_price)))
-                                order.entry_price = filled_price
-                                orders_need_process.append((order, filled_price))
-                                logger.info(f"[状态同步] A{order.level} 已在 Binance 成交，记录待处理")
-                                print(f"   ⚡ A{order.level} 已在 Binance 成交，待处理")
-                            elif binance_status in ["CANCELED", "EXPIRED"]:
-                                if order.tp_order_id:
-                                    algo_ids_to_cancel.append(order.tp_order_id)
-                                if order.sl_order_id:
-                                    algo_ids_to_cancel.append(order.sl_order_id)
-                                orders_to_remove.append(order)
-                                logger.info(f"[状态同步] A{order.level} 在 Binance 已取消，将删除本地订单")
-                                print(f"   🗑️ A{order.level} 在 Binance 已取消，将删除")
-                            elif binance_status in ["NEW", "PARTIALLY_FILLED"]:
-                                logger.info(f"[状态同步] A{order.level} 在 Binance 仍挂单中")
-                            else:
-                                logger.info(f"[状态同步] A{order.level} Binance 状态: {binance_status}")
-                        except Exception as e:
-                            error_msg = str(e)
-                            if "Order does not exist" in error_msg or "-2013" in error_msg:
-                                if order.tp_order_id:
-                                    algo_ids_to_cancel.append(order.tp_order_id)
-                                if order.sl_order_id:
-                                    algo_ids_to_cancel.append(order.sl_order_id)
-                                orders_to_remove.append(order)
-                                logger.warning(f"[状态同步] A{order.level} 在 Binance 不存在，将删除本地订单")
-                                print(f"   ❌ A{order.level} 在 Binance 不存在，将删除")
-                            else:
-                                logger.error(f"[状态同步] 查询 Binance 订单状态失败: {e}", exc_info=True)
-                    
-                    elif order.state == "pending" and not order.order_id:
-                        if has_position:
-                            order.state = "filled"
-                            logger.info(f"[状态同步] A{order.level} 无 order_id 但有仓位，标记为已成交")
-                            print(f"   ⚡ A{order.level} 无 order_id 但有仓位，标记为已成交")
-                        else:
+                orders.append(order)
+
+            logger.info(f"[数据库恢复] 从 live_orders 表恢复 {len(orders)} 个订单")
+            print(f"\n🔄 从数据库恢复 {len(orders)} 个订单")
+
+        # 创建 chain_state
+        self.chain_state = Autofish_ChainState(base_price=current_price, orders=orders)
+
+        # === 恢复 group_id ===
+        if state_data and 'group_id' in state_data:
+            self.chain_state.group_id = state_data['group_id']
+            logger.info(f"[group_id恢复] group_id={self.chain_state.group_id}")
+
+        if orders:
+            algo_orders = await self.client.get_open_algo_orders(symbol)
+            algo_ids = {o.get("algoId") for o in algo_orders if o.get("algoId")}
+            logger.info(f"[状态恢复] Binance 上有 {len(algo_ids)} 个 Algo 条件单")
+
+            positions = await self.client.get_positions(symbol)
+            has_position = any(
+                Decimal(p.get('positionAmt', '0')) != Decimal('0')
+                for p in positions
+            )
+            logger.info(f"[状态恢复] 当前仓位状态: {'有仓位' if has_position else '无仓位'}")
+
+            algo_history = await self.client.get_all_algo_orders(symbol, limit=100)
+            algo_status_map = {algo.get('algoId'): algo for algo in algo_history if algo.get('algoId')}
+            logger.info(f"[状态恢复] 获取到 {len(algo_status_map)} 个历史 Algo 条件单")
+
+            orders_to_remove = []
+            algo_ids_to_cancel = []
+            orders_need_process = []
+
+            for order in self.chain_state.orders:
+                logger.info(f"[订单恢复] A{order.level}: state={order.state}")
+                logger.info(f"  主订单: order_id={order.order_id}, entry_price={order.entry_price}")
+
+                if order.state == "closed":
+                    orders_to_remove.append(order)
+                    logger.info(f"[订单清理] A{order.level} 已平仓，删除本地记录")
+                    print(f"   🗑️ A{order.level} 已平仓，删除本地记录")
+                    continue
+
+                if order.state == "cancelled":
+                    orders_to_remove.append(order)
+                    logger.info(f"[订单清理] A{order.level} 已取消，删除本地记录")
+                    print(f"   🗑️ A{order.level} 已取消，删除本地记录")
+                    continue
+
+                if order.state == "pending" and order.order_id:
+                    try:
+                        binance_order = await self.client.get_order_status(symbol, order.order_id)
+                        binance_status = binance_order.get("status")
+                        binance_avg_price = binance_order.get("avgPrice", "0")
+                        binance_qty = binance_order.get("executedQty", "0")
+                        binance_side = binance_order.get("side", "")
+                        binance_type = binance_order.get("type", "")
+
+                        logger.info(f"  Binance 订单查询: orderId={order.order_id}, status={binance_status}, "
+                                   f"side={binance_side}, type={binance_type}, avgPrice={binance_avg_price}, "
+                                   f"executedQty={binance_qty}")
+                        print(f"   📋 Binance: orderId={order.order_id}, status={binance_status}, "
+                              f"avgPrice={binance_avg_price}, qty={binance_qty}")
+
+                        if binance_status == "FILLED":
+                            filled_price = Decimal(str(binance_order.get("avgPrice", order.entry_price)))
+                            order.entry_price = filled_price
+                            orders_need_process.append((order, filled_price))
+                            logger.info(f"[状态同步] A{order.level} 已在 Binance 成交，记录待处理")
+                            print(f"   ⚡ A{order.level} 已在 Binance 成交，待处理")
+                        elif binance_status in ["CANCELED", "EXPIRED"]:
+                            if order.tp_order_id:
+                                algo_ids_to_cancel.append(order.tp_order_id)
+                            if order.sl_order_id:
+                                algo_ids_to_cancel.append(order.sl_order_id)
                             orders_to_remove.append(order)
-                            logger.info(f"[状态同步] A{order.level} 无 order_id 且无仓位，删除本地订单")
-                            print(f"   🗑️ A{order.level} 无 order_id 且无仓位，删除本地订单")
-                    
-                    if order.state == "filled":
-                        tp_exists = order.tp_order_id in algo_ids if order.tp_order_id else False
-                        sl_exists = order.sl_order_id in algo_ids if order.sl_order_id else False
-                        
-                        logger.info(f"  止盈单: tp_order_id={order.tp_order_id}, 存在={tp_exists}")
-                        logger.info(f"  止损单: sl_order_id={order.sl_order_id}, 存在={sl_exists}")
-                        
-                        if tp_exists:
-                            order.tp_supplemented = False
-                        if sl_exists:
-                            order.sl_supplemented = False
-                        
-                        if has_position:
-                            if not tp_exists:
-                                logger.warning(f"  止盈单不存在，需要补单")
-                                print(f"   ⚠️ A{order.level} 止盈单在 Binance 不存在，需要补单")
-                                order.tp_order_id = None
-                            
-                            if not sl_exists:
-                                logger.warning(f"  止损单不存在，需要补单")
-                                print(f"   ⚠️ A{order.level} 止损单在 Binance 不存在，需要补单")
-                                order.sl_order_id = None
+                            logger.info(f"[状态同步] A{order.level} 在 Binance 已取消，将删除本地订单")
+                            print(f"   🗑️ A{order.level} 在 Binance 已取消，将删除")
+                        elif binance_status in ["NEW", "PARTIALLY_FILLED"]:
+                            logger.info(f"[状态同步] A{order.level} 在 Binance 仍挂单中")
                         else:
-                            close_reason = None
-                            
-                            if order.tp_order_id and not tp_exists:
-                                if order.sl_order_id and sl_exists:
-                                    algo_ids_to_cancel.append(order.sl_order_id)
-                                close_reason = "take_profit"
-                                logger.info(f"[平仓检测] A{order.level} 止盈已成交，取消残留止损单")
-                            elif order.sl_order_id and not sl_exists:
-                                if order.tp_order_id and tp_exists:
-                                    algo_ids_to_cancel.append(order.tp_order_id)
-                                close_reason = "stop_loss"
-                                logger.info(f"[平仓检测] A{order.level} 止损已成交，取消残留止盈单")
-                            elif not order.tp_order_id and not order.sl_order_id:
-                                close_reason = "unknown"
-                                logger.info(f"[平仓检测] A{order.level} 无止盈止损单记录，标记为已平仓")
-                            else:
-                                if order.tp_order_id and order.tp_order_id in algo_status_map:
-                                    algo_info = algo_status_map[order.tp_order_id]
-                                    if algo_info.get('status') in ['TRIGGERED', 'FINISHED']:
-                                        if order.sl_order_id and sl_exists:
-                                            algo_ids_to_cancel.append(order.sl_order_id)
-                                        close_reason = "take_profit"
-                                if not close_reason and order.sl_order_id and order.sl_order_id in algo_status_map:
-                                    algo_info = algo_status_map[order.sl_order_id]
-                                    if algo_info.get('status') in ['TRIGGERED', 'FINISHED']:
-                                        if order.tp_order_id and tp_exists:
-                                            algo_ids_to_cancel.append(order.tp_order_id)
-                                        close_reason = "stop_loss"
-                            
-                            if close_reason:
-                                order.state = "closed"
-                                order.close_reason = close_reason
-                                orders_to_remove.append(order)
-                                print(f"   ✅ A{order.level} 已平仓，原因: {close_reason}，删除本地订单")
-                    
-                    if order not in orders_to_remove:
-                        print(f"   A{order.level}: state={order.state}, order_id={order.order_id}, "
-                              f"tp_id={order.tp_order_id}, sl_id={order.sl_order_id}")
-                
-                for algo_id in algo_ids_to_cancel:
-                    if algo_id in algo_ids:
-                        try:
-                            await self.client.cancel_algo_order(symbol, algo_id)
-                            logger.info(f"[取消残留条件单] algoId={algo_id}")
-                        except Exception as e:
-                            logger.warning(f"[取消残留条件单] 失败 algoId={algo_id}: {e}")
-                
-                for order in orders_to_remove:
-                    if order in self.chain_state.orders:
-                        self.chain_state.orders.remove(order)
-                        logger.info(f"[删除订单] A{order.level} (order_id={order.order_id}, state={order.state}) 已从本地删除")
-                
-                if self.chain_state.orders:
-                    self.chain_state.orders.sort(key=lambda o: o.level)
-                    for new_level, order in enumerate(self.chain_state.orders, start=1):
-                        old_level = order.level
-                        if old_level != new_level:
-                            order.level = new_level
-                            logger.info(f"[级别调整] A{old_level} -> A{new_level}")
-                            print(f"   📊 A{old_level} 级别调整为 A{new_level}")
-                
-                self._save_state()
-                
-                for order, filled_price in orders_need_process:
-                    await self._process_order_filled(order, filled_price, is_recovery=True)
-                
-                if self.chain_state.orders and self._is_first_connection:
-                    pnl_info = await self._get_pnl_info()
-                    notify_orders_recovered(self.chain_state.orders, self.config, current_price, pnl_info or {}, self.session_id, self.db)
-                    self._is_first_connection = False
-                
-                has_active_order = any(o.state in ["pending", "filled"] for o in self.chain_state.orders)
-                if has_active_order:
-                    need_new_order = False
+                            logger.info(f"[状态同步] A{order.level} Binance 状态: {binance_status}")
+                    except Exception as e:
+                        error_msg = str(e)
+                        if "Order does not exist" in error_msg or "-2013" in error_msg:
+                            if order.tp_order_id:
+                                algo_ids_to_cancel.append(order.tp_order_id)
+                            if order.sl_order_id:
+                                algo_ids_to_cancel.append(order.sl_order_id)
+                            orders_to_remove.append(order)
+                            logger.warning(f"[状态同步] A{order.level} 在 Binance 不存在，将删除本地订单")
+                            print(f"   ❌ A{order.level} 在 Binance 不存在，将删除")
+                        else:
+                            logger.error(f"[状态同步] 查询 Binance 订单状态失败: {e}", exc_info=True)
+
+                elif order.state == "pending" and not order.order_id:
+                    if has_position:
+                        order.state = "filled"
+                        logger.info(f"[状态同步] A{order.level} 无 order_id 但有仓位，标记为已成交")
+                        print(f"   ⚡ A{order.level} 无 order_id 但有仓位，标记为已成交")
+                    else:
+                        orders_to_remove.append(order)
+                        logger.info(f"[状态同步] A{order.level} 无 order_id 且无仓位，删除本地订单")
+                        print(f"   🗑️ A{order.level} 无 order_id 且无仓位，删除本地订单")
+
+                if order.state == "filled":
+                    tp_exists = order.tp_order_id in algo_ids if order.tp_order_id else False
+                    sl_exists = order.sl_order_id in algo_ids if order.sl_order_id else False
+
+                    logger.info(f"  止盈单: tp_order_id={order.tp_order_id}, 存在={tp_exists}")
+                    logger.info(f"  止损单: sl_order_id={order.sl_order_id}, 存在={sl_exists}")
+
+                    if tp_exists:
+                        order.tp_supplemented = False
+                    if sl_exists:
+                        order.sl_supplemented = False
+
+                    if has_position:
+                        if not tp_exists:
+                            logger.warning(f"  止盈单不存在，需要补单")
+                            print(f"   ⚠️ A{order.level} 止盈单在 Binance 不存在，需要补单")
+                            order.tp_order_id = None
+
+                        if not sl_exists:
+                            logger.warning(f"  止损单不存在，需要补单")
+                            print(f"   ⚠️ A{order.level} 止损单在 Binance 不存在，需要补单")
+                            order.sl_order_id = None
+                    else:
+                        close_reason = None
+
+                        if order.tp_order_id and not tp_exists:
+                            if order.sl_order_id and sl_exists:
+                                algo_ids_to_cancel.append(order.sl_order_id)
+                            close_reason = "take_profit"
+                            logger.info(f"[平仓检测] A{order.level} 止盈已成交，取消残留止损单")
+                        elif order.sl_order_id and not sl_exists:
+                            if order.tp_order_id and tp_exists:
+                                algo_ids_to_cancel.append(order.tp_order_id)
+                            close_reason = "stop_loss"
+                            logger.info(f"[平仓检测] A{order.level} 止损已成交，取消残留止盈单")
+                        elif not order.tp_order_id and not order.sl_order_id:
+                            close_reason = "unknown"
+                            logger.info(f"[平仓检测] A{order.level} 无止盈止损单记录，标记为已平仓")
+                        else:
+                            if order.tp_order_id and order.tp_order_id in algo_status_map:
+                                algo_info = algo_status_map[order.tp_order_id]
+                                if algo_info.get('status') in ['TRIGGERED', 'FINISHED']:
+                                    if order.sl_order_id and sl_exists:
+                                        algo_ids_to_cancel.append(order.sl_order_id)
+                                    close_reason = "take_profit"
+                            if not close_reason and order.sl_order_id and order.sl_order_id in algo_status_map:
+                                algo_info = algo_status_map[order.sl_order_id]
+                                if algo_info.get('status') in ['TRIGGERED', 'FINISHED']:
+                                    if order.tp_order_id and tp_exists:
+                                        algo_ids_to_cancel.append(order.tp_order_id)
+                                    close_reason = "stop_loss"
+
+                        if close_reason:
+                            order.state = "closed"
+                            order.close_reason = close_reason
+                            orders_to_remove.append(order)
+                            print(f"   ✅ A{order.level} 已平仓，原因: {close_reason}，删除本地订单")
+
+                if order not in orders_to_remove:
+                    print(f"   A{order.level}: state={order.state}, order_id={order.order_id}, "
+                          f"tp_id={order.tp_order_id}, sl_id={order.sl_order_id}")
+
+            for algo_id in algo_ids_to_cancel:
+                if algo_id in algo_ids:
+                    try:
+                        await self.client.cancel_algo_order(symbol, algo_id)
+                        logger.info(f"[取消残留条件单] algoId={algo_id}")
+                    except Exception as e:
+                        logger.warning(f"[取消残留条件单] 失败 algoId={algo_id}: {e}")
+
+            for order in orders_to_remove:
+                if order in self.chain_state.orders:
+                    self.chain_state.orders.remove(order)
+                    logger.info(f"[删除订单] A{order.level} (order_id={order.order_id}, state={order.state}) 已从本地删除")
+
+            # 注释：移除层级调整，保持原始层级
+            # if self.chain_state.orders:
+            #     self.chain_state.orders.sort(key=lambda o: o.level)
+            #     for new_level, order in enumerate(self.chain_state.orders, start=1):
+            #         old_level = order.level
+            #         if old_level != new_level:
+            #             order.level = new_level
+            #             logger.info(f"[级别调整] A{old_level} -> A{new_level}")
+            #             print(f"   📊 A{old_level} 级别调整为 A{new_level}")
+
+            self._save_state()
+
+            for order, filled_price in orders_need_process:
+                await self._process_order_filled(order, filled_price, is_recovery=True)
+
+            if self.chain_state.orders and self._is_first_connection:
+                pnl_info = await self._get_pnl_info()
+                notify_orders_recovered(self.chain_state.orders, self.config, current_price, pnl_info or {}, self.session_id, self.db)
+                self._is_first_connection = False
+
+            has_active_order = any(o.state in ["pending", "filled"] for o in self.chain_state.orders)
+            if has_active_order:
+                need_new_order = False
         else:
             from autofish_core import Autofish_ChainState
             self.chain_state = Autofish_ChainState(base_price=current_price, orders=[])
-        
+
         return need_new_order
     
     async def _check_and_supplement_orders(self) -> None:
