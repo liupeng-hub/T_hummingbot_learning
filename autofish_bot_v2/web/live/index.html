@@ -1078,7 +1078,21 @@
                     for (const session of sessions) {
                         const trader = traderMap.get(session.id) || {};
                         const isPaused = trader.paused || false;
+                        const wsConnected = trader.ws_connected || false;
+                        const marketStatus = trader.current_market_status || null;
                         const statusBadge = getStatusBadge('running', isPaused, true);
+
+                        // 市场状态徽章
+                        const marketStatusMap = {
+                            'trending_up': { text: '上涨趋势', cls: 'status-active' },
+                            'trending_down': { text: '下跌趋势', cls: 'status-error' },
+                            'ranging': { text: '震荡区间', cls: 'status-paused' },
+                            'unknown': { text: '未知', cls: 'status-stopped' }
+                        };
+                        const msInfo = marketStatusMap[marketStatus] || marketStatusMap['unknown'];
+                        const marketStatusBadge = marketStatus ?
+                            `<span class="status-badge ${msInfo.cls}">${msInfo.text}</span>` :
+                            '<span class="text-muted">-</span>';
 
                         // 获取订单和状态
                         const ordersResp = await fetch(`${API_BASE}/live-sessions/${session.id}/orders`);
@@ -1094,12 +1108,24 @@
                                 <div class="card trader-card">
                                     <div class="card-header d-flex justify-content-between">
                                         <span>${session.symbol} <small class="text-muted">(Session ${session.id})</small></span>
-                                        ${statusBadge}
+                                        <div>
+                                            ${statusBadge}
+                                            ${wsConnected ? '<span class="status-badge status-running" style="margin-left:4px;">WS已连接</span>' : '<span class="status-badge status-stopped" style="margin-left:4px;">WS断开</span>'}
+                                        </div>
                                     </div>
                                     <div class="card-body">
-                                        <p><strong>开始时间:</strong> ${session.start_time || '-'}</p>
-                                        <p><strong>Base Price:</strong> ${state.base_price || '-'}</p>
-                                        <p><strong>Group ID:</strong> ${state.group_id || 0}</p>
+                                        <div class="row mb-2">
+                                            <div class="col-md-6">
+                                                <p class="mb-1"><strong>开始时间:</strong> ${session.start_time || '-'}</p>
+                                                <p class="mb-1"><strong>Base Price:</strong> ${state.base_price || '-'}</p>
+                                                <p class="mb-0"><strong>Group ID:</strong> ${state.group_id || 0}</p>
+                                            </div>
+                                            <div class="col-md-6">
+                                                <p class="mb-1"><strong>市场状态:</strong> ${marketStatusBadge}</p>
+                                                <p class="mb-1"><strong>持仓订单:</strong> ${trader.active_orders || 0}</p>
+                                                <p class="mb-0"><strong>挂单中:</strong> ${trader.pending_orders || 0}</p>
+                                            </div>
+                                        </div>
                                         <h6>当前订单:</h6>
                                         <table class="table table-sm">
                                             <thead>
@@ -1118,6 +1144,7 @@
                                             </tbody>
                                         </table>
                                         <div class="action-btn-group mt-2">
+                                            <button class="btn btn-sm btn-outline-info" onclick="showSession(${session.id})">详情</button>
                                             ${isPaused ?
                                                 `<button class="btn btn-sm btn-outline-success" onclick="resumeTrader(${session.id})">恢复</button>` :
                                                 `<button class="btn btn-sm btn-outline-warning" onclick="pauseTrader(${session.id})">暂停</button>`
@@ -1346,6 +1373,7 @@
                 if (result.success) {
                     alert(`会话已恢复! Session ID: ${result.data.session_id}`);
                     loadActiveSessions();
+                    loadRecoverableSessions();  // 刷新可恢复会话列表
                 } else {
                     showError('恢复失败', result.error);
                 }

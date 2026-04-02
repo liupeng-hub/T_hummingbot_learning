@@ -430,7 +430,7 @@ def send_wechat_notification(title: str, content: str, session_id: int, db, msg_
             logger.warning(f"[通知发送] 微信机器人请求失败: {error_msg}")
     except Exception as e:
         db.update_notification_status(notification_id, 'failed', str(e))
-        logger.error(f"[通知发送] 微信机器人发送异常: {e}")
+        logger.error(f"[通知发送] 微信机器人发送异常: {e}", exc_info=True)
 
 
 def notify_entry_order(order, config: dict, session_id: int, db):
@@ -1259,8 +1259,14 @@ class AlgoHandler:
             profit = (order.take_profit_price - order.entry_price) * order.quantity * leverage
             order.profit = profit
 
+            # 订单状态变更日志
+            logger.info(f"[订单状态] A{order.level}: filled -> closed, 原因=take_profit, 盈亏={profit:.2f}")
+
             # === 更新资金池 ===
             result = self.trader.capital_pool.update_capital(profit)
+            logger.info(f"[资金池更新] A{order.level} 止盈: 盈亏={profit:.2f}, "
+                        f"trading_capital={self.trader.capital_pool.trading_capital:.2f}, "
+                        f"profit_pool={getattr(self.trader.capital_pool, 'profit_pool', 0):.2f}")
 
             # === 更新统计 ===
             self.trader.results['total_trades'] += 1
@@ -1355,8 +1361,14 @@ class AlgoHandler:
             profit = (order.stop_loss_price - order.entry_price) * order.quantity * leverage
             order.profit = profit
 
+            # 订单状态变更日志
+            logger.info(f"[订单状态] A{order.level}: filled -> closed, 原因=stop_loss, 盈亏={profit:.2f}")
+
             # === 更新资金池 ===
             result = self.trader.capital_pool.update_capital(profit)
+            logger.info(f"[资金池更新] A{order.level} 止损: 盈亏={profit:.2f}, "
+                        f"trading_capital={self.trader.capital_pool.trading_capital:.2f}, "
+                        f"profit_pool={getattr(self.trader.capital_pool, 'profit_pool', 0):.2f}")
 
             # === 更新统计 ===
             self.trader.results['total_trades'] += 1
@@ -2297,7 +2309,7 @@ class BinanceLiveTrader:
 
                 self.state_repository.save(state)
             except Exception as e:
-                logger.error(f"[状态保存] 保存失败: {e}")
+                logger.error(f"[状态保存] 保存失败: {e}", exc_info=True)
 
     # ==================== 统计指标记录方法 ====================
 
@@ -2492,6 +2504,14 @@ class BinanceLiveTrader:
             self.capital_pool, level, self.chain_state
         )
 
+        # 空值保护：如果计算结果为 None，使用默认值
+        if entry_capital is None:
+            entry_capital = self.initial_capital
+            logger.warning(f"[入场资金] calculate_entry_capital 返回 None，使用初始资金: {entry_capital}")
+        if entry_total_capital is None:
+            entry_total_capital = self.initial_capital
+            logger.warning(f"[入场总资金] calculate_entry_total_capital 返回 None，使用初始资金: {entry_total_capital}")
+
         order = order_calculator.create_order(
             level=level,
             base_price=base_price,
@@ -2519,6 +2539,10 @@ class BinanceLiveTrader:
             actual_group_id = group_id
 
         order.group_id = actual_group_id
+
+        logger.info(f"[创建订单] A{level}: 入场价={order.entry_price:.2f}, "
+                    f"止盈价={order.take_profit_price:.2f}, 止损价={order.stop_loss_price:.2f}, "
+                    f"数量={order.quantity:.6f}, 金额={order.stake_amount:.2f}, group_id={actual_group_id}")
 
         return order
     
@@ -2660,7 +2684,7 @@ class BinanceLiveTrader:
                 logger.info(f"[数据库] 会话已结束: session_id={self.session_id}")
 
         except Exception as e:
-            logger.error(f"[退出处理] 处理失败: {e}")
+            logger.error(f"[退出处理] 处理失败: {e}", exc_info=True)
     
     async def _place_entry_order(self, order: Any, is_supplement: bool = False,
                                    is_timeout_refresh: bool = False,
@@ -2693,10 +2717,14 @@ class BinanceLiveTrader:
             return
 
         symbol = self.config.get("symbol", "BTCUSDT")
-        
+
         price = self._adjust_price(order.entry_price)
         quantity = self._adjust_quantity(order.quantity, price)
-        
+
+        # 下单请求日志
+        logger.debug(f"[下单请求] symbol={symbol}, side=BUY, type=LIMIT, "
+                     f"price={price:.2f}, quantity={quantity:.6f}")
+
         result = await self.client.place_order(
             symbol=symbol,
             side="BUY",
@@ -2704,11 +2732,15 @@ class BinanceLiveTrader:
             quantity=float(quantity),
             price=float(price)
         )
-        
+
         if "orderId" in result:
             order.order_id = result["orderId"]
             order.quantity = quantity
             order.stake_amount = quantity * price
+
+            # 下单成功日志
+            logger.info(f"[下单成功] A{order.level}: orderId={order.order_id}, "
+                        f"价格={price:.2f}, 数量={quantity:.6f}, 金额={order.stake_amount:.2f}")
 
             # === 设置创建时间 ===
             now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
@@ -2767,6 +2799,8 @@ class BinanceLiveTrader:
             # === 保存订单到数据库 ===
             if self.session_id:
                 self.db.save_order(self.session_id, order)
+                logger.debug(f"[数据库] 保存订单: session_id={self.session_id}, level=A{order.level}, "
+                             f"state={order.state}, orderId={order.order_id}")
 
             self._save_state()
         else:
@@ -2796,51 +2830,58 @@ class BinanceLiveTrader:
             - 保存状态到文件
         """
         symbol = self.config.get("symbol", "BTCUSDT")
-        
+
         quantity = self._adjust_quantity(order.quantity, order.entry_price)
-        
+
         current_price = await self._get_current_price()
-        logger.info(f"[止盈止损] A{order.level} 当前价={current_price:.2f}, 止盈价={order.take_profit_price:.2f}, 止损价={order.stop_loss_price:.2f}")
-        
+        logger.info(f"[止盈止损下单] A{order.level}: 数量={quantity:.6f}, "
+                    f"止盈触发价={order.take_profit_price:.2f}, 止损触发价={order.stop_loss_price:.2f}")
+
         if place_tp:
             if current_price >= order.take_profit_price:
                 logger.warning(f"[止盈止损] A{order.level} 当前价 {current_price:.2f} 已超过止盈价 {order.take_profit_price:.2f}，市价止盈")
                 print(f"[{datetime.now().strftime('%H:%M:%S')}] ⚠️ A{order.level} 当前价已超过止盈价，市价止盈")
                 await self._market_close_order(order, "take_profit")
                 return
-            
+
             tp_trigger_price = self._adjust_price(order.take_profit_price)
+            logger.debug(f"[止盈单请求] symbol={symbol}, type=TAKE_PROFIT_MARKET, "
+                         f"triggerPrice={tp_trigger_price:.2f}, quantity={quantity:.6f}")
             tp_result = await self.client.place_algo_order(
                 symbol=symbol,
                 side="SELL",
                 order_type="TAKE_PROFIT_MARKET",
                 quantity=float(quantity),
-                trigger_price=float(tp_trigger_price),
-                position_side="LONG"
+                trigger_price=float(tp_trigger_price)
             )
             if "algoId" in tp_result:
                 order.tp_order_id = tp_result["algoId"]
                 logger.info(f"[止盈单] A{order.level} algoId={order.tp_order_id}")
-        
+            else:
+                logger.warning(f"[止盈单] A{order.level} 下单失败: {tp_result}")
+
         if place_sl:
             if current_price <= order.stop_loss_price:
                 logger.warning(f"[止盈止损] A{order.level} 当前价 {current_price:.2f} 已跌破止损价 {order.stop_loss_price:.2f}，市价止损")
                 print(f"[{datetime.now().strftime('%H:%M:%S')}] ⚠️ A{order.level} 当前价已跌破止损价，市价止损")
                 await self._market_close_order(order, "stop_loss")
                 return
-            
+
             sl_trigger_price = self._adjust_price(order.stop_loss_price)
+            logger.debug(f"[止损单请求] symbol={symbol}, type=STOP_MARKET, "
+                         f"triggerPrice={sl_trigger_price:.2f}, quantity={quantity:.6f}")
             sl_result = await self.client.place_algo_order(
                 symbol=symbol,
                 side="SELL",
                 order_type="STOP_MARKET",
                 quantity=float(quantity),
-                trigger_price=float(sl_trigger_price),
-                position_side="LONG"
+                trigger_price=float(sl_trigger_price)
             )
             if "algoId" in sl_result:
                 order.sl_order_id = sl_result["algoId"]
                 logger.info(f"[止损单] A{order.level} algoId={order.sl_order_id}")
+            else:
+                logger.warning(f"[止损单] A{order.level} 下单失败: {sl_result}")
         
         self._save_state()
     
@@ -3024,7 +3065,7 @@ class BinanceLiveTrader:
         except Exception as e:
             result['success'] = False
             result['error'] = str(e)
-            logger.error(f"[恢复] 恢复失败: {e}")
+            logger.error(f"[恢复] 恢复失败: {e}", exc_info=True)
 
         return result
     
@@ -3205,7 +3246,7 @@ class BinanceLiveTrader:
                                 logger.warning(f"[状态同步] A{order.level} 在 Binance 不存在，将删除本地订单")
                                 print(f"   ❌ A{order.level} 在 Binance 不存在，将删除")
                             else:
-                                logger.error(f"[状态同步] 查询 Binance 订单状态失败: {e}")
+                                logger.error(f"[状态同步] 查询 Binance 订单状态失败: {e}", exc_info=True)
                     
                     elif order.state == "pending" and not order.order_id:
                         if has_position:
@@ -3381,8 +3422,7 @@ class BinanceLiveTrader:
             side="SELL",
             order_type="TAKE_PROFIT_MARKET",
             quantity=float(quantity),
-            trigger_price=float(trigger_price),
-            position_side="LONG"
+            trigger_price=float(trigger_price)
         )
         if "algoId" in tp_result:
             order.tp_order_id = tp_result["algoId"]
@@ -3404,8 +3444,7 @@ class BinanceLiveTrader:
             side="SELL",
             order_type="STOP_MARKET",
             quantity=float(quantity),
-            trigger_price=float(trigger_price),
-            position_side="LONG"
+            trigger_price=float(trigger_price)
         )
         if "algoId" in sl_result:
             order.sl_order_id = sl_result["algoId"]
@@ -3456,7 +3495,7 @@ class BinanceLiveTrader:
             self._save_state()
             
         except Exception as e:
-            logger.error(f"[市价平仓] A{order.level} 失败: {e}")
+            logger.error(f"[市价平仓] A{order.level} 失败: {e}", exc_info=True)
             print(f"[{datetime.now().strftime('%H:%M:%S')}] ❌ A{order.level} 市价平仓失败: {e}")
     
     async def _handle_entry_supplement(self, current_price: Decimal, need_new_order: bool) -> None:
@@ -3727,7 +3766,7 @@ class BinanceLiveTrader:
                             logger.info("[通知] 启动通知发送完成")
                             self._startup_notified = True
                         except Exception as e:
-                            logger.error(f"[通知] 启动通知发送失败: {e}")
+                            logger.error(f"[通知] 启动通知发送失败: {e}", exc_info=True)
 
                         # 初始化行情轨道（从历史日线计算）
                         if self.market_aware and self.market_detector:
@@ -3735,7 +3774,7 @@ class BinanceLiveTrader:
                                 await self._initialize_market_bands()
                                 print(f"  初始行情: {self.current_market_status.value}")
                             except Exception as e:
-                                logger.error(f"[行情] 初始化轨道失败: {e}")
+                                logger.error(f"[行情] 初始化轨道失败: {e}", exc_info=True)
                     
                     if not await self._check_fund_sufficiency():
                         await self.client.close()
@@ -3811,7 +3850,7 @@ class BinanceLiveTrader:
                     break
                 except Exception as e:
                     self.consecutive_errors += 1
-                    logger.error(f"[运行] 发生异常 ({self.consecutive_errors}/{self.max_consecutive_errors}): {e}")
+                    logger.error(f"[运行] 发生异常 ({self.consecutive_errors}/{self.max_consecutive_errors}): {e}", exc_info=True)
                     
                     if self.consecutive_errors >= self.max_consecutive_errors:
                         logger.error(f"[运行] 连续错误 {self.consecutive_errors} 次，退出")
@@ -3888,7 +3927,7 @@ class BinanceLiveTrader:
             except Exception as e:
                 self.ws_connected = False
                 reconnect_attempts += 1
-                logger.error(f"[WebSocket] 连接错误: {e}")
+                logger.error(f"[WebSocket] 连接错误: {e}", exc_info=True)
                 
                 if reconnect_attempts < max_reconnect_attempts:
                     await asyncio.sleep(5)
@@ -3949,6 +3988,10 @@ class BinanceLiveTrader:
 
         if event_type == "ORDER_TRADE_UPDATE":
             order_data = data.get("o", {})
+            # 详细调试日志
+            logger.debug(f"[WebSocket] ORDER_TRADE_UPDATE: orderId={order_data.get('i')}, "
+                         f"status={order_data.get('X')}, executedQty={order_data.get('z')}, "
+                         f"avgPrice={order_data.get('ap')}, symbol={order_data.get('s')}")
             logger.info(f"[WebSocket] ORDER_TRADE_UPDATE: {order_data}")
             if not isinstance(order_data, dict):
                 logger.warning(f"[WebSocket] ORDER_TRADE_UPDATE order_data 不是字典: {type(order_data)}, 内容: {order_data}")
@@ -3956,6 +3999,10 @@ class BinanceLiveTrader:
             await self._handle_order_update(order_data)
 
         elif event_type == "ALGO_UPDATE":
+            # 详细调试日志
+            logger.debug(f"[WebSocket] ALGO_UPDATE: algoId={data.get('algoId')}, "
+                         f"status={data.get('algoStatus')}, type={data.get('orderType')}, "
+                         f"symbol={data.get('symbol')}")
             logger.info(f"[WebSocket] ALGO_UPDATE: {data}")
             await self.algo_handler.handle_algo_update(data)
 
@@ -4015,7 +4062,7 @@ class BinanceLiveTrader:
                 # 盘中更新，检查突破
                 await self._on_kline_update(kline)
         except Exception as e:
-            logger.error(f"[K线事件] 处理失败: {e}")
+            logger.error(f"[K线事件] 处理失败: {e}", exc_info=True)
 
     async def _initialize_market_bands(self) -> None:
         """初始化行情轨道（启动时从历史日线计算）"""
@@ -4228,11 +4275,16 @@ class BinanceLiveTrader:
         - FILLED: 订单成交，下止盈止损单，发通知，下下一级订单
         - CANCELED/EXPIRED: 订单取消，删除本地订单
 
+        Binance ORDER_TRADE_UPDATE 字段:
+        - 'i': orderId（订单ID）
+        - 'X': orderStatus（订单状态: NEW, FILLED, CANCELED 等）
+
         参数:
             order_data: Binance 订单数据
         """
-        order_id = order_data.get("orderId")
-        order_status = order_data.get("orderStatus")
+        # Binance 字段映射: 'i' 是 orderId, 'X' 是 orderStatus
+        order_id = order_data.get("i") or order_data.get("orderId")
+        order_status = order_data.get("X") or order_data.get("orderStatus")
 
         # 前置检查：无效的订单数据
         if not order_id:
@@ -4251,6 +4303,8 @@ class BinanceLiveTrader:
         if not order:
             logger.warning(f"[订单更新] 未找到本地订单: orderId={order_id}, status={order_status}, 当前订单列表: {[o.order_id for o in self.chain_state.orders]}")
             return
+
+        logger.info(f"[订单更新] 找到订单: orderId={order_id}, status={order_status}, level=A{order.level}")
         
         if order_status == "FILLED":
             await self._handle_order_filled(order, order_data)
@@ -4265,6 +4319,8 @@ class BinanceLiveTrader:
             filled_price: 成交价格
             is_recovery: 是否为状态恢复时的处理
         """
+        logger.info(f"[成交处理] 开始 A{order.level}: 成交价={filled_price:.2f}, is_recovery={is_recovery}")
+
         if order.state == "closed":
             logger.info(f"[状态恢复] A{order.level} 已是 closed 状态，跳过处理")
             return
@@ -4273,6 +4329,8 @@ class BinanceLiveTrader:
             logger.info(f"[状态恢复] A{order.level} 检测到成交，执行后续处理")
             print(f"   ⚡ A{order.level} 检测到成交，执行后续处理")
 
+        # 订单状态变更: pending -> filled
+        logger.info(f"[订单状态] A{order.level}: {order.state} -> filled, orderId={order.order_id}")
         order.state = "filled"
         order.entry_price = filled_price
         order.filled_at = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
@@ -4284,23 +4342,41 @@ class BinanceLiveTrader:
             logger.info(f"[新轮次] group_id: {old_group_id} -> {order.group_id}")
 
         # === 记录入场资金 ===
-        order.entry_capital = self.capital_strategy.calculate_entry_capital(
+        entry_capital = self.capital_strategy.calculate_entry_capital(
             self.capital_pool, order.level, self.chain_state
         )
-        order.entry_total_capital = self.capital_strategy.calculate_entry_total_capital(
+        entry_total_capital = self.capital_strategy.calculate_entry_total_capital(
             self.capital_pool, order.level, self.chain_state
         )
 
+        # 空值保护：如果计算结果为 None，使用默认值
+        if entry_capital is None:
+            entry_capital = self.initial_capital
+            logger.warning(f"[入场资金] calculate_entry_capital 返回 None，使用初始资金: {entry_capital}")
+        if entry_total_capital is None:
+            entry_total_capital = self.initial_capital
+            logger.warning(f"[入场总资金] calculate_entry_total_capital 返回 None，使用初始资金: {entry_total_capital}")
+
+        order.entry_capital = entry_capital
+        order.entry_total_capital = entry_total_capital
+        logger.debug(f"[成交处理] 入场资金: entry_capital={entry_capital:.2f}, entry_total_capital={entry_total_capital:.2f}")
+
+        # === 下止盈止损单 ===
+        logger.info(f"[成交处理] 开始下止盈止损单...")
         await self._place_exit_orders(order)
 
         commission = Decimal("0")
         notify_entry_filled(order, filled_price, commission, self.config, self.session_id, self.db)
 
+        # === 下下一级订单 ===
+        logger.info(f"[成交处理] 开始下下一级订单...")
         await self._place_next_level_order(order)
 
         # === 更新订单状态到数据库 ===
         if self.session_id:
             self.db.update_order(self.session_id, order)
+            logger.debug(f"[数据库] 更新订单: session_id={self.session_id}, level=A{order.level}, "
+                         f"state={order.state}, tp_order_id={order.tp_order_id}, sl_order_id={order.sl_order_id}")
 
         # === 记录统计指标 ===
         self._record_execution_time(order)
@@ -4309,11 +4385,17 @@ class BinanceLiveTrader:
         self._save_state()
     
     async def _handle_order_filled(self, order: Any, order_data: Dict[str, Any]) -> None:
-        """WebSocket 实时成交处理"""
+        """WebSocket 实时成交处理
+
+        Binance ORDER_TRADE_UPDATE 字段:
+        - 'ap': averagePrice（平均成交价）
+        - 'L': lastFilledPrice（最后成交价）
+        """
         logger.info(f"[订单成交] A{order.level}")
         print(f"[{datetime.now().strftime('%H:%M:%S')}] ✅ 入场成交 A{order.level}")
-        
-        filled_price = Decimal(str(order_data.get("avgPrice", order.entry_price)))
+
+        # Binance 字段: 'ap' 是 averagePrice, 'L' 是 lastFilledPrice
+        filled_price = Decimal(str(order_data.get("ap") or order_data.get("L") or order.entry_price))
         await self._process_order_filled(order, filled_price)
     
     async def _handle_order_cancelled(self, order: Any, order_data: Dict[str, Any]) -> None:
@@ -4393,24 +4475,35 @@ class BinanceLiveTrader:
             - 保存状态
         """
         if not self.chain_state:
+            logger.warning("[下一级订单] chain_state 为空，无法下单")
             return
 
         next_level = order.level + 1
         max_level = self.config.get("max_entries", 4)
 
+        logger.info(f"[下一级订单] 检查: 当前 A{order.level}, 下一级 A{next_level}, max_level={max_level}")
+
         if next_level > max_level:
+            logger.info(f"[下一级订单] 超过最大层级 {max_level}，不下单")
             return
 
         has_next = any(o.level == next_level for o in self.chain_state.orders)
         if has_next:
+            logger.info(f"[下一级订单] A{next_level} 已存在，跳过")
             return
 
-        current_price = await self._get_current_price()
-        klines = await self._get_recent_klines()
-        new_order = await self._create_order(next_level, current_price, klines)
-        self.chain_state.orders.append(new_order)
+        try:
+            current_price = await self._get_current_price()
+            klines = await self._get_recent_klines()
+            new_order = await self._create_order(next_level, current_price, klines)
+            self.chain_state.orders.append(new_order)
 
-        await self._place_entry_order(new_order)
+            logger.info(f"[下一级订单] 创建 A{next_level}: 入场价={new_order.entry_price:.2f}, 数量={new_order.quantity}")
+            print(f"[{datetime.now().strftime('%H:%M:%S')}] 📝 下 A{next_level} 入场单: 入场价={new_order.entry_price:.{self.price_precision}f}")
+
+            await self._place_entry_order(new_order)
+        except Exception as e:
+            logger.error(f"[下一级订单] A{next_level} 下单失败: {e}", exc_info=True)
 
 async def main():
     """主函数"""
@@ -4431,7 +4524,7 @@ async def main():
             config_source = f"数据库 case_id={args.case_id}"
             logger.info(f"[配置加载] 从数据库加载配置: case_id={args.case_id}")
         except Exception as e:
-            logger.error(f"[配置加载] 加载 case_id={args.case_id} 失败: {e}")
+            logger.error(f"[配置加载] 加载 case_id={args.case_id} 失败: {e}", exc_info=True)
             return
     elif args.config:
         # 从配置文件加载
@@ -4440,7 +4533,7 @@ async def main():
             config_source = f"配置文件 {args.config}"
             logger.info(f"[配置加载] 从文件加载配置: {args.config}")
         except Exception as e:
-            logger.error(f"[配置加载] 加载配置文件失败: {e}")
+            logger.error(f"[配置加载] 加载配置文件失败: {e}", exc_info=True)
             return
     else:
         # 使用默认配置
@@ -4569,7 +4662,7 @@ class LiveTraderManager:
 
             return trader
         except Exception as e:
-            logger.error(f"[TraderManager] 创建交易实例失败: {e}")
+            logger.error(f"[TraderManager] 创建交易实例失败: {e}", exc_info=True)
             return None
 
     async def recover_trader(self, session_id: int) -> Optional[BinanceLiveTrader]:
@@ -4648,7 +4741,7 @@ class LiveTraderManager:
                     try:
                         task.result()  # 这会抛出异常
                     except Exception as e:
-                        logger.error(f"[TraderManager] 实例运行异常: {e}")
+                        logger.error(f"[TraderManager] 实例运行异常: {e}", exc_info=True)
                 else:
                     logger.error("[TraderManager] 启动超时：未获取到 session_id")
                 task.cancel()
@@ -4786,6 +4879,11 @@ class LiveTraderManager:
         """
         result = []
         for session_id, trader in self._traders.items():
+            # 获取市场状态，转换为字符串以便 JSON 序列化
+            market_status = getattr(trader, 'current_market_status', None)
+            if market_status is not None:
+                market_status = market_status.value if hasattr(market_status, 'value') else str(market_status)
+
             info = {
                 'session_id': session_id,
                 'case_id': getattr(trader, 'case_id', 0),
@@ -4794,6 +4892,7 @@ class LiveTraderManager:
                 'running': trader.running,
                 'paused': getattr(trader, 'paused', False),
                 'ws_connected': getattr(trader, 'ws_connected', False),
+                'current_market_status': market_status,
             }
             # 获取当前状态
             if hasattr(trader, 'chain_state') and trader.chain_state:
@@ -4820,6 +4919,13 @@ class LiveTraderManager:
         if not trader:
             return None
 
+        # 获取市场状态，转换为字符串以便 JSON 序列化
+        market_status = getattr(trader, 'current_market_status', None)
+        if market_status is not None:
+            market_status = market_status.value if hasattr(market_status, 'value') else str(market_status)
+        else:
+            market_status = 'unknown'
+
         info = {
             'session_id': session_id,
             'case_id': getattr(trader, 'case_id', 0),
@@ -4827,7 +4933,7 @@ class LiveTraderManager:
             'testnet': trader.testnet,
             'running': trader.running,
             'ws_connected': getattr(trader, 'ws_connected', False),
-            'current_market_status': getattr(trader, 'current_market_status', 'unknown'),
+            'current_market_status': market_status,
         }
 
         # 获取链式订单状态

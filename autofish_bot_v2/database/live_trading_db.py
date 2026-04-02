@@ -1611,6 +1611,12 @@ class LiveTradingDB:
         conn = self._get_connection()
         cursor = conn.cursor()
 
+        # Decimal 类型转换
+        def json_default(obj):
+            if isinstance(obj, Decimal):
+                return float(obj)
+            raise TypeError(f"Object of type {type(obj).__name__} is not JSON serializable")
+
         try:
             now = datetime.now().isoformat()
             cursor.execute("""
