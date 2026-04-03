@@ -670,9 +670,19 @@
                             <!-- 超时参数 -->
                             <div class="tab-pane fade" id="timeout-tab-pane" role="tabpanel">
                                 <div class="row mb-3">
-                                    <div class="col-md-6">
+                                    <div class="col-md-4">
                                         <label class="form-label">A1超时时间(分钟，0表示不超时)</label>
                                         <input type="number" class="form-control" id="formA1Timeout" value="0" min="0">
+                                    </div>
+                                    <div class="col-md-4">
+                                        <label class="form-label">最小重挂价格差异(%)</label>
+                                        <input type="number" class="form-control" id="formMinRefreshPriceDiff" value="1.67" min="0" max="10" step="0.01">
+                                        <small class="text-muted">新入场价与旧入场价差异超过此值才重挂，默认1.67%</small>
+                                    </div>
+                                    <div class="col-md-4">
+                                        <label class="form-label">最大超时次数(0表示不限制)</label>
+                                        <input type="number" class="form-control" id="formMaxTimeoutCount" value="10" min="0" max="100">
+                                        <small class="text-muted">超过此次数后停止重挂</small>
                                     </div>
                                 </div>
                             </div>
@@ -1118,7 +1128,7 @@
                                             <div class="col-md-6">
                                                 <p class="mb-1"><strong>开始时间:</strong> ${session.start_time || '-'}</p>
                                                 <p class="mb-1"><strong>Base Price:</strong> ${state.base_price || '-'}</p>
-                                                <p class="mb-0"><strong>Group ID:</strong> ${state.group_id || 0}</p>
+                                                <p class="mb-0"><strong>Group ID:</strong> ${state.group_id || session.group_id || 0}</p>
                                             </div>
                                             <div class="col-md-6">
                                                 <p class="mb-1"><strong>市场状态:</strong> ${marketStatusBadge}</p>
@@ -1129,11 +1139,12 @@
                                         <h6>当前订单:</h6>
                                         <table class="table table-sm">
                                             <thead>
-                                                <tr><th>层级</th><th>状态</th><th>入场价</th><th>止盈价</th><th>止损价</th></tr>
+                                                <tr><th>Group ID</th><th>层级</th><th>状态</th><th>入场价</th><th>止盈价</th><th>止损价</th></tr>
                                             </thead>
                                             <tbody>
                                                 ${orders.map(o => `
                                                     <tr>
+                                                        <td>${o.group_id || '-'}</td>
                                                         <td>${getLevelBadge(o.level)}</td>
                                                         <td><span class="state-${o.state}">${o.state}</span></td>
                                                         <td>${formatNumber(o.entry_price)}</td>
@@ -1600,6 +1611,8 @@
         function applyTimeoutDefaults() {
             const timeoutDef = strategyDefinitions.timeout?.params || {};
             setFieldDefaults('formA1Timeout', timeoutDef.a1_timeout_minutes, 30);
+            setFieldDefaults('formMinRefreshPriceDiff', timeoutDef.min_refresh_price_diff ? (timeoutDef.min_refresh_price_diff.default * 100) : 1.67);
+            setFieldDefaults('formMaxTimeoutCount', timeoutDef.max_timeout_count, 10);
         }
 
         // 应用资金池参数默认值和验证属性
@@ -1673,6 +1686,8 @@
             // 验证超时参数
             const timeoutDef = strategyDefinitions.timeout?.params || {};
             errors.push(...validateParam('a1_timeout_minutes', formData.timeout.a1_timeout_minutes, timeoutDef.a1_timeout_minutes));
+            errors.push(...validateParam('min_refresh_price_diff', formData.timeout.min_refresh_price_diff, timeoutDef.min_refresh_price_diff));
+            errors.push(...validateParam('max_timeout_count', formData.timeout.max_timeout_count, timeoutDef.max_timeout_count));
 
             // 验证资金池策略参数
             const capitalStrategy = formData.capital.strategy;
@@ -1991,7 +2006,9 @@
                 },
                 entry: entryConfig,
                 timeout: {
-                    a1_timeout_minutes: parseInt(document.getElementById('formA1Timeout').value)
+                    a1_timeout_minutes: parseInt(document.getElementById('formA1Timeout').value),
+                    min_refresh_price_diff: parseFloat(document.getElementById('formMinRefreshPriceDiff').value) / 100,  // 转换为小数
+                    max_timeout_count: parseInt(document.getElementById('formMaxTimeoutCount').value)
                 },
                 capital: {
                     total_amount_quote: parseFloat(document.getElementById('formTotalAmount').value) || 10000,
@@ -2129,6 +2146,8 @@
             // 超时参数
             const timeout = caseData.timeout || {};
             document.getElementById('formA1Timeout').value = timeout.a1_timeout_minutes || 30;
+            document.getElementById('formMinRefreshPriceDiff').value = (timeout.min_refresh_price_diff || 0.0167) * 100;  // 转换为百分比
+            document.getElementById('formMaxTimeoutCount').value = timeout.max_timeout_count || 10;
 
             // 资金池参数 - 从 capital 读取
             const capital = caseData.capital || {};
@@ -2250,6 +2269,8 @@
                                 <h6>超时参数</h6>
                                 <table class="table table-sm">
                                     <tr><td>A1超时</td><td>${caseData.timeout?.a1_timeout_minutes || 0} 分钟</td></tr>
+                                    <tr><td>最小重挂差异</td><td>${((caseData.timeout?.min_refresh_price_diff || 0.0167) * 100).toFixed(2)}%</td></tr>
+                                    <tr><td>最大超时次数</td><td>${caseData.timeout?.max_timeout_count || 10} 次</td></tr>
                                 </table>
                             </div>
                             <div class="col-md-6">
@@ -2306,7 +2327,9 @@
                 market: buildMarketConfig(caseData.market),
                 entry: buildEntryConfig(caseData.entry),
                 timeout: {
-                    a1_timeout_minutes: caseData.timeout?.a1_timeout_minutes || 0
+                    a1_timeout_minutes: caseData.timeout?.a1_timeout_minutes || 0,
+                    min_refresh_price_diff: caseData.timeout?.min_refresh_price_diff || 0.0167,
+                    max_timeout_count: caseData.timeout?.max_timeout_count || 10
                 },
                 capital: buildCapitalConfig(caseData.capital)
             };
@@ -2847,6 +2870,7 @@
                                         <thead class="table-light"><tr><th colspan="2">超时统计</th></tr></thead>
                                         <tbody>
                                             <tr><td>超时重挂总数</td><td>${metrics.timeout_refresh_count || 0} 次</td></tr>
+                                            <tr><td>跳过重挂次数</td><td>${metrics.skipped_refresh_count || 0} 次</td></tr>
                                             <tr><td>有超时的订单</td><td>${metrics.orders_with_timeout || 0} 笔</td></tr>
                                             <tr><td>平均超时次数</td><td>${(metrics.avg_timeout_count || 0).toFixed(2)} 次</td></tr>
                                             <tr><td>最大超时次数</td><td>${metrics.max_timeout_count || 0} 次</td></tr>
@@ -2887,10 +2911,11 @@
                                 <h6>订单列表</h6>
                                 <div style="max-height: 200px; overflow-y: auto;">
                                     <table class="table table-sm">
-                                        <thead><tr><th>层级</th><th>状态</th><th>入场价</th><th>盈亏</th></tr></thead>
+                                        <thead><tr><th>Group ID</th><th>层级</th><th>状态</th><th>入场价</th><th>盈亏</th></tr></thead>
                                         <tbody>
                                             ${orders.map(o => `
                                                 <tr>
+                                                    <td>${o.group_id || '-'}</td>
                                                     <td>${getLevelBadge(o.level)}</td>
                                                     <td><span class="state-${o.state}">${o.state}</span></td>
                                                     <td>${formatNumber(o.entry_price)}</td>

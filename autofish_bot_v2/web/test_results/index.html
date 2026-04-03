@@ -791,6 +791,16 @@
                                         <input type="number" class="form-control" id="formA1TimeoutMinutes" placeholder="0表示不启用">
                                         <small class="text-muted">首次订单挂单后未成交的超时时间，超时后取消订单</small>
                                     </div>
+                                    <div class="col-md-4">
+                                        <label class="form-label">最小重挂价格差异(%)</label>
+                                        <input type="number" class="form-control" id="formMinRefreshPriceDiff" placeholder="默认1.67%">
+                                        <small class="text-muted">新入场价与旧入场价差异超过此值才重挂</small>
+                                    </div>
+                                    <div class="col-md-4">
+                                        <label class="form-label">最大超时次数(0表示不限制)</label>
+                                        <input type="number" class="form-control" id="formMaxTimeoutCount" placeholder="默认10次">
+                                        <small class="text-muted">超过此次数后停止重挂</small>
+                                    </div>
                                 </div>
                             </div>
                             
@@ -1209,6 +1219,8 @@
             // 验证超时参数
             const timeoutDef = strategyDefinitions.timeout?.params || {};
             errors.push(...validateParam('a1_timeout_minutes', formData.timeout?.a1_timeout_minutes, timeoutDef.a1_timeout_minutes));
+            errors.push(...validateParam('min_refresh_price_diff', formData.timeout?.min_refresh_price_diff, timeoutDef.min_refresh_price_diff));
+            errors.push(...validateParam('max_timeout_count', formData.timeout?.max_timeout_count, timeoutDef.max_timeout_count));
 
             // 验证权重数组
             if (formData.amplitude?.weights) {
@@ -1516,7 +1528,9 @@
                         market: fullMarket,
                         entry: fullEntry,
                         timeout: {
-                            a1_timeout_minutes: getParamWithDefault((data.timeout || {}).a1_timeout_minutes, DEFAULT_PARAMS.timeout.a1_timeout_minutes)
+                            a1_timeout_minutes: getParamWithDefault((data.timeout || {}).a1_timeout_minutes, DEFAULT_PARAMS.timeout.a1_timeout_minutes),
+                            min_refresh_price_diff: getParamWithDefault((data.timeout || {}).min_refresh_price_diff, 0.0167),
+                            max_timeout_count: getParamWithDefault((data.timeout || {}).max_timeout_count, 10)
                         },
                         capital: normalizeCapitalFormat(data.capital)
                     };
@@ -1709,6 +1723,8 @@
                     
                     const timeout = data.timeout || {};
                     document.getElementById('formA1TimeoutMinutes').value = timeout.a1_timeout_minutes || '';
+                    document.getElementById('formMinRefreshPriceDiff').value = timeout.min_refresh_price_diff ? (timeout.min_refresh_price_diff * 100) : '';
+                    document.getElementById('formMaxTimeoutCount').value = timeout.max_timeout_count || '';
                     
                     const capital = data.capital || {};
                     let strategy = capital.strategy || 'guding';
@@ -2047,6 +2063,10 @@
             const timeout = {};
             const a1TimeoutMinutes = parseInt(document.getElementById('formA1TimeoutMinutes').value);
             if (!isNaN(a1TimeoutMinutes)) timeout.a1_timeout_minutes = a1TimeoutMinutes;
+            const minRefreshPriceDiff = parseFloat(document.getElementById('formMinRefreshPriceDiff').value);
+            if (!isNaN(minRefreshPriceDiff)) timeout.min_refresh_price_diff = minRefreshPriceDiff / 100;
+            const maxTimeoutCount = parseInt(document.getElementById('formMaxTimeoutCount').value);
+            if (!isNaN(maxTimeoutCount)) timeout.max_timeout_count = maxTimeoutCount;
             
             const capitalStrategy = document.getElementById('formCapitalStrategy').value;
             const capital = { strategy: capitalStrategy };

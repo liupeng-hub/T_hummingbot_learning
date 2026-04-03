@@ -4,29 +4,37 @@
 
 提供实盘交易数据的数据库存储、查询功能。
 
-数据库表结构（与回测对齐）：
-1. live_cases - 实盘配置表（对应 test_cases）
-2. live_sessions - 实盘会话表（对应 test_results）
-3. live_orders - 实盘订单表（实盘特有，追踪订单生命周期）
-4. live_trades - 交易记录表（对应 trade_details）
-5. live_capital_statistics - 资金统计表（对应 capital_statistics）
-6. live_capital_history - 资金历史表（对应 capital_history）
-7. live_market_cases - 行情配置表（对应 market_visualizer_cases）
-8. live_market_results - 行情结果表（对应 market_visualizer_details）
-9. live_state_snapshots - 状态快照表（替代文件存储）
+数据库表结构：
+1. live_cases - 实盘配置表
+2. live_sessions - 实盘会话表
+3. live_orders - 实盘订单表（追踪订单生命周期）
+4. live_trades - 交易记录表
+5. live_capital_statistics - 资金统计表
+6. live_capital_history - 资金历史表
+7. live_market_cases - 行情配置表
+8. live_market_results - 行情结果表
+9. live_market_dual_thrust - Dual Thrust 轨道历史表
+10. live_session_metrics - 会话统计指标表
+11. live_notifications - 通知记录表
 """
 
 import sqlite3
 import json
-import os
 from datetime import datetime
 from typing import Optional, Dict, Any, List
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass
 from pathlib import Path
 from decimal import Decimal
 
 
 DB_FILE = Path(__file__).parent / "live_trading.db"
+
+
+def _json_default(obj):
+    """JSON 序列化时处理 Decimal 类型"""
+    if isinstance(obj, Decimal):
+        return float(obj)
+    raise TypeError(f"Object of type {type(obj).__name__} is not JSON serializable")
 
 
 # ==================== 数据类定义 ====================
@@ -77,6 +85,9 @@ class LiveSession:
     initial_capital: float = 0.0
     final_capital: float = 0.0
     roi: float = 0.0
+    # 状态字段（用于恢复）
+    base_price: float = 0.0
+    group_id: int = 0
     # 其他
     error_message: str = ""
     created_at: str = ""
@@ -98,6 +109,7 @@ class LiveOrder:
     tp_order_id: int = 0  # Binance algoId
     sl_order_id: int = 0  # Binance algoId
     created_at: str = ""
+    first_created_at: str = ""  # 首次下单时间（超时重挂时保持）
     filled_at: str = ""
     closed_at: str = ""
     close_reason: str = ""
@@ -205,58 +217,6 @@ class LiveMarketResult:
     created_at: str = ""
 
 
-@dataclass
-class LiveStateSnapshot:
-    """状态快照数据类（替代文件存储）"""
-    session_id: int
-    snapshot_time: str = ""
-    base_price: float = 0.0
-    is_active: int = 1
-    group_id: int = 0
-    state_data: str = "{}"  # JSON: 完整状态数据（包含 orders、capital_pool、results 等）
-    id: Optional[int] = None
-    created_at: str = ""
-
-
-# ==================== DbStateRepository ====================
-
-class DbStateRepository:
-    """数据库状态仓库（替代文件存储）"""
-
-    def __init__(self, db: 'LiveTradingDB', session_id: int):
-        self.db = db
-        self.session_id = session_id
-
-    def save(self, data: Dict) -> bool:
-        """保存状态到数据库"""
-        return self.db.save_state_snapshot(
-            session_id=self.session_id,
-            base_price=data.get('base_price', 0),
-            is_active=data.get('is_active', 1),
-            group_id=data.get('group_id', 0),
-            state_data=data
-        )
-
-    def load(self) -> Optional[Dict]:
-        """从数据库加载最新状态"""
-        snapshot = self.db.get_latest_snapshot(self.session_id)
-        if snapshot:
-            state_data = snapshot.get('state_data', '{}')
-            if isinstance(state_data, str):
-                return json.loads(state_data)
-            return state_data
-        return None
-
-    def exists(self) -> bool:
-        """检查状态是否存在"""
-        snapshot = self.db.get_latest_snapshot(self.session_id)
-        return snapshot is not None
-
-    def delete(self) -> bool:
-        """删除状态"""
-        return self.db.delete_snapshots(self.session_id)
-
-
 # ==================== LiveTradingDB ====================
 
 class LiveTradingDB:
@@ -328,6 +288,8 @@ class LiveTradingDB:
                 initial_capital REAL DEFAULT 0,
                 final_capital REAL DEFAULT 0,
                 roi REAL DEFAULT 0,
+                base_price REAL DEFAULT 0,
+                group_id INTEGER DEFAULT 0,
                 error_message TEXT,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (case_id) REFERENCES live_cases(id)
@@ -364,12 +326,6 @@ class LiveTradingDB:
                 FOREIGN KEY (session_id) REFERENCES live_sessions(id) ON DELETE CASCADE
             )
         """)
-
-        # 迁移：为旧表添加 first_created_at 字段
-        try:
-            cursor.execute("ALTER TABLE live_orders ADD COLUMN first_created_at TEXT")
-        except:
-            pass  # 字段已存在
 
         # 4. live_trades（交易记录表）
         cursor.execute("""
@@ -473,27 +429,14 @@ class LiveTradingDB:
                 high_price REAL DEFAULT 0,
                 low_price REAL DEFAULT 0,
                 volume REAL DEFAULT 0,
+                event_type TEXT DEFAULT 'periodic',
+                indicators TEXT DEFAULT '{}',
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (case_id) REFERENCES live_market_cases(id) ON DELETE CASCADE
             )
         """)
 
-        # 9. live_state_snapshots（状态快照表）
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS live_state_snapshots (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                session_id INTEGER NOT NULL,
-                snapshot_time TEXT NOT NULL,
-                base_price REAL DEFAULT 0,
-                is_active INTEGER DEFAULT 1,
-                group_id INTEGER DEFAULT 0,
-                state_data TEXT DEFAULT '{}',
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (session_id) REFERENCES live_sessions(id) ON DELETE CASCADE
-            )
-        """)
-
-        # 10. live_market_dual_thrust（Dual Thrust 轨道历史表）
+        # 9. live_market_dual_thrust（Dual Thrust 轨道历史表）
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS live_market_dual_thrust (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -570,6 +513,7 @@ class LiveTradingDB:
 
                 -- 超时统计
                 timeout_refresh_count INTEGER DEFAULT 0,
+                skipped_refresh_count INTEGER DEFAULT 0,  -- 因价格差异不足跳过的重挂次数
                 supplement_count INTEGER DEFAULT 0,
                 orders_with_timeout INTEGER DEFAULT 0,
                 avg_timeout_count REAL DEFAULT 0,
@@ -600,7 +544,6 @@ class LiveTradingDB:
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_live_market_cases_session ON live_market_cases(session_id)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_live_market_results_case ON live_market_results(case_id)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_live_market_results_time ON live_market_results(check_time)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_live_snapshots_session ON live_state_snapshots(session_id)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_live_notifications_session ON live_notifications(session_id)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_live_session_metrics_session ON live_session_metrics(session_id)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_live_dual_thrust_session ON live_market_dual_thrust(session_id)")
@@ -608,125 +551,6 @@ class LiveTradingDB:
 
         conn.commit()
         conn.close()
-
-        self._run_migrations()
-
-    def _run_migrations(self):
-        """运行数据库迁移"""
-        conn = self._get_connection()
-        cursor = conn.cursor()
-
-        try:
-            # 检查 live_orders 是否有新字段
-            cursor.execute("PRAGMA table_info(live_orders)")
-            columns = [row[1] for row in cursor.fetchall()]
-
-            if 'tp_supplemented' not in columns:
-                cursor.execute("ALTER TABLE live_orders ADD COLUMN tp_supplemented INTEGER DEFAULT 0")
-                print("迁移: live_orders 添加 tp_supplemented 字段")
-
-            if 'sl_supplemented' not in columns:
-                cursor.execute("ALTER TABLE live_orders ADD COLUMN sl_supplemented INTEGER DEFAULT 0")
-                print("迁移: live_orders 添加 sl_supplemented 字段")
-
-            conn.commit()
-
-            # 检查 live_notifications 表是否有新字段
-            cursor.execute("PRAGMA table_info(live_notifications)")
-            columns = [row[1] for row in cursor.fetchall()]
-
-            if 'send_status' not in columns:
-                cursor.execute("ALTER TABLE live_notifications ADD COLUMN send_status TEXT DEFAULT 'pending'")
-                print("迁移: live_notifications 添加 send_status 字段")
-
-            if 'send_error' not in columns:
-                cursor.execute("ALTER TABLE live_notifications ADD COLUMN send_error TEXT")
-                print("迁移: live_notifications 添加 send_error 字段")
-
-            if 'payload' not in columns:
-                cursor.execute("ALTER TABLE live_notifications ADD COLUMN payload TEXT")
-                print("迁移: live_notifications 添加 payload 字段")
-
-            conn.commit()
-
-            # 检查 live_session_metrics 表是否有新字段
-            cursor.execute("PRAGMA table_info(live_session_metrics)")
-            metrics_columns = [row[1] for row in cursor.fetchall()]
-
-            if 'avg_single_execution_time' not in metrics_columns:
-                cursor.execute("ALTER TABLE live_session_metrics ADD COLUMN avg_single_execution_time REAL DEFAULT 0")
-                print("迁移: live_session_metrics 添加 avg_single_execution_time 字段")
-
-            if 'min_single_execution_time' not in metrics_columns:
-                cursor.execute("ALTER TABLE live_session_metrics ADD COLUMN min_single_execution_time REAL DEFAULT 0")
-                print("迁移: live_session_metrics 添加 min_single_execution_time 字段")
-
-            if 'max_single_execution_time' not in metrics_columns:
-                cursor.execute("ALTER TABLE live_session_metrics ADD COLUMN max_single_execution_time REAL DEFAULT 0")
-                print("迁移: live_session_metrics 添加 max_single_execution_time 字段")
-
-            if 'total_single_execution_time' not in metrics_columns:
-                cursor.execute("ALTER TABLE live_session_metrics ADD COLUMN total_single_execution_time REAL DEFAULT 0")
-                print("迁移: live_session_metrics 添加 total_single_execution_time 字段")
-
-            if 'single_execution_count' not in metrics_columns:
-                cursor.execute("ALTER TABLE live_session_metrics ADD COLUMN single_execution_count INTEGER DEFAULT 0")
-                print("迁移: live_session_metrics 添加 single_execution_count 字段")
-
-            conn.commit()
-
-            # 检查 capital_history 表名
-            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='capital_history'")
-            if cursor.fetchone():
-                # 检查是否有 statistics_id 字段
-                cursor.execute("PRAGMA table_info(capital_history)")
-                columns = [row[1] for row in cursor.fetchall()]
-
-                if 'statistics_id' not in columns:
-                    # 重命名表
-                    cursor.execute("ALTER TABLE capital_history RENAME TO live_capital_history")
-                    cursor.execute("ALTER TABLE live_capital_history ADD COLUMN statistics_id INTEGER DEFAULT 0")
-                    cursor.execute("ALTER TABLE live_capital_history ADD COLUMN total_capital REAL DEFAULT 0")
-                    cursor.execute("ALTER TABLE live_capital_history ADD COLUMN profit REAL DEFAULT 0")
-                    print("迁移: capital_history 重命名为 live_capital_history 并添加新字段")
-                    conn.commit()
-
-            # 检查 live_session_metrics 表是否有超时统计字段
-            cursor.execute("PRAGMA table_info(live_session_metrics)")
-            metrics_columns = [row[1] for row in cursor.fetchall()]
-
-            if 'orders_with_timeout' not in metrics_columns:
-                cursor.execute("ALTER TABLE live_session_metrics ADD COLUMN orders_with_timeout INTEGER DEFAULT 0")
-                print("迁移: live_session_metrics 添加 orders_with_timeout 字段")
-
-            if 'avg_timeout_count' not in metrics_columns:
-                cursor.execute("ALTER TABLE live_session_metrics ADD COLUMN avg_timeout_count REAL DEFAULT 0")
-                print("迁移: live_session_metrics 添加 avg_timeout_count 字段")
-
-            if 'max_timeout_count' not in metrics_columns:
-                cursor.execute("ALTER TABLE live_session_metrics ADD COLUMN max_timeout_count INTEGER DEFAULT 0")
-                print("迁移: live_session_metrics 添加 max_timeout_count 字段")
-
-            conn.commit()
-
-            # 检查 live_market_results 表是否有新字段
-            cursor.execute("PRAGMA table_info(live_market_results)")
-            results_columns = [row[1] for row in cursor.fetchall()]
-
-            if 'event_type' not in results_columns:
-                cursor.execute("ALTER TABLE live_market_results ADD COLUMN event_type TEXT DEFAULT 'periodic'")
-                print("迁移: live_market_results 添加 event_type 字段")
-
-            if 'indicators' not in results_columns:
-                cursor.execute("ALTER TABLE live_market_results ADD COLUMN indicators TEXT DEFAULT '{}'")
-                print("迁移: live_market_results 添加 indicators 字段")
-
-            conn.commit()
-
-        except Exception as e:
-            print(f"数据库迁移失败: {e}")
-        finally:
-            conn.close()
 
     # ==================== 实盘配置 CRUD ====================
 
@@ -1056,7 +880,7 @@ class LiveTradingDB:
         try:
             allowed_fields = ['end_time', 'status', 'total_trades', 'win_trades', 'loss_trades',
                             'win_rate', 'total_profit', 'total_loss', 'net_profit',
-                            'final_capital', 'roi', 'error_message']
+                            'final_capital', 'roi', 'error_message', 'base_price', 'group_id']
             set_clauses = []
             params = []
 
@@ -1117,7 +941,6 @@ class LiveTradingDB:
         cursor.execute("DELETE FROM live_capital_statistics WHERE session_id = ?", (session_id,))
         cursor.execute("DELETE FROM live_market_results WHERE case_id IN (SELECT id FROM live_market_cases WHERE session_id = ?)", (session_id,))
         cursor.execute("DELETE FROM live_market_cases WHERE session_id = ?", (session_id,))
-        cursor.execute("DELETE FROM live_state_snapshots WHERE session_id = ?", (session_id,))
         cursor.execute("DELETE FROM live_trades WHERE session_id = ?", (session_id,))
         cursor.execute("DELETE FROM live_orders WHERE session_id = ?", (session_id,))
         cursor.execute("DELETE FROM live_notifications WHERE session_id = ?", (session_id,))
@@ -1130,8 +953,6 @@ class LiveTradingDB:
 
         try:
             stats = {}
-            cursor.execute("SELECT COUNT(*) as cnt FROM live_state_snapshots WHERE session_id = ?", (session_id,))
-            stats['live_state_snapshots'] = cursor.fetchone()['cnt']
 
             cursor.execute("SELECT COUNT(*) as cnt FROM live_capital_history WHERE session_id = ?", (session_id,))
             stats['live_capital_history'] = cursor.fetchone()['cnt']
@@ -1580,12 +1401,6 @@ class LiveTradingDB:
         conn = self._get_connection()
         cursor = conn.cursor()
 
-        # Decimal 类型转换
-        def json_default(obj):
-            if isinstance(obj, Decimal):
-                return float(obj)
-            raise TypeError(f"Object of type {type(obj).__name__} is not JSON serializable")
-
         try:
             now = datetime.now().isoformat()
             cursor.execute("""
@@ -1596,7 +1411,7 @@ class LiveTradingDB:
                 session_id,
                 symbol,
                 algorithm,
-                json.dumps(algorithm_config or {}, default=json_default),
+                json.dumps(algorithm_config or {}, default=_json_default),
                 check_interval,
                 'active',
                 now
@@ -1610,12 +1425,6 @@ class LiveTradingDB:
         """保存行情结果"""
         conn = self._get_connection()
         cursor = conn.cursor()
-
-        # Decimal 类型转换
-        def json_default(obj):
-            if isinstance(obj, Decimal):
-                return float(obj)
-            raise TypeError(f"Object of type {type(obj).__name__} is not JSON serializable")
 
         try:
             now = datetime.now().isoformat()
@@ -1637,7 +1446,7 @@ class LiveTradingDB:
                 result.get('low_price', 0),
                 result.get('volume', 0),
                 result.get('event_type', 'periodic'),
-                json.dumps(result.get('indicators', {}), default=json_default),
+                json.dumps(result.get('indicators', {}), default=_json_default),
                 now
             ))
             conn.commit()
@@ -1765,77 +1574,6 @@ class LiveTradingDB:
         finally:
             conn.close()
 
-    # ==================== 状态快照 CRUD ====================
-
-    def save_state_snapshot(self, session_id: int, base_price: float, is_active: int,
-                            group_id: int, state_data: Dict) -> bool:
-        """保存状态快照"""
-        conn = self._get_connection()
-        cursor = conn.cursor()
-
-        try:
-            now = datetime.now().isoformat()
-
-            # 序列化状态数据，处理 Decimal 类型
-            def json_default(obj):
-                if isinstance(obj, Decimal):
-                    return float(obj)
-                raise TypeError(f"Object of type {type(obj).__name__} is not JSON serializable")
-
-            cursor.execute("""
-                INSERT INTO live_state_snapshots
-                (session_id, snapshot_time, base_price, is_active, group_id, state_data, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-            """, (
-                session_id,
-                now,
-                float(base_price) if isinstance(base_price, Decimal) else base_price,
-                is_active,
-                group_id,
-                json.dumps(state_data, default=json_default),
-                now
-            ))
-            conn.commit()
-            return True
-        except Exception as e:
-            print(f"保存状态快照失败: {e}")
-            return False
-        finally:
-            conn.close()
-
-    def get_latest_snapshot(self, session_id: int) -> Optional[Dict]:
-        """获取最新状态快照"""
-        conn = self._get_connection()
-        cursor = conn.cursor()
-
-        try:
-            cursor.execute("""
-                SELECT * FROM live_state_snapshots
-                WHERE session_id = ?
-                ORDER BY snapshot_time DESC LIMIT 1
-            """, (session_id,))
-            row = cursor.fetchone()
-            if row:
-                result = dict(row)
-                if result.get('state_data'):
-                    result['state_data'] = json.loads(result['state_data'])
-                return result
-            return None
-        finally:
-            conn.close()
-
-    def delete_snapshots(self, session_id: int) -> bool:
-        """删除所有快照"""
-        conn = self._get_connection()
-        cursor = conn.cursor()
-
-        try:
-            cursor.execute("DELETE FROM live_state_snapshots WHERE session_id = ?", (session_id,))
-            conn.commit()
-            return True
-        finally:
-            conn.close()
-
     # ==================== 兼容旧接口 ====================
 
     def create_session_legacy(self, symbol: str, initial_capital: float, config: Dict, case_id: Optional[int] = None) -> int:
@@ -1847,12 +1585,6 @@ class LiveTradingDB:
             config: 配置字典
             case_id: 关联的配置 ID（必须存在于 live_cases 表）
         """
-        # 序列化配置，处理 Decimal 类型
-        def json_default(obj):
-            if isinstance(obj, Decimal):
-                return float(obj)
-            raise TypeError(f"Object of type {type(obj).__name__} is not JSON serializable")
-
         # 从 live_cases 复制配置字段（配置快照）
         amplitude = "{}"
         market = "{}"
@@ -1871,7 +1603,7 @@ class LiveTradingDB:
 
         # 如果 config 参数有更多信息，也合并进去
         if config:
-            capital_json = json.dumps(config, default=json_default)
+            capital_json = json.dumps(config, default=_json_default)
 
         session = LiveSession(
             case_id=case_id if case_id else 0,
@@ -1899,7 +1631,11 @@ class LiveTradingDB:
             'net_profit': stats.get('net_profit', stats.get('total_profit', 0) + stats.get('total_loss', 0)),
             'final_capital': stats.get('final_capital', 0),
             'roi': stats.get('roi', 0),
+            'base_price': stats.get('base_price'),
+            'group_id': stats.get('group_id'),
         }
+        # 过滤掉 None 值
+        updates = {k: v for k, v in updates.items() if v is not None}
         self.update_session(session_id, updates)
 
     def get_session_stats(self, session_id: int) -> Dict:
@@ -2137,11 +1873,11 @@ class LiveTradingDB:
                     max_profit_trade, max_loss_trade, profit_factor,
                     order_group_count, max_level_reached,
                     tp_trigger_count, sl_trigger_count,
-                    timeout_refresh_count, supplement_count,
+                    timeout_refresh_count, skipped_refresh_count, supplement_count,
                     orders_with_timeout, avg_timeout_count, max_timeout_count,
                     total_runtime_minutes, paused_time_minutes,
                     updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 session_id,
                 metrics.get('avg_execution_time', 0),
@@ -2167,6 +1903,7 @@ class LiveTradingDB:
                 metrics.get('tp_trigger_count', 0),
                 metrics.get('sl_trigger_count', 0),
                 metrics.get('timeout_refresh_count', 0),
+                metrics.get('skipped_refresh_count', 0),
                 metrics.get('supplement_count', 0),
                 metrics.get('orders_with_timeout', 0),
                 metrics.get('avg_timeout_count', 0),
@@ -2212,7 +1949,7 @@ class LiveTradingDB:
                 'max_profit_trade', 'max_loss_trade', 'profit_factor',
                 'order_group_count', 'max_level_reached',
                 'tp_trigger_count', 'sl_trigger_count',
-                'timeout_refresh_count', 'supplement_count',
+                'timeout_refresh_count', 'skipped_refresh_count', 'supplement_count',
                 'orders_with_timeout', 'avg_timeout_count', 'max_timeout_count',
                 'total_runtime_minutes', 'paused_time_minutes'
             ]
@@ -2258,7 +1995,3 @@ class LiveTradingDB:
             return cursor.rowcount > 0
         finally:
             conn.close()
-
-
-# 类型提示
-from typing import Any

@@ -38,8 +38,7 @@ from pathlib import Path
 from typing import Dict, Any, List, Optional
 
 from database.live_trading_db import (
-    LiveTradingDB, LiveCase, LiveSession,
-    DbStateRepository
+    LiveTradingDB, LiveCase, LiveSession
 )
 from binance_live import LiveTraderManager
 from autofish_core import Autofish_ConfigLoader
@@ -710,13 +709,41 @@ def create_flask_app():
 
     @app.route('/api/live-sessions/<int:session_id>/state', methods=['GET'])
     def get_session_state(session_id):
-        """获取会话当前状态"""
+        """获取会话当前状态（从专用表实时读取）"""
         try:
-            repo = DbStateRepository(db, session_id)
-            state = repo.load()
-            if state:
-                return jsonify({'success': True, 'data': state})
-            return jsonify({'success': True, 'data': None})
+            # 从专用表读取实时状态，不再使用快照表
+            session = db.get_session(session_id)
+            if not session:
+                return jsonify({'success': False, 'error': 'Session not found'}), 404
+
+            # 获取资金池状态
+            stats = db.get_statistics(session_id)
+
+            # 获取订单列表
+            orders = db.get_orders(session_id)
+
+            # 组装返回数据
+            state = {
+                'session_id': session_id,
+                'base_price': session.get('base_price', 0),
+                'group_id': session.get('group_id', 0),
+                'status': session.get('status', 'unknown'),
+                'statistics': {
+                    'total_trades': session.get('total_trades', 0),
+                    'win_trades': session.get('win_trades', 0),
+                    'loss_trades': session.get('loss_trades', 0),
+                    'total_profit': session.get('total_profit', 0),
+                    'total_loss': session.get('total_loss', 0),
+                },
+                'capital_pool': {
+                    'trading_capital': stats.get('trading_capital', 0) if stats else 0,
+                    'profit_pool': stats.get('profit_pool', 0) if stats else 0,
+                } if stats else None,
+                'orders_count': len(orders),
+                'pending_orders': len([o for o in orders if o.get('state') == 'pending']),
+                'filled_orders': len([o for o in orders if o.get('state') == 'filled']),
+            }
+            return jsonify({'success': True, 'data': state})
         except Exception as e:
             return jsonify({'success': False, 'error': str(e)}), 500
 
