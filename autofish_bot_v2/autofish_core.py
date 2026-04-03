@@ -301,7 +301,10 @@ class Autofish_ChainState:
         if not first_entry or not first_entry.created_at:
             return None
         
-        created = datetime.strptime(first_entry.created_at, '%Y-%m-%d %H:%M:%S')
+        # created_at 可能是 datetime 或 str，需要兼容处理
+        created = first_entry.created_at
+        if isinstance(created, str):
+            created = datetime.strptime(created, '%Y-%m-%d %H:%M:%S')
         elapsed = (current_time - created).total_seconds() / 60
         
         if elapsed >= timeout_minutes:
