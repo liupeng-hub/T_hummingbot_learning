@@ -954,6 +954,8 @@ class DualThrustAlgorithm(StatusAlgorithm):
             'today_open': today_open,
             'hh': hh,
             'll': ll,
+            'hc': hc,
+            'lc': lc,
             'current_price': current_price,
             'consecutive_down_days': self._consecutive_down_days,
         }

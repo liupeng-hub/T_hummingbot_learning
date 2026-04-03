@@ -5,7 +5,7 @@
 | 项目 | 内容 |
 |------|------|
 | 创建日期 | 2026-04-03 |
-| 版本 | 1.1 |
+| 版本 | 1.2 |
 | 适用项目 | autofish_bot_v2 |
 
 ---
@@ -662,6 +662,188 @@ class Autofish_ChainState:
 │                                                                  │
 └─────────────────────────────────────────────────────────────────┘
 ```
+
+### 9.4 Dual Thrust 算法详解
+
+#### 9.4.1 算法原理
+
+Dual Thrust 算法基于历史波动幅度构建突破区间：
+
+```
+公式：
+  Range = max(HH - LC, HC - LL)
+  Upper = Open + K1 * Range
+  Lower = Open - K2 * Range * K2_Down_Factor (下跌时更敏感)
+
+其中：
+  HH = 前 n_days 天的最高价
+  LL = 前 n_days 天的最低价
+  HC = 前 n_days 天的最高收盘价
+  LC = 前 n_days 天的最低收盘价
+  Open = 当日开盘价
+```
+
+#### 9.4.2 默认参数
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `n_days` | 4 | 计算 Range 的历史天数 |
+| `k1` | 0.4 | 上轨系数 |
+| `k2` | 0.4 | 下轨系数 |
+| `k2_down_factor` | 0.8 | 下跌敏感因子 |
+| `down_confirm_days` | 2 | 下跌确认天数 |
+| `cooldown_days` | 1 | 状态切换冷却期 |
+
+#### 9.4.3 状态判断逻辑
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    Dual Thrust 状态判断                           │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│  价格位置判断：                                                   │
+│                                                                  │
+│  current_price > Upper:                                          │
+│     └── TRENDING_UP (上涨趋势)                                   │
+│                                                                  │
+│  current_price < Lower (连续 down_confirm_days 天):              │
+│     └── TRENDING_DOWN (下跌趋势)                                 │
+│                                                                  │
+│  其他情况：                                                       │
+│     └── RANGING (震荡行情)                                       │
+│                                                                  │
+│  特殊处理：                                                       │
+│  - 上涨突破：立即生效                                             │
+│  - 下跌突破：需连续确认（避免假突破）                              │
+│  - 冷却期内：使用宽松下轨（避免频繁切换）                          │
+│                                                                  │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### 9.5 K线数据获取与聚合
+
+#### 9.5.1 数据周期说明
+
+| 场景 | 获取方式 | 说明 |
+|------|---------|------|
+| 初始化 | 直接获取日线 | 启动时从缓存获取历史日线 |
+| 运行时 | 获取1h聚合为日线 | 实时性强，无需等日线收盘 |
+
+#### 9.5.2 初始化流程
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    行情初始化 (_initialize_market_bands)          │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│  1. 计算时间范围                                                  │
+│     end_time = now                                               │
+│     start_time = now - (n_days + 2) 天                           │
+│                                                                  │
+│  2. 获取历史日线                                                  │
+│     klines = fetcher.fetch_kline(                                │
+│         symbol, interval='1d', start_time, end_time              │
+│     )                                                            │
+│                                                                  │
+│  3. 数据校验                                                      │
+│     if len(klines) < n_days + 1:                                 │
+│         → 默认 RANGING 状态                                      │
+│         → return                                                 │
+│                                                                  │
+│  4. 计算 Dual Thrust 轨道                                        │
+│     result = algorithm.calculate(klines[-(n_days+1):])           │
+│                                                                  │
+│  5. 缓存轨道数据                                                  │
+│     _current_bands = {upper, lower, range, ...}                  │
+│                                                                  │
+│  6. 设置当前状态                                                  │
+│     current_market_status = result.status                        │
+│                                                                  │
+│  7. 保存到数据库                                                  │
+│     ├── save_market_result() → live_market_results               │
+│     └── save_dual_thrust_bands() → live_market_dual_thrust       │
+│                                                                  │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+#### 9.5.3 运行时检测流程
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    运行时行情检测                                  │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│  方式1: WebSocket K线事件（事件驱动）                             │
+│                                                                  │
+│  订阅: {symbol}@kline_1d                                         │
+│     ├── K线更新 (x=false): _on_kline_update()                    │
+│     │   └── 检查是否突破轨道                                     │
+│     └── K线收盘 (x=true): _on_daily_kline_closed()               │
+│         └── 重新计算轨道                                         │
+│                                                                  │
+│  方式2: 1h K线聚合（备选）                                        │
+│                                                                  │
+│  获取: 100 根 1h K线                                             │
+│     ↓                                                            │
+│  聚合: _aggregate_to_daily(klines)                               │
+│     ├── 按日期分组                                               │
+│     ├── 合并 OHLCV                                               │
+│     └── 生成约 4-5 天的日线数据                                  │
+│     ↓                                                            │
+│  计算: algorithm.calculate(daily_klines)                         │
+│                                                                  │
+│  注意: 100h ≈ 4.16 天，刚好满足 n_days=4 的最小需求               │
+│       如果跨周末/假期可能数据不足                                 │
+│                                                                  │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+#### 9.5.4 日线聚合逻辑
+
+```python
+def _aggregate_to_daily(klines: List[Dict]) -> List[Dict]:
+    """将分钟K线聚合为日线"""
+    daily_data = {}
+    for k in klines:
+        ts = k.get('timestamp', 0)
+        dt = datetime.fromtimestamp(ts / 1000)
+        date_key = dt.strftime('%Y-%m-%d')
+
+        if date_key not in daily_data:
+            daily_data[date_key] = {
+                'open': k['open'],
+                'high': k['high'],
+                'low': k['low'],
+                'close': k['close'],
+                'volume': k['volume'],
+            }
+        else:
+            daily_data[date_key]['high'] = max(daily_data[date_key]['high'], k['high'])
+            daily_data[date_key]['low'] = min(daily_data[date_key]['low'], k['low'])
+            daily_data[date_key]['close'] = k['close']
+            daily_data[date_key]['volume'] += k['volume']
+
+    return [daily_data[d] for d in sorted(daily_data.keys())]
+```
+
+### 9.6 行情数据存储
+
+#### 9.6.1 相关数据表
+
+| 表 | 内容 | 写入时机 |
+|---|------|---------|
+| `live_market_cases` | 行情配置 | Session 创建时 |
+| `live_market_results` | 行情检测结果 | 初始化、K线事件、定时检测 |
+| `live_market_dual_thrust` | Dual Thrust 轨道 | 初始化、日线收盘 |
+
+#### 9.6.2 写入时机汇总
+
+| 触发事件 | 写入内容 |
+|---------|---------|
+| 程序启动 | 初始行情状态、轨道数据 |
+| K线更新 | 行情检测结果 |
+| 日线收盘 | 新的轨道数据 |
+| 状态变化 | 行情检测结果 |
 
 ---
 
@@ -1572,6 +1754,6 @@ class Autofish_CapitalPool:
 
 ---
 
-*文档版本: 2.3*
+*文档版本: 2.4*
 *创建日期: 2026-04-03*
-*更新日期: 2026-04-04 - 添加 A1 超时重挂评估流程说明*
+*更新日期: 2026-04-04 - 添加 Dual Thrust 算法详解、K线获取与聚合逻辑*

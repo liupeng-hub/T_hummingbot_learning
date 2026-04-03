@@ -207,10 +207,7 @@ def calculate_delay(attempt: int, config: RetryConfig) -> float:
     return min(delay, config.max_delay)
 
 
-def retry_on_exception(
-    config: Optional[RetryConfig] = None,
-    on_retry: Optional[Callable[[Exception, int], Any]] = None,
-):
+def retry_on_exception(config: Optional[RetryConfig] = None, on_retry: Optional[Callable[[Exception, int], Any]] = None,):
     if config is None:
         config = RetryConfig()
     
@@ -4295,6 +4292,59 @@ class BinanceLiveTrader:
 
         logger.info(f"[行情] 初始化完成: Upper={self._current_bands.get('upper', 0):.2f}, "
                     f"Lower={self._current_bands.get('lower', 0):.2f}, 状态={result.status.value}")
+
+        # 5. 保存行情结果到数据库
+        if self.session_id:
+            try:
+                # 确保 market_case 存在
+                if not self.market_case_id:
+                    self.market_case_id = self.db.create_market_case(
+                        session_id=self.session_id,
+                        symbol=self.symbol,
+                        algorithm=self.market_algorithm,
+                        algorithm_config=self.market_algorithm_params,
+                        check_interval=0
+                    )
+
+                # 获取最新的 K 线数据用于保存
+                latest_kline = klines[-1] if klines else {}
+
+                # 保存行情结果
+                self.db.save_market_result(
+                    case_id=self.market_case_id,
+                    result={
+                        'check_time': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                        'market_status': result.status.value,
+                        'confidence': result.confidence,
+                        'reason': result.reason,
+                        'open_price': float(latest_kline.get('open', 0)),
+                        'close_price': float(latest_kline.get('close', 0)),
+                        'high_price': float(latest_kline.get('high', 0)),
+                        'low_price': float(latest_kline.get('low', 0)),
+                        'volume': float(latest_kline.get('volume', 0)),
+                    }
+                )
+
+                # 保存 Dual Thrust 轨道
+                self.db.save_dual_thrust_bands(
+                    session_id=self.session_id,
+                    bands={
+                        'calc_time': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                        'kline_date': datetime.now().strftime('%Y-%m-%d'),
+                        'upper_band': self._current_bands.get('upper', 0),
+                        'lower_band': self._current_bands.get('lower', 0),
+                        'range_value': self._current_bands.get('range', 0),
+                        'today_open': self._current_bands.get('today_open', 0),
+                        'hh': self._current_bands.get('hh', 0),
+                        'll': self._current_bands.get('ll', 0),
+                        'hc': self._current_bands.get('hc', 0),
+                        'lc': self._current_bands.get('lc', 0),
+                    }
+                )
+
+                logger.info(f"[行情] 已保存初始化结果到数据库: case_id={self.market_case_id}")
+            except Exception as e:
+                logger.error(f"[行情] 保存初始化结果失败: {e}", exc_info=True)
 
     async def _on_daily_kline_closed(self, kline: Dict) -> None:
         """日线收盘时重新计算轨道
