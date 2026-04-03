@@ -1,0 +1,59 @@
+{
+  "_comment": "统一配置文件示例 - 同时支持实盘和回测",
+
+  "symbol": "BTCUSDT",
+
+  "_live_comment": "实盘特有字段（回测时忽略）",
+  "testnet": true,
+
+  "_backtest_comment": "回测特有字段（实盘时忽略）",
+  "interval": "1m",
+  "date_start": "2024-01-01",
+  "date_end": "2024-12-31",
+  "test_type": "market_aware",
+
+  "_common_comment": "通用参数",
+  "amplitude": {
+    "decay_factor": 0.5,
+    "leverage": 10,
+    "max_entries": 4,
+    "valid_amplitudes": [1, 2, 3, 4, 5, 6, 7, 8, 9],
+    "weights": [0.0831, 0.2996, 0.3167, 0.1365, 0.1005, 0.0281, 0.027, 0.0066, 0.0018],
+    "grid_spacing": 0.01,
+    "exit_profit": 0.01,
+    "stop_loss": 0.08
+  },
+  "market": {
+    "algorithm": "dual_thrust",
+    "trading_statuses": ["ranging"],
+    "dual_thrust": {
+      "n_days": 4,
+      "k1": 0.4,
+      "k2": 0.4,
+      "down_confirm_days": 2,
+      "k2_down_factor": 0.8,
+      "cooldown_days": 1
+    }
+  },
+  "entry": {
+    "strategy": "atr",
+    "atr": {
+      "atr_period": 14,
+      "atr_multiplier": 1.5,
+      "min_spacing": 0.005,
+      "max_spacing": 0.02
+    }
+  },
+  "timeout": {
+    "a1_timeout_minutes": 30
+  },
+  "capital": {
+    "total_amount_quote": 10000,
+    "strategy": "guding",
+    "entry_mode": "compound",
+    "guding": {
+      "withdrawal_threshold": 2.0,
+      "withdrawal_retain": 1.5
+    }
+  }
+}

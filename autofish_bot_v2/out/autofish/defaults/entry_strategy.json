@@ -1,0 +1,138 @@
+{
+  "_meta": {
+    "description": "入场价格策略参数定义",
+    "default_strategy": "atr"
+  },
+  "strategies": {
+    "fixed": {
+      "_meta": {
+        "description": "固定间距策略 - 使用固定的网格间距"
+      }
+    },
+    "atr": {
+      "_meta": {
+        "description": "ATR 动态策略 - 基于平均真实波幅计算入场价格"
+      },
+      "atr_period": {
+        "default": 14,
+        "type": "int",
+        "min": 1,
+        "max": 100,
+        "description": "ATR 计算周期"
+      },
+      "atr_multiplier": {
+        "default": 1.5,
+        "type": "float",
+        "min": 0.1,
+        "max": 3.0,
+        "description": "ATR 倍数，用于计算入场间距"
+      },
+      "min_spacing": {
+        "default": 0.005,
+        "type": "float",
+        "min": 0.001,
+        "max": 0.1,
+        "description": "最小间距比例（防止间距过小）"
+      },
+      "max_spacing": {
+        "default": 0.02,
+        "type": "float",
+        "min": 0.01,
+        "max": 0.1,
+        "description": "最大间距比例（防止间距过大）"
+      }
+    },
+    "bollinger": {
+      "_meta": {
+        "description": "布林带策略 - 基于布林带上下轨计算入场价格"
+      },
+      "period": {
+        "default": 20,
+        "type": "int",
+        "min": 5,
+        "max": 100,
+        "description": "布林带计算周期"
+      },
+      "num_std": {
+        "default": 2,
+        "type": "float",
+        "min": 1,
+        "max": 3,
+        "description": "标准差倍数"
+      },
+      "min_spacing": {
+        "default": 0.005,
+        "type": "float",
+        "min": 0.001,
+        "max": 0.1,
+        "description": "最小间距比例"
+      },
+      "max_spacing": {
+        "default": 0.03,
+        "type": "float",
+        "min": 0.01,
+        "max": 0.1,
+        "description": "最大间距比例"
+      }
+    },
+    "support": {
+      "_meta": {
+        "description": "支撑位策略 - 基于历史支撑位计算入场价格"
+      },
+      "period": {
+        "default": 20,
+        "type": "int",
+        "min": 5,
+        "max": 100,
+        "description": "支撑位识别周期"
+      },
+      "min_touches": {
+        "default": 2,
+        "type": "int",
+        "min": 2,
+        "max": 5,
+        "description": "最小触碰次数"
+      },
+      "price_tolerance": {
+        "default": 0.01,
+        "type": "float",
+        "min": 0.001,
+        "max": 0.05,
+        "description": "价格容差比例"
+      }
+    },
+    "composite": {
+      "_meta": {
+        "description": "复合策略 - 综合多种指标计算入场价格"
+      },
+      "atr_period": {
+        "default": 14,
+        "type": "int",
+        "min": 1,
+        "max": 100,
+        "description": "ATR 计算周期"
+      },
+      "atr_multiplier": {
+        "default": 0.5,
+        "type": "float",
+        "min": 0.1,
+        "max": 3.0,
+        "description": "ATR 倍数"
+      },
+      "bb_period": {
+        "default": 20,
+        "type": "int",
+        "min": 5,
+        "max": 100,
+        "description": "布林带计算周期"
+      },
+      "bb_std": {
+        "default": 2,
+        "type": "float",
+        "min": 1,
+        "max": 3,
+        "description": "布林带标准差倍数"
+      }
+    }
+  }
+}

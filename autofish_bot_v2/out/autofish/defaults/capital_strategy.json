@@ -1,0 +1,154 @@
+{
+  "_meta": {
+    "description": "资金池策略参数定义",
+    "default_strategy": "guding",
+    "default_entry_mode": "compound"
+  },
+  "entry_modes": {
+    "default": "compound",
+    "options": ["fixed", "compound", "default"],
+    "descriptions": {
+      "fixed": "固定金额 - 每层使用固定金额入场",
+      "compound": "复利模式 - 基于当前资金池余额计算入场金额",
+      "default": "默认模式 - 使用预设的默认配置"
+    }
+  },
+  "strategies": {
+    "guding": {
+      "_meta": {
+        "description": "固定策略 - 适中的提现阈值，平衡收益和资金利用",
+        "display_name": "固定策略"
+      },
+      "withdrawal_threshold": {
+        "default": 2.0,
+        "type": "float",
+        "min": 1.0,
+        "max": 10.0,
+        "description": "提现阈值（相对于初始资金的倍数）"
+      },
+      "withdrawal_retain": {
+        "default": 1.5,
+        "type": "float",
+        "min": 1.0,
+        "max": 5.0,
+        "description": "提现后保留资金（相对于初始资金的倍数）"
+      }
+    },
+    "wenjian": {
+      "_meta": {
+        "description": "稳健策略 - 较高的提现阈值，更保守的资金管理",
+        "display_name": "稳健策略"
+      },
+      "withdrawal_threshold": {
+        "default": 3.0,
+        "type": "float",
+        "min": 2.0,
+        "max": 10.0,
+        "description": "提现阈值"
+      },
+      "withdrawal_retain": {
+        "default": 2.0,
+        "type": "float",
+        "min": 1.0,
+        "max": 5.0,
+        "description": "提现后保留资金"
+      }
+    },
+    "jijin": {
+      "_meta": {
+        "description": "激进策略 - 较低的提现阈值，最大化资金利用",
+        "display_name": "激进策略"
+      },
+      "withdrawal_threshold": {
+        "default": 1.5,
+        "type": "float",
+        "min": 1.0,
+        "max": 5.0,
+        "description": "提现阈值"
+      },
+      "withdrawal_retain": {
+        "default": 1.2,
+        "type": "float",
+        "min": 1.0,
+        "max": 3.0,
+        "description": "提现后保留资金"
+      }
+    },
+    "fuli": {
+      "_meta": {
+        "description": "复利策略 - 不主动提现，全部利润用于复利增长",
+        "display_name": "复利策略"
+      },
+      "withdrawal_threshold": {
+        "default": 999999.0,
+        "type": "float",
+        "min": 10.0,
+        "max": 999999.0,
+        "description": "提现阈值（设为极大值表示不提现）"
+      },
+      "withdrawal_retain": {
+        "default": 1.0,
+        "type": "float",
+        "min": 1.0,
+        "max": 2.0,
+        "description": "提现后保留资金"
+      }
+    },
+    "baoshou": {
+      "_meta": {
+        "description": "保守策略 - 快速提现，优先保护本金",
+        "display_name": "保守策略"
+      },
+      "withdrawal_threshold": {
+        "default": 2.0,
+        "type": "float",
+        "min": 1.0,
+        "max": 10.0,
+        "description": "提现阈值"
+      },
+      "withdrawal_retain": {
+        "default": 1.5,
+        "type": "float",
+        "min": 1.0,
+        "max": 5.0,
+        "description": "提现后保留资金"
+      }
+    },
+    "zidingyi": {
+      "_meta": {
+        "description": "自定义策略 - 用户自定义提现参数",
+        "display_name": "自定义策略"
+      },
+      "withdrawal_threshold": {
+        "default": 2.0,
+        "type": "float",
+        "min": 1.0,
+        "max": 10.0,
+        "description": "提现阈值"
+      },
+      "withdrawal_retain": {
+        "default": 1.5,
+        "type": "float",
+        "min": 1.0,
+        "max": 5.0,
+        "description": "提现后保留资金"
+      }
+    }
+  },
+  "common_params": {
+    "total_amount_quote": {
+      "default": 10000,
+      "type": "float",
+      "min": 100,
+      "max": 1000000,
+      "description": "初始资金（USDT）"
+    },
+    "liquidation_threshold": {
+      "default": 0.1,
+      "type": "float",
+      "min": 0.05,
+      "max": 0.5,
+      "description": "爆仓阈值比例，资金低于此比例时触发爆仓恢复"
+    }
+  }
+}

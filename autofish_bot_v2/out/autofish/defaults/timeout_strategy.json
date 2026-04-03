@@ -1,0 +1,28 @@
+{
+  "_meta": {
+    "description": "超时参数定义"
+  },
+  "params": {
+    "a1_timeout_minutes": {
+      "default": 30,
+      "type": "int",
+      "min": 0,
+      "max": 1440,
+      "description": "A1 层超时时间（分钟），0 表示不超时。超过此时间未入场则评估是否重挂"
+    },
+    "min_refresh_price_diff": {
+      "default": 0.0167,
+      "type": "float",
+      "min": 0,
+      "max": 0.1,
+      "description": "A1 超时重挂的最小价格差异阈值。只有新入场价与旧入场价差异超过此值才重挂，默认 1.67%（约 1000 USDT @ 60000 价格）"
+    },
+    "max_timeout_count": {
+      "default": 10,
+      "type": "int",
+      "min": 0,
+      "max": 100,
+      "description": "A1 最大超时次数，超过后停止重挂并通知用户，0 表示不限制"
+    }
+  }
+}

@@ -1,0 +1,178 @@
+{
+  "_meta": {
+    "description": "行情感知策略参数定义",
+    "default_algorithm": "dual_thrust"
+  },
+  "trading_statuses": {
+    "default": ["ranging"],
+    "options": ["ranging", "trending_up", "trending_down"],
+    "description": "允许交易的行情状态列表"
+  },
+  "algorithms": {
+    "always_ranging": {
+      "_meta": {
+        "description": "始终震荡 - 假设市场始终处于震荡状态，始终允许交易"
+      }
+    },
+    "dual_thrust": {
+      "_meta": {
+        "description": "Dual Thrust 算法 - 基于历史价格区间判断当前行情状态"
+      },
+      "n_days": {
+        "default": 4,
+        "type": "int",
+        "min": 1,
+        "max": 30,
+        "description": "回看天数"
+      },
+      "k1": {
+        "default": 0.4,
+        "type": "float",
+        "min": 0.1,
+        "max": 1.0,
+        "description": "上轨系数"
+      },
+      "k2": {
+        "default": 0.4,
+        "type": "float",
+        "min": 0.1,
+        "max": 1.0,
+        "description": "下轨系数"
+      },
+      "k2_down_factor": {
+        "default": 0.8,
+        "type": "float",
+        "min": 0.5,
+        "max": 1.0,
+        "description": "下跌趋势时 K2 的调整因子"
+      },
+      "down_confirm_days": {
+        "default": 2,
+        "type": "int",
+        "min": 1,
+        "max": 5,
+        "description": "下跌趋势确认天数"
+      },
+      "cooldown_days": {
+        "default": 1,
+        "type": "int",
+        "min": 0,
+        "max": 10,
+        "description": "趋势切换后的冷却天数"
+      },
+      "check_interval": {
+        "default": 60,
+        "type": "int",
+        "min": 1,
+        "max": 1440,
+        "description": "检查间隔（分钟）"
+      }
+    },
+    "improved": {
+      "_meta": {
+        "description": "改进算法 - 基于价格波动范围和突破判断行情状态"
+      },
+      "lookback_period": {
+        "default": 60,
+        "type": "int",
+        "min": 10,
+        "max": 200,
+        "description": "回看周期（天）"
+      },
+      "min_range_duration": {
+        "default": 10,
+        "type": "int",
+        "min": 3,
+        "max": 30,
+        "description": "最小震荡持续天数"
+      },
+      "max_range_pct": {
+        "default": 0.15,
+        "type": "float",
+        "min": 0.05,
+        "max": 0.3,
+        "description": "最大震荡幅度比例"
+      },
+      "breakout_threshold": {
+        "default": 0.03,
+        "type": "float",
+        "min": 0.01,
+        "max": 0.1,
+        "description": "突破阈值比例"
+      },
+      "breakout_confirm_days": {
+        "default": 3,
+        "type": "int",
+        "min": 1,
+        "max": 7,
+        "description": "突破确认天数"
+      }
+    },
+    "composite": {
+      "_meta": {
+        "description": "复合算法 - 综合使用 ADX、ATR、布林带等多种指标"
+      },
+      "adx_period": {
+        "default": 14,
+        "type": "int",
+        "min": 5,
+        "max": 50,
+        "description": "ADX 计算周期"
+      },
+      "adx_threshold": {
+        "default": 25,
+        "type": "int",
+        "min": 15,
+        "max": 40,
+        "description": "ADX 阈值，低于此值认为震荡"
+      },
+      "atr_period": {
+        "default": 14,
+        "type": "int",
+        "min": 5,
+        "max": 50,
+        "description": "ATR 计算周期"
+      },
+      "atr_multiplier": {
+        "default": 1.5,
+        "type": "float",
+        "min": 0.5,
+        "max": 3.0,
+        "description": "ATR 倍数"
+      },
+      "bb_period": {
+        "default": 20,
+        "type": "int",
+        "min": 5,
+        "max": 50,
+        "description": "布林带计算周期"
+      },
+      "bb_std": {
+        "default": 2,
+        "type": "float",
+        "min": 1,
+        "max": 3,
+        "description": "布林带标准差倍数"
+      }
+    },
+    "adx": {
+      "_meta": {
+        "description": "ADX 算法 - 基于 ADX 指标判断趋势强度"
+      },
+      "period": {
+        "default": 14,
+        "type": "int",
+        "min": 5,
+        "max": 50,
+        "description": "ADX 计算周期"
+      },
+      "threshold": {
+        "default": 25,
+        "type": "int",
+        "min": 15,
+        "max": 40,
+        "description": "ADX 阈值"
+      }
+    }
+  }
+}

@@ -1,0 +1,86 @@
+{
+  "entry_price_strategy": {
+    "strategy":"atr",
+    "atr":{
+      "atr_period":14,
+      "atr_multiplier":0.5,
+      "min_spacing":0.005,
+      "max_spacing":0.03
+    },
+    "bollinger":{
+      "period":20,
+      "num_std":2,
+      "min_spacing":0.005,
+      "max_spacing":0.03
+    },
+    "support":{
+      "period":20,
+      "min_touches":2,
+      "price_tolerance":0.01
+    },
+    "composite":{
+      "atr_period":14,
+      "atr_multiplier":0.5,
+      "bb_period":20,
+      "bb_std":2
+    },
+    "fixed":{}
+  },
+  "market_aware":{
+    "trading_statuses":["ranging"],
+    "algorithm":"dual_thrust",
+    "dual_thrust":{
+      "n_days":4,
+      "k1":0.4,
+      "k2":0.4,
+      "k2_down_factor":0.8,
+      "down_confirm_days":2,
+      "cooldown_days":1,
+      "check_interval":60
+    },
+    "improved":{
+      "lookback_period":60,
+      "min_range_duration":10,
+      "max_range_pct":0.15,
+      "breakout_threshold":0.03,
+      "breakout_confirm_days":3
+    },
+    "composite":{
+      "adx_period":14,
+      "adx_threshold":25,
+      "atr_period":14,
+      "atr_multiplier":1.5,
+      "bb_period":20,
+      "bb_std":2
+    },
+    "adx":{
+      "period":14,
+      "threshold":25
+    },
+    "always_ranging":{}
+  },
+  "timeout_first_entry":{
+    "a1_timeout_minutes":0
+  },
+  "capital_pool_strategy":{
+    "strategy": "guding",
+    "entry_mode": "compound",
+    "baoshou": {
+      "withdrawal_threshold": 2.0,
+      "withdrawal_retain": 1.5
+    },
+    "wenjian": {
+      "withdrawal_threshold": 3.0,
+      "withdrawal_retain": 2.0
+    },
+    "jijin": {
+      "withdrawal_threshold": 1.5,
+      "withdrawal_retain": 1.2
+    },
+    "fuli": {
+      "withdrawal_threshold": 999.0,
+      "withdrawal_retain": 1.0
+    },
+    "zidingyi": {}
+  }
+}

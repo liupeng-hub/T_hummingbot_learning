@@ -1,0 +1,69 @@
+{
+  "_meta": {
+    "description": "振幅参数定义 - 标的特定的参数配置"
+  },
+  "params": {
+    "decay_factor": {
+      "default": 0.5,
+      "type": "float",
+      "min": 0.1,
+      "max": 2.0,
+      "description": "衰减因子，影响权重分布。值越小权重越集中在前几层，值越大权重越均匀"
+    },
+    "leverage": {
+      "default": 10,
+      "type": "int",
+      "min": 1,
+      "max": 125,
+      "description": "杠杆倍数"
+    },
+    "max_entries": {
+      "default": 4,
+      "type": "int",
+      "min": 1,
+      "max": 10,
+      "description": "最大层级数"
+    },
+    "grid_spacing": {
+      "default": 0.01,
+      "type": "float",
+      "min": 0.001,
+      "max": 0.1,
+      "description": "网格间距比例"
+    },
+    "exit_profit": {
+      "default": 0.01,
+      "type": "float",
+      "min": 0.001,
+      "max": 0.1,
+      "description": "止盈比例"
+    },
+    "stop_loss": {
+      "default": 0.08,
+      "type": "float",
+      "min": 0.01,
+      "max": 0.5,
+      "description": "止损比例"
+    },
+    "valid_amplitudes": {
+      "default": [1, 2, 3, 4, 5, 6, 7, 8, 9],
+      "type": "array",
+      "description": "有效的振幅层级列表"
+    },
+    "weights": {
+      "default": [0.0831, 0.2996, 0.3167, 0.1365, 0.1005, 0.0281, 0.027, 0.0066, 0.0018],
+      "type": "array",
+      "description": "各层资金权重（根据 decay_factor 计算）"
+    }
+  },
+  "presets": {
+    "d_0.5": {
+      "description": "衰减因子 0.5 - 权重较集中",
+      "decay_factor": 0.5
+    },
+    "d_1.0": {
+      "description": "衰减因子 1.0 - 权重较均匀",
+      "decay_factor": 1.0
+    }
+  }
+}
