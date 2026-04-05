@@ -283,7 +283,7 @@
                 <div class="card mt-3" id="recoverableCard" style="display: none;">
                     <div class="card-header bg-warning text-dark">
                         <span>⚠️ 可恢复会话</span>
-                        <small class="text-muted ms-2">(服务中断的会话)</small>
+                        <small class="text-muted ms-2">(服务中断或异常停止的会话)</small>
                     </div>
                     <div class="card-body">
                         <div id="recoverableSessionsContent">
@@ -1217,6 +1217,14 @@
                                             <strong>${session.symbol || '-'}</strong>
                                             <small class="text-muted d-block">Session ${session.id}</small>
                                             <small class="text-muted d-block">${session.testnet ? '测试网' : '主网'}</small>
+                                            ${session.status === 'stopped' ?
+                                                '<span class="status-badge status-stopped mt-1">异常停止</span>' :
+                                                '<span class="status-badge status-running mt-1">中断</span>'
+                                            }
+                                            ${session.run_message ?
+                                                `<div class="text-muted small mt-1">原因: ${session.run_message}</div>` :
+                                                ''
+                                            }
                                         </div>
                                         <div class="col-md-3">
                                             <small class="text-muted">关联配置</small>
@@ -1262,7 +1270,7 @@
                         `;
                     }
 
-                    html += '<small class="text-muted">⚠️ 这些会话在服务中断时正在运行，恢复后将从中断点继续交易。</small>';
+                    html += '<small class="text-muted">⚠️ 这些会话在服务中断或异常停止时正在运行，恢复后将从中断点继续交易。</small>';
                     document.getElementById('recoverableSessionsContent').innerHTML = html;
                 } else {
                     document.getElementById('recoverableCard').style.display = 'none';

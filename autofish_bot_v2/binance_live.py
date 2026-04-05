@@ -2793,7 +2793,8 @@ class BinanceLiveTrader:
                 self.db.end_session(
                     session_id=self.session_id,
                     status='stopped',
-                    final_capital=float(self.capital_pool.trading_capital)
+                    final_capital=float(self.capital_pool.trading_capital),
+                    run_message=reason
                 )
                 logger.info(f"[数据库] 会话已结束: session_id={self.session_id}")
 
@@ -4915,9 +4916,12 @@ class LiveTraderManager:
             logger.error(f"[恢复] Session 不存在: {session_id}")
             return None
 
-        if session['status'] != 'running':
-            logger.error(f"[恢复] Session 状态不是 running: {session['status']}")
+        if session['status'] not in ('running', 'stopped'):
+            logger.error(f"[恢复] Session 状态不允许恢复: {session['status']}")
             return None
+
+        if session['status'] == 'stopped':
+            logger.info(f"[恢复] 恢复 stopped 状态的会话: session_id={session_id}, reason={session.get('run_message', 'N/A')}")
 
         # 检查是否已在内存中运行
         if self.get_trader(session_id) is not None:
@@ -4938,6 +4942,15 @@ class LiveTraderManager:
 
         # 设置恢复模式
         trader.recover_session_id = session_id
+
+        # 如果是 stopped 状态，更新为 running 并清除 run_message
+        if session['status'] == 'stopped':
+            db.update_session(session_id, {
+                'status': 'running',
+                'run_message': ''
+            })
+            logger.info(f"[恢复] 已更新 session 状态为 running: session_id={session_id}")
+
         logger.info(f"[恢复] 已创建恢复实例: session_id={session_id}, case_id={case_id}")
 
         return trader

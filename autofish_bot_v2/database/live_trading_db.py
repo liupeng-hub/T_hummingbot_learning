@@ -89,7 +89,7 @@ class LiveSession:
     base_price: float = 0.0
     group_id: int = 0
     # 其他
-    error_message: str = ""
+    run_message: str = ""
     created_at: str = ""
 
 
@@ -290,7 +290,7 @@ class LiveTradingDB:
                 roi REAL DEFAULT 0,
                 base_price REAL DEFAULT 0,
                 group_id INTEGER DEFAULT 0,
-                error_message TEXT,
+                run_message TEXT,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (case_id) REFERENCES live_cases(id)
             )
@@ -852,11 +852,15 @@ class LiveTradingDB:
         """获取可恢复的 session 列表
 
         条件：
-        - 数据库 status = 'running'
+        - 数据库 status = 'running' 或 'stopped'
         - 有关联的 case 配置
 
+        状态说明：
+        - running: 后端服务中断，需要恢复
+        - stopped: 异常退出（网络错误等），可恢复
+
         返回:
-            可恢复的 session 列表，包含 case_name 和 symbol
+            可恢复的 session 列表，包含 case_name, symbol, run_message
         """
         conn = self._get_connection()
         cursor = conn.cursor()
@@ -865,7 +869,7 @@ class LiveTradingDB:
                 SELECT s.*, c.symbol, c.name as case_name, c.testnet, c.capital
                 FROM live_sessions s
                 JOIN live_cases c ON s.case_id = c.id
-                WHERE s.status = 'running'
+                WHERE s.status IN ('running', 'stopped')
                 ORDER BY s.start_time DESC
             """)
             return [dict(row) for row in cursor.fetchall()]
@@ -880,7 +884,7 @@ class LiveTradingDB:
         try:
             allowed_fields = ['end_time', 'status', 'total_trades', 'win_trades', 'loss_trades',
                             'win_rate', 'total_profit', 'total_loss', 'net_profit',
-                            'final_capital', 'roi', 'error_message', 'base_price', 'group_id']
+                            'final_capital', 'roi', 'run_message', 'base_price', 'group_id']
             set_clauses = []
             params = []
 
@@ -905,7 +909,7 @@ class LiveTradingDB:
             conn.close()
 
     def end_session(self, session_id: int, status: str = "stopped",
-                   final_capital: float = None, error_message: str = "") -> bool:
+                   final_capital: float = None, run_message: str = "") -> bool:
         """结束会话"""
         updates = {
             'end_time': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
@@ -913,8 +917,8 @@ class LiveTradingDB:
         }
         if final_capital is not None:
             updates['final_capital'] = final_capital
-        if error_message:
-            updates['error_message'] = error_message
+        if run_message:
+            updates['run_message'] = run_message
 
         return self.update_session(session_id, updates)
 
