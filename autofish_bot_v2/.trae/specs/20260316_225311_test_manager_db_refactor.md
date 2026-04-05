@@ -1,1 +1,0 @@
-/Users/liupeng/Documents/trae_projects/hummingbot_learning/autofish_bot_v2/.trae/specs/test_manager_db_refactor/spec.md
